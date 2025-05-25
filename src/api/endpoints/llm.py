@@ -1,10 +1,10 @@
 from fastapi import APIRouter
 from typing import Dict, Any
 from src.core.models.llm_payload import ChatCompletionRequest
-from src.api.v1 import router_v1
 
+router = APIRouter(tags=["llm"])
 
-@router_v1.post("/chat/completions")
+@router.post("/chat/completions")
 async def chat_completions(payload: ChatCompletionRequest) -> Dict[str, Any]:
     return {
         "id": "chatcmpl-123",
