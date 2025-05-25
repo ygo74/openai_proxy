@@ -1,0 +1,11 @@
+{
+    "model_configs": [
+        {
+            "url": "URL",
+            "api_key": "KEY",
+            "api_version": "2024-06-01",
+            "provider": "azure"
+        }
+    ],
+    "db_type": "sqlite"
+}
