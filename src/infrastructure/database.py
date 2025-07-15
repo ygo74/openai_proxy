@@ -1,9 +1,11 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
-from src.core.models.models import Base, Model
+from src.infrastructure.db.models.model_orm import Base, ModelORM
+from src.infrastructure.db.mappers.mappers import to_domain_model, to_orm_model
+from src.core.models.domain import Model
 from src.core.application.config import AppConfig
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any
 
 SessionLocal = None
@@ -36,19 +38,22 @@ def init_db(config: AppConfig) -> None:
 
 def save_or_update_model(session: Session, model_data: Dict[str, Any]) -> None:
     technical_name = f"{model_data['provider']}_{model_data['name']}"
-    existing_model = session.query(Model).filter_by(technical_name=technical_name).first()
+    existing_model = session.query(ModelORM).filter_by(technical_name=technical_name).first()
     if existing_model:
         existing_model.url = model_data["url"]
-        existing_model.updated = datetime.utcnow()
+        existing_model.updated = datetime.now(timezone.utc)
         existing_model.capabilities = model_data.get("capabilities", {})
     else:
         new_model = Model(
             url=model_data["url"],
             name=model_data["name"],
             technical_name=technical_name,
-            capabilities = model_data.get("capabilities", {})
+            created=datetime.now(timezone.utc),
+            updated=datetime.now(timezone.utc),
+            capabilities=model_data.get("capabilities", {})
         )
-        session.add(new_model)
+        orm_model = to_orm_model(new_model)
+        session.add(orm_model)
     session.commit()
 
 # Dependency to get a database session
