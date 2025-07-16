@@ -1,73 +1,12 @@
 from datetime import datetime, timezone
 import pytest
 from sqlalchemy.exc import NoResultFound
-from sqlalchemy.orm import Session
 from src.infrastructure.group_crud import GroupRepository
 from src.core.models.domain import Group
 from src.infrastructure.db.models.group_orm import GroupORM
 
 class TestGroupRepository:
     """Test suite for GroupRepository class"""
-
-    @pytest.fixture
-    def session(self):
-        """Mock SQLAlchemy session for testing"""
-        class MockSession:
-            def __init__(self):
-                self.committed = False
-                self.rolled_back = False
-                self.added_items = []
-                self._query_results = []
-                self._deleted = False
-
-            def commit(self):
-                self.committed = True
-
-            def rollback(self):
-                self.rolled_back = True
-
-            def add(self, item):
-                self.added_items.append(item)
-
-            def refresh(self, item):
-                pass
-
-            def query(self, *args):
-                return self
-
-            def filter(self, *args):
-                return self
-
-            def first(self):
-                return self._query_results[0] if self._query_results else None
-
-            def all(self):
-                return self._query_results
-
-            def update(self, values):
-                if self._query_results:
-                    for key, value in values.items():
-                        setattr(self._query_results[0], key.key, value)
-                    return 1
-                return 0
-
-            def delete(self):
-                if self._deleted:
-                    return 1
-                return 0
-
-            def one(self):
-                if self._query_results:
-                    return self._query_results[0]
-                raise NoResultFound()
-
-            def set_query_result(self, results):
-                self._query_results = results
-
-            def set_deleted(self, deleted):
-                self._deleted = deleted
-
-        return MockSession()
 
     @pytest.fixture
     def repository(self, session):
