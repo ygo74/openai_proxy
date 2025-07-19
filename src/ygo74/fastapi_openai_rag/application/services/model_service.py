@@ -7,6 +7,9 @@ from ...domain.repositories.model_repository import IModelRepository
 from ...domain.unit_of_work import UnitOfWork
 from ...infrastructure.db.repositories.model_repository import SQLModelRepository
 from ...domain.models.configuration import ModelConfig
+from ...domain.exceptions.entity_not_found_exception import EntityNotFoundError
+from ...domain.exceptions.entity_already_exists import EntityAlreadyExistsError
+from ...domain.exceptions.validation_error import ValidationError
 import logging
 import requests
 
@@ -44,8 +47,9 @@ class ModelService:
             Tuple[str, Model]: Status and model entity
 
         Raises:
-            ValueError: If required fields missing for creation
-            NoResultFound: If model not found for update
+            EntityNotFoundError: If model not found for update
+            ValidationError: If required fields missing for creation
+            EntityAlreadyExistsError: If model already exists
         """
         with self._uow as uow:
             repository: IModelRepository = self._repository_factory(uow.session)
@@ -54,7 +58,8 @@ class ModelService:
                 logger.info(f"Updating model {model_id}")
                 existing_model: Optional[Model] = repository.get_by_id(model_id)
                 if not existing_model:
-                    raise NoResultFound(f"Model with id {model_id} not found")
+                    logger.error(f"Model {model_id} not found for update")
+                    raise EntityNotFoundError("Model", str(model_id))
 
                 updated_model: Model = Model(
                     id=model_id,
@@ -72,11 +77,14 @@ class ModelService:
 
             logger.info("Creating new model")
             if not all([url, name, technical_name]):
-                raise ValueError("URL, name, and technical_name are required for new models")
+                logger.error("Missing required fields for model creation")
+                raise ValidationError("URL, name, and technical_name are required for new models")
 
             existing: Optional[Model] = repository.get_by_technical_name(technical_name)
             if existing:
-                raise ValueError(f"Model with technical_name {technical_name} already exists")
+                logger.warning(f"Model with technical_name {technical_name} already exists")
+                raise EntityAlreadyExistsError("Model", f"technical_name {technical_name}")
+
 
             new_model: Model = Model(
                 url=url,
@@ -118,6 +126,9 @@ class ModelService:
             repository: IModelRepository = self._repository_factory(uow.session)
             model: Optional[Model] = repository.get_by_id(model_id)
             logger.debug(f"Model {model_id} {'found' if model else 'not found'}")
+            if not model:
+                raise EntityNotFoundError("Model", str(model_id))
+
             return model
 
     def get_model_by_technical_name(self, technical_name: str) -> Optional[Model]:
@@ -134,6 +145,8 @@ class ModelService:
             repository: IModelRepository = self._repository_factory(uow.session)
             model: Optional[Model] = repository.get_by_technical_name(technical_name)
             logger.debug(f"Model '{technical_name}' {'found' if model else 'not found'}")
+            if not model:
+                raise EntityNotFoundError("Model", technical_name)
             return model
 
     def update_model_status(self, model_id: int, status: ModelStatus) -> Model:
@@ -154,7 +167,7 @@ class ModelService:
             repository: IModelRepository = self._repository_factory(uow.session)
             existing_model: Optional[Model] = repository.get_by_id(model_id)
             if not existing_model:
-                raise NoResultFound(f"Model with id {model_id} not found")
+                raise EntityNotFoundError("Model", str(model_id))
 
             updated_model: Model = Model(
                 id=existing_model.id,
@@ -177,11 +190,17 @@ class ModelService:
             model_id (int): ID of model to delete
 
         Raises:
-            NoResultFound: If model not found
+            EntityNotFoundError: If model not found
         """
         logger.info(f"Deleting model {model_id}")
         with self._uow as uow:
             repository: IModelRepository = self._repository_factory(uow.session)
+            # Check if model exists before trying to delete
+            existing_model: Optional[Model] = repository.get_by_id(model_id)
+            if not existing_model:
+                logger.error(f"Model {model_id} not found for deletion")
+                raise EntityNotFoundError("Model", str(model_id))
+
             repository.remove(model_id)
             logger.info(f"Model {model_id} deleted successfully")
 

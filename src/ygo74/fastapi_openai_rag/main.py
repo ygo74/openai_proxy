@@ -6,6 +6,10 @@ from .domain.models.configuration import AppConfig
 from .infrastructure.db.session import SessionManager
 from .infrastructure.db.init_db import init_db, create_initial_data
 from .interfaces.api.router import api_router
+from .interfaces.api.exception_handlers import ExceptionHandlers
+from .domain.exceptions.entity_not_found_exception import EntityNotFoundError
+from .domain.exceptions.entity_already_exists import EntityAlreadyExistsError
+from .domain.exceptions.validation_error import ValidationError
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -29,6 +33,12 @@ app.add_middleware(
 
 # Include API router
 app.include_router(api_router)
+
+# Register global exception handlers
+app.add_exception_handler(EntityNotFoundError, ExceptionHandlers.entity_not_found_handler)
+app.add_exception_handler(EntityAlreadyExistsError, ExceptionHandlers.entity_already_exists_handler)
+app.add_exception_handler(ValidationError, ExceptionHandlers.validation_error_handler)
+app.add_exception_handler(Exception, ExceptionHandlers.generic_exception_handler)
 
 @app.on_event("startup")
 async def startup_event():

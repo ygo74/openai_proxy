@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
 
 from ygo74.fastapi_openai_rag.domain.models.model import Model, ModelStatus
 from ygo74.fastapi_openai_rag.main import app
-
+from ygo74.fastapi_openai_rag.domain.exceptions.entity_already_exists import EntityAlreadyExistsError
 
 @pytest.fixture
 def client() -> TestClient:
@@ -136,13 +136,13 @@ class TestModelsEndpoints:
             "technical_name": "existing_model",
             "capabilities": {}
         }
-        mock_model_service.add_or_update_model.side_effect = ValueError("Model with technical_name existing_model already exists")
+        mock_model_service.add_or_update_model.side_effect = EntityAlreadyExistsError("Model",  "with technical_name existing_model already exists")
 
         # act
         response = client.post("/v1/models/", json=model_data)
 
         # assert
-        assert response.status_code == 400
+        assert response.status_code == 409
         assert "already exists" in response.json()["detail"]
 
     def test_get_model_by_id_success(self, client: TestClient, mock_model_service: MagicMock) -> None:
@@ -176,14 +176,16 @@ class TestModelsEndpoints:
         """Test model retrieval when model doesn't exist."""
         # arrange
         model_id: int = 999
-        mock_model_service.get_model_by_id.return_value = None
+        # Import the domain exception that the service layer should raise
+        from ygo74.fastapi_openai_rag.domain.exceptions.entity_not_found_exception import EntityNotFoundError
+        mock_model_service.get_model_by_id.side_effect = EntityNotFoundError("Model", str(model_id))
 
         # act
         response = client.get(f"/v1/models/{model_id}")
 
         # assert
         assert response.status_code == 404
-        assert f"Model with ID {model_id} not found" in response.json()["detail"]
+        assert f"Model with identifier '{model_id}' not found" in response.json()["detail"]
 
     def test_update_model_success(self, client: TestClient, mock_model_service: MagicMock) -> None:
         """Test successful model update."""
@@ -231,15 +233,16 @@ class TestModelsEndpoints:
             "name": "Updated Model",
             "url": "http://updated.com"
         }
-        from sqlalchemy.exc import NoResultFound
-        mock_model_service.add_or_update_model.side_effect = NoResultFound(f"Model with id {model_id} not found")
+        # Import the domain exception that the service layer should raise
+        from ygo74.fastapi_openai_rag.domain.exceptions.entity_not_found_exception import EntityNotFoundError
+        mock_model_service.add_or_update_model.side_effect = EntityNotFoundError("Model", str(model_id))
 
         # act
         response = client.put(f"/v1/models/{model_id}", json=update_data)
 
         # assert
         assert response.status_code == 404
-        assert f"Model with id {model_id} not found" in response.json()["detail"]
+        assert f"Model with identifier '{model_id}' not found" in response.json()["detail"]
 
     def test_delete_model_success(self, client: TestClient, mock_model_service: MagicMock) -> None:
         """Test successful model deletion."""
@@ -260,14 +263,16 @@ class TestModelsEndpoints:
         """Test model deletion when model doesn't exist."""
         # arrange
         model_id: int = 999
-        mock_model_service.delete_model.side_effect = ValueError(f"Entity with id {model_id} not found")
+        # Import the domain exception that the service layer should raise
+        from ygo74.fastapi_openai_rag.domain.exceptions.entity_not_found_exception import EntityNotFoundError
+        mock_model_service.delete_model.side_effect = EntityNotFoundError("Model", str(model_id))
 
         # act
         response = client.delete(f"/v1/models/{model_id}")
 
         # assert
         assert response.status_code == 404
-        assert f"Entity with id {model_id} not found" in response.json()["detail"]
+        assert f"Model with identifier '{model_id}' not found" in response.json()["detail"]
 
     def test_update_model_status_success(self, client: TestClient, mock_model_service: MagicMock) -> None:
         """Test successful model status update."""
