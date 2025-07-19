@@ -1,25 +1,61 @@
 [project]
-name = "fastapi-openai-rag"
+name = "ygo74.fastapi-openai-rag"
 version = "0.1.0"
-description = "A FastAPI proxy for OpenAI"
+description = "A FastAPI proxy for OpenAI and other LLMs"
 authors = [
-    {name = "ygo74",email = "yannickgobert@yahoo.fr"}
+    { name = "ygo74", email = "yannickgobert@yahoo.fr" }
 ]
 readme = "README.md"
 requires-python = "^3.9"
-dependencies = [
-    "fastapi (>=0.115.12,<0.116.0)",
-    "uvicorn (>=0.34.2,<0.35.0)",
-    "sqlalchemy (>=2.0.41,<3.0.0)",
-    "alembic (>=1.16.1,<2.0.0)"
-]
 
 [tool.poetry]
-packages = [{ include = "src" }]
+name = "ygo74.fastapi-openai-rag"
+version = "0.1.0"
+description = "A FastAPI proxy for OpenAI and other LLMs"
+authors = ["ygo74 <yannickgobert@yahoo.fr>"]
+packages = [{ include = "ygo74", from = "src" }]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+fastapi = "^0.115.2"
+uvicorn = "^0.34.2"
+sqlalchemy = "^2.0.41"
+alembic = "^1.16.1"
+pydantic = "^2.7.1"
+httpx = "^0.27.0"
+python-dotenv = "^1.0.1"
+redis = "^5.0.4"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.5"
 pytest-asyncio = "^0.26.0"
+pytest-mock = "^3.14.0"
+mypy = "^1.10.0"
+black = "^24.4.2"
+isort = "^5.13.2"
+flake8 = "^7.0.0"
+coverage = "^7.5.3"
+
+[tool.mypy]
+python_version = "3.9"
+strict = true
+warn_unused_configs = true
+plugins = []
+exclude = ["tests/*"]
+
+[tool.black]
+line-length = 88
+target-version = ['py39']
+
+[tool.isort]
+profile = "black"
+src_paths = ["src"]
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "--strict-markers --tb=short --color=yes"
+testpaths = ["tests"]
+pythonpath = [".", "src"]
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
