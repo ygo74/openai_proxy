@@ -1,12 +1,13 @@
 """Group service implementation."""
 from typing import List, Optional, Tuple
 from datetime import datetime, timezone
-from sqlalchemy.exc import NoResultFound
 from ...domain.models.group import Group
 from ...domain.repositories.group_repository import IGroupRepository
 from ...domain.unit_of_work import UnitOfWork
 from ...infrastructure.db.repositories.group_repository import SQLGroupRepository
-from ...infrastructure.db.unit_of_work import SQLUnitOfWork
+from ...domain.exceptions.entity_not_found_exception import EntityNotFoundError
+from ...domain.exceptions.entity_already_exists import EntityAlreadyExistsError
+from ...domain.exceptions.validation_error import ValidationError
 import logging
 
 logger = logging.getLogger(__name__)
@@ -39,8 +40,9 @@ class GroupService:
             Tuple[str, Group]: Status and group entity
 
         Raises:
-            ValueError: If required fields missing for creation
-            NoResultFound: If group not found for update
+            EntityNotFoundError: If group not found for update
+            ValidationError: If required fields missing for creation
+            EntityAlreadyExistsError: If group already exists
         """
         with self._uow as uow:
             repository: IGroupRepository = self._repository_factory(uow.session)
@@ -49,7 +51,8 @@ class GroupService:
                 logger.info(f"Updating group {group_id}")
                 existing_group: Optional[Group] = repository.get_by_id(group_id)
                 if not existing_group:
-                    raise NoResultFound(f"Group with id {group_id} not found")
+                    logger.error(f"Group {group_id} not found for update")
+                    raise EntityNotFoundError("Group", str(group_id))
 
                 updated_group: Group = Group(
                     id=group_id,
@@ -64,11 +67,13 @@ class GroupService:
 
             logger.info("Creating new group")
             if not name:
-                raise ValueError("Name is required for new groups")
+                logger.error("Name is required for group creation")
+                raise ValidationError("Name is required for new groups")
 
             existing: Optional[Group] = repository.get_by_name(name)
             if existing:
-                raise ValueError(f"Group with name {name} already exists")
+                logger.warning(f"Group with name {name} already exists")
+                raise EntityAlreadyExistsError("Group", f"name {name}")
 
             new_group: Group = Group(
                 name=name,
@@ -101,12 +106,17 @@ class GroupService:
 
         Returns:
             Optional[Group]: Group entity if found, None otherwise
+
+        Raises:
+            EntityNotFoundError: If group not found
         """
         logger.info(f"Fetching group {group_id}")
         with self._uow as uow:
             repository: IGroupRepository = self._repository_factory(uow.session)
             group: Optional[Group] = repository.get_by_id(group_id)
             logger.debug(f"Group {group_id} {'found' if group else 'not found'}")
+            if not group:
+                raise EntityNotFoundError("Group", str(group_id))
             return group
 
     def get_group_by_name(self, name: str) -> Optional[Group]:
@@ -117,12 +127,17 @@ class GroupService:
 
         Returns:
             Optional[Group]: Group entity if found, None otherwise
+
+        Raises:
+            EntityNotFoundError: If group not found
         """
         logger.info(f"Fetching group by name: {name}")
         with self._uow as uow:
             repository: IGroupRepository = self._repository_factory(uow.session)
             group: Optional[Group] = repository.get_by_name(name)
             logger.debug(f"Group '{name}' {'found' if group else 'not found'}")
+            if not group:
+                raise EntityNotFoundError("Group", name)
             return group
 
     def delete_group(self, group_id: int) -> None:
@@ -132,10 +147,16 @@ class GroupService:
             group_id (int): ID of group to delete
 
         Raises:
-            NoResultFound: If group not found
+            EntityNotFoundError: If group not found
         """
         logger.info(f"Deleting group {group_id}")
         with self._uow as uow:
             repository: IGroupRepository = self._repository_factory(uow.session)
+            # Check if group exists before trying to delete
+            existing_group: Optional[Group] = repository.get_by_id(group_id)
+            if not existing_group:
+                logger.error(f"Group {group_id} not found for deletion")
+                raise EntityNotFoundError("Group", str(group_id))
+
             repository.remove(group_id)
             logger.info(f"Group {group_id} deleted successfully")

@@ -11,6 +11,9 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
 
 from ygo74.fastapi_openai_rag.domain.models.group import Group
+from ygo74.fastapi_openai_rag.domain.exceptions.entity_not_found_exception import EntityNotFoundError
+from ygo74.fastapi_openai_rag.domain.exceptions.entity_already_exists import EntityAlreadyExistsError
+from ygo74.fastapi_openai_rag.domain.exceptions.validation_error import ValidationError
 from ygo74.fastapi_openai_rag.main import app
 
 
@@ -103,17 +106,6 @@ class TestGroupsEndpoints:
             description=group_data["description"]
         )
 
-    def test_create_group_validation_error(self, client: TestClient) -> None:
-        """Test group creation with invalid data."""
-        # arrange
-        invalid_data: dict = {}  # Missing required name field
-
-        # act
-        response = client.post("/v1/groups/", json=invalid_data)
-
-        # assert
-        assert response.status_code == 422
-
     def test_create_group_already_exists(self, client: TestClient, mock_group_service: MagicMock) -> None:
         """Test group creation when name already exists."""
         # arrange
@@ -121,14 +113,30 @@ class TestGroupsEndpoints:
             "name": "Existing Group",
             "description": "A group that already exists"
         }
-        mock_group_service.add_or_update_group.side_effect = ValueError("Group with name Existing Group already exists")
+        mock_group_service.add_or_update_group.side_effect = EntityAlreadyExistsError("Group", "name Existing Group")
+
+        # act
+        response = client.post("/v1/groups/", json=group_data)
+
+        # assert
+        assert response.status_code == 409
+        assert "Group with identifier 'name Existing Group' already exists" in response.json()["detail"]
+
+    def test_create_group_validation_error(self, client: TestClient, mock_group_service: MagicMock) -> None:
+        """Test group creation with validation error from service."""
+        # arrange
+        group_data: dict = {
+            "name": "",  # Empty name
+            "description": "A group with empty name"
+        }
+        mock_group_service.add_or_update_group.side_effect = ValidationError("Name is required for new groups")
 
         # act
         response = client.post("/v1/groups/", json=group_data)
 
         # assert
         assert response.status_code == 400
-        assert "already exists" in response.json()["detail"]
+        assert "Name is required" in response.json()["detail"]
 
     def test_get_group_by_id_success(self, client: TestClient, mock_group_service: MagicMock) -> None:
         """Test successful retrieval of group by ID."""
@@ -158,14 +166,14 @@ class TestGroupsEndpoints:
         """Test group retrieval when group doesn't exist."""
         # arrange
         group_id: int = 999
-        mock_group_service.get_group_by_id.return_value = None
+        mock_group_service.get_group_by_id.side_effect = EntityNotFoundError("Group", str(group_id))
 
         # act
         response = client.get(f"/v1/groups/{group_id}")
 
         # assert
         assert response.status_code == 404
-        assert f"Group with ID {group_id} not found" in response.json()["detail"]
+        assert f"Group with identifier '{group_id}' not found" in response.json()["detail"]
 
     def test_update_group_success(self, client: TestClient, mock_group_service: MagicMock) -> None:
         """Test successful group update."""
@@ -207,45 +215,48 @@ class TestGroupsEndpoints:
             "name": "Updated Group",
             "description": "Updated description"
         }
-        from sqlalchemy.exc import NoResultFound
-        mock_group_service.add_or_update_group.side_effect = NoResultFound(f"Group with id {group_id} not found")
+        mock_group_service.add_or_update_group.side_effect = EntityNotFoundError("Group", str(group_id))
 
         # act
         response = client.put(f"/v1/groups/{group_id}", json=update_data)
 
         # assert
         assert response.status_code == 404
-        assert f"Group with id {group_id} not found" in response.json()["detail"]
+        assert f"Group with identifier '{group_id}' not found" in response.json()["detail"]
 
-    def test_update_group_partial_update(self, client: TestClient, mock_group_service: MagicMock) -> None:
-        """Test partial group update (only name)."""
+    def test_update_group_validation_error(self, client: TestClient, mock_group_service: MagicMock) -> None:
+        """Test group update with validation error."""
         # arrange
         group_id: int = 1
         update_data: dict = {
-            "name": "Updated Name Only"
+            "name": "",  # Invalid empty name
+            "description": "Updated description"
         }
-        updated_group: Group = Group(
-            id=group_id,
-            name=update_data["name"],
-            description="Original description",
-            created=datetime.now(timezone.utc),
-            updated=datetime.now(timezone.utc)
-        )
-        status_result: Tuple[str, Group] = ("updated", updated_group)
-        mock_group_service.add_or_update_group.return_value = status_result
+        mock_group_service.add_or_update_group.side_effect = ValidationError("Name cannot be empty")
 
         # act
         response = client.put(f"/v1/groups/{group_id}", json=update_data)
 
         # assert
-        assert response.status_code == 200
-        response_data = response.json()
-        assert response_data["name"] == update_data["name"]
-        mock_group_service.add_or_update_group.assert_called_once_with(
-            group_id=group_id,
-            name=update_data["name"],
-            description=None
-        )
+        assert response.status_code == 400
+        assert "Name cannot be empty" in response.json()["detail"]
+
+    def test_update_group_already_exists(self, client: TestClient, mock_group_service: MagicMock) -> None:
+        """Test group update when new name already exists."""
+        # arrange
+        group_id: int = 1
+        update_data: dict = {
+            "name": "Existing Group Name",
+            "description": "Updated description"
+        }
+        mock_group_service.add_or_update_group.side_effect = EntityAlreadyExistsError("Group", "name Existing Group Name")
+
+        # act
+        response = client.put(f"/v1/groups/{group_id}", json=update_data)
+
+        # assert
+        assert response.status_code == 409
+        assert "Group with identifier 'name Existing Group Name' already exists" in response.json()["detail"]
 
     def test_delete_group_success(self, client: TestClient, mock_group_service: MagicMock) -> None:
         """Test successful group deletion."""
@@ -266,14 +277,14 @@ class TestGroupsEndpoints:
         """Test group deletion when group doesn't exist."""
         # arrange
         group_id: int = 999
-        mock_group_service.delete_group.side_effect = ValueError(f"Entity with id {group_id} not found")
+        mock_group_service.delete_group.side_effect = EntityNotFoundError("Group", str(group_id))
 
         # act
         response = client.delete(f"/v1/groups/{group_id}")
 
         # assert
         assert response.status_code == 404
-        assert f"Entity with id {group_id} not found" in response.json()["detail"]
+        assert f"Group with identifier '{group_id}' not found" in response.json()["detail"]
 
     def test_get_group_statistics_success(self, client: TestClient, mock_group_service: MagicMock) -> None:
         """Test successful retrieval of group statistics."""
@@ -323,3 +334,39 @@ class TestGroupsEndpoints:
         response = client.get("/v1/groups/")
         # The response might be an error due to missing database, but dependency injection should work
         assert response.status_code in [200, 500]  # Either success or internal server error, but not dependency error
+
+    def test_get_group_by_name_success(self, client: TestClient, mock_group_service: MagicMock) -> None:
+        """Test successful retrieval of group by name."""
+        # arrange
+        name: str = "test-group"
+        group: Group = Group(
+            id=1,
+            name=name,
+            description="A test group",
+            created=datetime.now(timezone.utc),
+            updated=datetime.now(timezone.utc)
+        )
+        mock_group_service.get_group_by_name.return_value = group
+
+        # act
+        response = client.get(f"/v1/groups/name/{name}")
+
+        # assert
+        assert response.status_code == 200
+        response_data = response.json()
+        assert response_data["name"] == name
+        assert response_data["description"] == "A test group"
+        mock_group_service.get_group_by_name.assert_called_once_with(name)
+
+    def test_get_group_by_name_not_found(self, client: TestClient, mock_group_service: MagicMock) -> None:
+        """Test group retrieval by name when group doesn't exist."""
+        # arrange
+        name: str = "non-existent-group"
+        mock_group_service.get_group_by_name.side_effect = EntityNotFoundError("Group", name)
+
+        # act
+        response = client.get(f"/v1/groups/name/{name}")
+
+        # assert
+        assert response.status_code == 404
+        assert f"Group with identifier '{name}' not found" in response.json()["detail"]

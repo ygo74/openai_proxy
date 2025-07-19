@@ -14,6 +14,9 @@ from ygo74.fastapi_openai_rag.domain.models.model import Model, ModelStatus
 from ygo74.fastapi_openai_rag.application.services.model_service import ModelService
 from ygo74.fastapi_openai_rag.domain.repositories.model_repository import IModelRepository
 from ygo74.fastapi_openai_rag.domain.unit_of_work import UnitOfWork
+from ygo74.fastapi_openai_rag.domain.exceptions.entity_not_found_exception import EntityNotFoundError
+from ygo74.fastapi_openai_rag.domain.exceptions.entity_already_exists import EntityAlreadyExistsError
+from ygo74.fastapi_openai_rag.domain.exceptions.validation_error import ValidationError
 
 
 class MockUnitOfWork:
@@ -125,7 +128,7 @@ class TestModelService:
         mock_repository.get_by_technical_name.return_value = existing_model
 
         # act & assert
-        with pytest.raises(ValueError, match=f"Model with technical_name {technical_name} already exists"):
+        with pytest.raises(EntityAlreadyExistsError) as exc_info:
             service.add_or_update_model(
                 url="http://test.com",
                 name="test-model",
@@ -133,11 +136,15 @@ class TestModelService:
                 capabilities={}
             )
 
+        assert f"technical_name {technical_name}" in str(exc_info.value)
+
     def test_add_model_missing_fields(self, service: ModelService, mock_repository: Mock) -> None:
         """Test model creation without required fields."""
         # act & assert
-        with pytest.raises(ValueError, match="URL, name, and technical_name are required for new models"):
+        with pytest.raises(ValidationError) as exc_info:
             service.add_or_update_model(name="test-model")
+
+        assert "URL, name, and technical_name are required for new models" in str(exc_info.value)
 
     def test_update_model_success(self, service: ModelService, mock_repository: Mock) -> None:
         """Test successful model update."""
@@ -183,18 +190,21 @@ class TestModelService:
         mock_repository.update.assert_called_once()
 
     def test_update_model_not_found(self, service: ModelService, mock_repository: Mock) -> None:
-        """Test model update with non-existent model."""
+        """Test updating a non-existent model raises EntityNotFoundError."""
         # arrange
         model_id: int = 999
         mock_repository.get_by_id.return_value = None
 
         # act & assert
-        with pytest.raises(NoResultFound, match=f"Model with id {model_id} not found"):
+        with pytest.raises(EntityNotFoundError) as exc_info:
             service.add_or_update_model(
                 model_id=model_id,
-                url="http://test.com",
-                name="test-model"
+                url="http://example.com/new",
+                name="Updated Model",
+                technical_name="updated_model"
             )
+
+        assert "Model with identifier '999' not found" in str(exc_info.value)
 
     def test_update_model_status_success(self, service: ModelService, mock_repository: Mock) -> None:
         """Test successful model status update."""
@@ -233,14 +243,16 @@ class TestModelService:
         mock_repository.update.assert_called_once()
 
     def test_update_model_status_not_found(self, service: ModelService, mock_repository: Mock) -> None:
-        """Test model status update with non-existent model."""
+        """Test updating status of non-existent model raises EntityNotFoundError."""
         # arrange
         model_id: int = 999
         mock_repository.get_by_id.return_value = None
 
         # act & assert
-        with pytest.raises(NoResultFound, match=f"Model with id {model_id} not found"):
+        with pytest.raises(EntityNotFoundError) as exc_info:
             service.update_model_status(model_id, ModelStatus.APPROVED)
+
+        assert "Model with identifier '999' not found" in str(exc_info.value)
 
     def test_get_all_models(self, service: ModelService, mock_repository: Mock) -> None:
         """Test getting all models."""

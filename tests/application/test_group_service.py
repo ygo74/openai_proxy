@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 from unittest.mock import MagicMock, Mock
 import pytest
-from sqlalchemy.exc import NoResultFound
 
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
@@ -14,6 +13,9 @@ from ygo74.fastapi_openai_rag.domain.models.group import Group
 from ygo74.fastapi_openai_rag.application.services.group_service import GroupService
 from ygo74.fastapi_openai_rag.domain.repositories.group_repository import IGroupRepository
 from ygo74.fastapi_openai_rag.domain.unit_of_work import UnitOfWork
+from ygo74.fastapi_openai_rag.domain.exceptions.entity_not_found_exception import EntityNotFoundError
+from ygo74.fastapi_openai_rag.domain.exceptions.entity_already_exists import EntityAlreadyExistsError
+from ygo74.fastapi_openai_rag.domain.exceptions.validation_error import ValidationError
 
 
 class MockUnitOfWork:
@@ -115,13 +117,13 @@ class TestGroupService:
         mock_repository.get_by_name.return_value = existing_group
 
         # act & assert
-        with pytest.raises(ValueError, match=f"Group with name {name} already exists"):
+        with pytest.raises(EntityAlreadyExistsError, match=f"Group with identifier 'name {name}' already exists"):
             service.add_or_update_group(name=name, description="New description")
 
     def test_add_group_missing_name(self, service: GroupService, mock_repository: Mock) -> None:
         """Test group creation without name."""
         # act & assert
-        with pytest.raises(ValueError, match="Name is required for new groups"):
+        with pytest.raises(ValidationError, match="Name is required for new groups"):
             service.add_or_update_group(description="Test description")
 
     def test_update_group_success(self, service: GroupService, mock_repository: Mock) -> None:
@@ -168,7 +170,7 @@ class TestGroupService:
         mock_repository.get_by_id.return_value = None
 
         # act & assert
-        with pytest.raises(NoResultFound, match=f"Group with id {group_id} not found"):
+        with pytest.raises(EntityNotFoundError, match=f"Group with identifier '{group_id}' not found"):
             service.add_or_update_group(
                 group_id=group_id,
                 name="test-group",
@@ -257,12 +259,34 @@ class TestGroupService:
         """Test successful group deletion."""
         # arrange
         group_id: int = 1
+        existing_group: Group = Group(
+            id=group_id,
+            name="test-group",
+            description="Test description",
+            created=datetime.now(timezone.utc),
+            updated=datetime.now(timezone.utc)
+        )
+        mock_repository.get_by_id.return_value = existing_group
 
         # act
         service.delete_group(group_id)
 
         # assert
+        mock_repository.get_by_id.assert_called_once_with(group_id)
         mock_repository.remove.assert_called_once_with(group_id)
+
+    def test_delete_group_not_found(self, service: GroupService, mock_repository: Mock) -> None:
+        """Test group deletion when group doesn't exist."""
+        # arrange
+        group_id: int = 999
+        mock_repository.get_by_id.return_value = None
+
+        # act & assert
+        with pytest.raises(EntityNotFoundError, match=f"Group with identifier '{group_id}' not found"):
+            service.delete_group(group_id)
+
+        # Verify remove was not called since group doesn't exist
+        mock_repository.remove.assert_not_called()
 
     def test_unit_of_work_commit_on_success(self, mock_uow: MockUnitOfWork, mock_repository_factory: Mock) -> None:
         """Test that Unit of Work commits on successful operation."""
@@ -306,11 +330,21 @@ class TestGroupService:
         mock_repository.get_by_id.return_value = expected_group
 
         # act
-        result: Optional[Group] = service.get_group_by_id(group_id)
+        result: Group = service.get_group_by_id(group_id)
 
         # assert
         assert result == expected_group
         mock_repository.get_by_id.assert_called_once_with(group_id)
+
+    def test_get_group_by_id_not_found(self, service: GroupService, mock_repository: Mock) -> None:
+        """Test getting group by ID when not found."""
+        # arrange
+        group_id: int = 999
+        mock_repository.get_by_id.return_value = None
+
+        # act & assert
+        with pytest.raises(EntityNotFoundError, match=f"Group with identifier '{group_id}' not found"):
+            service.get_group_by_id(group_id)
 
     def test_get_group_by_name(self, service: GroupService, mock_repository: Mock) -> None:
         """Test getting group by name."""
@@ -326,8 +360,18 @@ class TestGroupService:
         mock_repository.get_by_name.return_value = expected_group
 
         # act
-        result: Optional[Group] = service.get_group_by_name(name)
+        result: Group = service.get_group_by_name(name)
 
         # assert
         assert result == expected_group
         mock_repository.get_by_name.assert_called_once_with(name)
+
+    def test_get_group_by_name_not_found(self, service: GroupService, mock_repository: Mock) -> None:
+        """Test getting group by name when not found."""
+        # arrange
+        name: str = "non-existent-group"
+        mock_repository.get_by_name.return_value = None
+
+        # act & assert
+        with pytest.raises(EntityNotFoundError, match=f"Group with identifier '{name}' not found"):
+            service.get_group_by_name(name)
