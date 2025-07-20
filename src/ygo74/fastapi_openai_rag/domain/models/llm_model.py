@@ -3,12 +3,13 @@ from datetime import datetime
 from enum import Enum
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
 from pydantic import BaseModel, ConfigDict
+from .llm import LLMProvider
 
 if TYPE_CHECKING:
     from .group import Group
 
 
-class ModelStatus(str, Enum):
+class LlmModelStatus(str, Enum):
     """Model status enumeration."""
     NEW = "NEW"
     PENDING = "PENDING"
@@ -19,7 +20,7 @@ class ModelStatus(str, Enum):
     RETIRED = "RETIRED"
 
 
-class Model(BaseModel):
+class LlmModel(BaseModel):
     """Model domain model.
 
     Attributes:
@@ -28,6 +29,7 @@ class Model(BaseModel):
         name (str): Model display name
         technical_name (str): Model unique technical identifier
         status (ModelStatus): Current model status
+        provider (LLMProvider): LLM provider type
         created (datetime): Creation timestamp
         updated (datetime): Last update timestamp
         capabilities (Dict[str, Any]): Model capabilities configuration
@@ -39,7 +41,8 @@ class Model(BaseModel):
     url: str
     name: str
     technical_name: str
-    status: ModelStatus = ModelStatus.NEW
+    status: LlmModelStatus = LlmModelStatus.NEW
+    provider: LLMProvider
     created: datetime
     updated: datetime
     capabilities: Dict[str, Any] = {}

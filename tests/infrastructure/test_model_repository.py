@@ -9,7 +9,8 @@ import pytest
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
 
-from ygo74.fastapi_openai_rag.domain.models.model import Model, ModelStatus
+from ygo74.fastapi_openai_rag.domain.models.llm import LLMProvider
+from ygo74.fastapi_openai_rag.domain.models.llm_model import LlmModel, LlmModelStatus
 from ygo74.fastapi_openai_rag.infrastructure.db.models.model_orm import ModelORM
 from ygo74.fastapi_openai_rag.infrastructure.db.repositories.model_repository import SQLModelRepository
 from tests.conftest import MockSession
@@ -32,7 +33,7 @@ class TestSQLModelRepository:
             url="http://test.com",
             name="Test Model",
             technical_name=technical_name,
-            status=ModelStatus.NEW,
+            status=LlmModelStatus.NEW,
             capabilities={},
             created=datetime.now(timezone.utc),
             updated=datetime.now(timezone.utc)
@@ -40,7 +41,7 @@ class TestSQLModelRepository:
         session.set_query_result([expected_model])
 
         # act
-        result: Optional[Model] = repository.get_by_technical_name(technical_name)
+        result: Optional[LlmModel] = repository.get_by_technical_name(technical_name)
 
         # assert
         assert result is not None
@@ -53,7 +54,7 @@ class TestSQLModelRepository:
         session.set_query_result([])
 
         # act
-        result: Optional[Model] = repository.get_by_technical_name(technical_name)
+        result: Optional[LlmModel] = repository.get_by_technical_name(technical_name)
 
         # assert
         assert result is None
@@ -68,7 +69,7 @@ class TestSQLModelRepository:
                 url="http://test1.com",
                 name="Model 1",
                 technical_name="model_1",
-                status=ModelStatus.NEW,
+                status=LlmModelStatus.NEW,
                 capabilities={},
                 created=datetime.now(timezone.utc),
                 updated=datetime.now(timezone.utc)
@@ -78,7 +79,7 @@ class TestSQLModelRepository:
                 url="http://test2.com",
                 name="Model 2",
                 technical_name="model_2",
-                status=ModelStatus.APPROVED,
+                status=LlmModelStatus.APPROVED,
                 capabilities={},
                 created=datetime.now(timezone.utc),
                 updated=datetime.now(timezone.utc)
@@ -91,7 +92,7 @@ class TestSQLModelRepository:
         session.set_execute_result(mock_result)
 
         # act
-        result: List[Model] = repository.get_by_group_id(group_id)
+        result: List[LlmModel] = repository.get_by_group_id(group_id)
 
         # assert
         assert len(result) == 2
@@ -109,7 +110,7 @@ class TestSQLModelRepository:
         session.set_execute_result(mock_result)
 
         # act
-        result: List[Model] = repository.get_by_group_id(group_id)
+        result: List[LlmModel] = repository.get_by_group_id(group_id)
 
         # assert
         assert len(result) == 0
@@ -134,7 +135,7 @@ class TestSQLModelRepository:
             url="http://test.com",
             name="Test Model",
             technical_name="test_model",
-            status=ModelStatus.NEW,
+            status=LlmModelStatus.NEW,
             capabilities={},
             created=datetime.now(timezone.utc),
             updated=datetime.now(timezone.utc)
@@ -142,7 +143,7 @@ class TestSQLModelRepository:
         session.set_query_result([expected_model])
 
         # act
-        result: Optional[Model] = repository.get_by_id(model_id)
+        result: Optional[LlmModel] = repository.get_by_id(model_id)
 
         # assert
         assert result is not None
@@ -156,7 +157,7 @@ class TestSQLModelRepository:
         session.set_query_result([])
 
         # act
-        result: Optional[Model] = repository.get_by_id(model_id)
+        result: Optional[LlmModel] = repository.get_by_id(model_id)
 
         # assert
         assert result is None
@@ -170,7 +171,7 @@ class TestSQLModelRepository:
                 url="http://test1.com",
                 name="Model 1",
                 technical_name="model_1",
-                status=ModelStatus.NEW,
+                status=LlmModelStatus.NEW,
                 capabilities={},
                 created=datetime.now(timezone.utc),
                 updated=datetime.now(timezone.utc)
@@ -180,7 +181,7 @@ class TestSQLModelRepository:
                 url="http://test2.com",
                 name="Model 2",
                 technical_name="model_2",
-                status=ModelStatus.APPROVED,
+                status=LlmModelStatus.APPROVED,
                 capabilities={},
                 created=datetime.now(timezone.utc),
                 updated=datetime.now(timezone.utc)
@@ -189,7 +190,7 @@ class TestSQLModelRepository:
         session.set_query_result(models)
 
         # act
-        result: List[Model] = repository.get_all()
+        result: List[LlmModel] = repository.get_all()
 
         # assert
         assert len(result) == 2
@@ -197,51 +198,48 @@ class TestSQLModelRepository:
         assert result[1].name == "Model 2"
 
     def test_add_model(self, repository: SQLModelRepository, session: MockSession) -> None:
-        """Test adding new model."""
+        """Test adding a new model."""
         # arrange
-        url: str = "http://test.com"
-        name: str = "Test Model"
-        technical_name: str = "test_model"
-        capabilities: dict = {"feature": "test"}
-        model: Model = Model(
-            url=url,
-            name=name,
-            technical_name=technical_name,
-            status=ModelStatus.NEW,
-            capabilities=capabilities,
+        model: LlmModel = LlmModel(
+            url="http://test.com",
+            name="Test Model",
+            technical_name="test_model",
+            provider=LLMProvider.OPENAI,
+            status=LlmModelStatus.NEW,
+            capabilities={"test": True},
             created=datetime.now(timezone.utc),
             updated=datetime.now(timezone.utc)
         )
 
         # act
-        result: Model = repository.add(model)
+        result: LlmModel = repository.add(model)
 
         # assert
         assert len(session.added_items) == 1
-        assert result.url == url
-        assert result.name == name
-        assert result.technical_name == technical_name
+        assert result.url == model.url
+        assert result.name == model.name
+        assert result.technical_name == model.technical_name
 
-    def test_update_model_found(self, repository: SQLModelRepository, session: MockSession) -> None:
-        """Test updating existing model."""
+    def test_update_model_found(self, repository: SQLModelRepository,session: MockSession) -> None:
+        """Test updating an existing model."""
         # arrange
-        model_id: int = 1
-        updated_model: Model = Model(
-            id=model_id,
+        updated_model: LlmModel = LlmModel(
+            id=1,
             url="http://updated.com",
             name="Updated Model",
             technical_name="updated_model",
-            status=ModelStatus.APPROVED,
-            capabilities={"updated": "feature"},
+            provider=LLMProvider.ANTHROPIC,
+            status=LlmModelStatus.APPROVED,
+            capabilities={"updated": True},
             created=datetime.now(timezone.utc),
             updated=datetime.now(timezone.utc)
         )
         existing_orm: ModelORM = ModelORM(
-            id=model_id,
+            id=1,
             url="http://original.com",
             name="Original Model",
             technical_name="original_model",
-            status=ModelStatus.NEW,
+            status=LlmModelStatus.NEW,
             capabilities={},
             created=datetime.now(timezone.utc),
             updated=datetime.now(timezone.utc)
@@ -249,23 +247,23 @@ class TestSQLModelRepository:
         session.set_query_result([existing_orm])
 
         # act
-        result: Model = repository.update(updated_model)
+        result: LlmModel = repository.update(updated_model)
 
         # assert
         assert result.name == "Updated Model"
         assert result.technical_name == "updated_model"
-        assert result.status == ModelStatus.APPROVED
+        assert result.status == LlmModelStatus.APPROVED
 
     def test_update_model_not_found(self, repository: SQLModelRepository, session: MockSession) -> None:
-        """Test updating model that doesn't exist."""
+        """Test updating a non-existent model."""
         # arrange
-        model_id: int = 999
-        updated_model: Model = Model(
-            id=model_id,
-            url="http://updated.com",
-            name="Updated Model",
-            technical_name="updated_model",
-            status=ModelStatus.APPROVED,
+        updated_model: LlmModel = LlmModel(
+            id=999,
+            url="http://notfound.com",
+            name="Not Found Model",
+            technical_name="not_found_model",
+            provider=LLMProvider.AZURE,
+            status=LlmModelStatus.NEW,
             capabilities={},
             created=datetime.now(timezone.utc),
             updated=datetime.now(timezone.utc)
@@ -285,7 +283,7 @@ class TestSQLModelRepository:
             url="http://test.com",
             name="Model to Delete",
             technical_name="model_to_delete",
-            status=ModelStatus.NEW,
+            status=LlmModelStatus.NEW,
             capabilities={},
             created=datetime.now(timezone.utc),
             updated=datetime.now(timezone.utc)

@@ -4,8 +4,10 @@ from typing import Dict, Any, Optional, Protocol
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from ...domain.models.llm import LLMRequest, LLMResponse, LLMProvider, TokenUsage
-from ...domain.models.model import Model, ModelStatus
+from ...domain.models.llm_model import LlmModel, LlmModelStatus
 from ...infrastructure.db.repositories.model_repository import SQLModelRepository
+from ...domain.models.chat_completion import ChatCompletionRequest, ChatCompletionResponse
+from ...domain.models.completion import CompletionRequest, CompletionResponse
 import logging
 
 logger = logging.getLogger(__name__)
@@ -21,6 +23,28 @@ class LLMClientProtocol(Protocol):
 
         Returns:
             LLMResponse: Generated response with metadata
+        """
+        ...
+
+    async def chat_completion(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
+        """Generate chat completion from the LLM.
+
+        Args:
+            request (ChatCompletionRequest): Chat completion request
+
+        Returns:
+            ChatCompletionResponse: Generated response with metadata
+        """
+        ...
+
+    async def completion(self, request: CompletionRequest) -> CompletionResponse:
+        """Generate text completion from the LLM.
+
+        Args:
+            request (CompletionRequest): Text completion request
+
+        Returns:
+            CompletionResponse: Generated response with metadata
         """
         ...
 
@@ -70,7 +94,7 @@ class LLMService:
         if not model:
             raise ValueError(f"Model {technical_name} not found")
 
-        if model.status != ModelStatus.APPROVED:
+        if model.status != LlmModelStatus.APPROVED:
             raise ValueError(f"Model {technical_name} is not approved for use")
 
         # Determine provider from model configuration

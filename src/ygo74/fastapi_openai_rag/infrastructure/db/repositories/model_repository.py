@@ -2,12 +2,12 @@
 from typing import Optional, List
 from sqlalchemy.orm import Session
 from sqlalchemy import select
-from ygo74.fastapi_openai_rag.domain.models.model import Model
+from ygo74.fastapi_openai_rag.domain.models.llm_model import LlmModel
 from ygo74.fastapi_openai_rag.infrastructure.db.models.model_orm import ModelORM
 from ygo74.fastapi_openai_rag.infrastructure.db.mappers.model_mapper import ModelMapper
 from ygo74.fastapi_openai_rag.infrastructure.db.repositories.base_repository import SQLBaseRepository
 
-class SQLModelRepository(SQLBaseRepository[Model, ModelORM]):
+class SQLModelRepository(SQLBaseRepository[LlmModel, ModelORM]):
     """Repository implementation for Model entity using SQLAlchemy."""
 
     def __init__(self, session: Session):
@@ -18,7 +18,22 @@ class SQLModelRepository(SQLBaseRepository[Model, ModelORM]):
         """
         super().__init__(session, ModelORM, ModelMapper())
 
-    def get_by_technical_name(self, technical_name: str) -> Optional[Model]:
+    def get_by_name(self, name: str) -> Optional[LlmModel]:
+        """Get model by name.
+
+        Args:
+            name (str): Model name
+
+        Returns:
+            Optional[Model]: Model if found, None otherwise
+        """
+        orm_model = self._session.query(ModelORM).filter(
+            ModelORM.name == name
+        ).first()
+        return self._mapper.to_domain(orm_model) if orm_model else None
+
+
+    def get_by_technical_name(self, technical_name: str) -> Optional[LlmModel]:
         """Get model by technical name.
 
         Args:
@@ -32,7 +47,7 @@ class SQLModelRepository(SQLBaseRepository[Model, ModelORM]):
         ).first()
         return self._mapper.to_domain(orm_model) if orm_model else None
 
-    def get_by_group_id(self, group_id: int) -> List[Model]:
+    def get_by_group_id(self, group_id: int) -> List[LlmModel]:
         """Get all models associated with a group.
 
         Args:

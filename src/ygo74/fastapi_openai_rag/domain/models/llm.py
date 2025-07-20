@@ -1,6 +1,6 @@
 """Domain models for LLM interactions."""
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union, List
 from enum import Enum
 from pydantic import BaseModel, Field
 
@@ -9,6 +9,8 @@ class LLMProvider(str, Enum):
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
     AZURE = "azure"
+    MISTRAL = "mistral"
+    COHERE = "cohere"
 
 class TokenUsage(BaseModel):
     """Token usage information for an LLM request.
@@ -22,7 +24,28 @@ class TokenUsage(BaseModel):
     completion_tokens: int
     total_tokens: int = Field(..., description="Total tokens used in the request")
 
-class LLMRequest(BaseModel):
+class LLMRequestType(str, Enum):
+    """Types of LLM requests."""
+    COMPLETION = "completion"
+    CHAT_COMPLETION = "chat_completion"
+    EMBEDDING = "embedding"
+    IMAGE_GENERATION = "image_generation"
+
+class BaseLLMRequest(BaseModel):
+    """Base class for all LLM requests.
+
+    Attributes:
+        request_id (Optional[str]): Unique request identifier
+        request_type (LLMRequestType): Type of LLM request
+        user_id (Optional[str]): User making the request
+        metadata (Dict[str, Any]): Additional request metadata
+    """
+    request_id: Optional[str] = None
+    request_type: LLMRequestType
+    user_id: Optional[str] = None
+    metadata: Dict[str, Any] = {}
+
+class LLMRequest(BaseLLMRequest):
     """Base LLM request model.
 
     Attributes:
@@ -39,6 +62,7 @@ class LLMRequest(BaseModel):
     temperature: Optional[float] = None
     provider: LLMProvider
     additional_params: Dict[str, Any] = {}
+    request_type: LLMRequestType = LLMRequestType.COMPLETION
 
 class LLMResponse(BaseModel):
     """Base LLM response model.

@@ -2,7 +2,7 @@
 from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel
-from .model import Model
+from .llm_model import LlmModel
 
 class Group(BaseModel):
     """Group domain model.
@@ -20,7 +20,7 @@ class Group(BaseModel):
     description: Optional[str] = None
     created: datetime
     updated: datetime
-    models: List['Model'] = []
+    models: List['LlmModel'] = []
 
-Model.model_rebuild()  # Ensure forward reference resolution
+LlmModel.model_rebuild()  # Ensure forward reference resolution
 Group.model_rebuild()  # Ensure forward reference resolution

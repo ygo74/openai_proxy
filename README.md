@@ -6,3 +6,4 @@ This project is a FastAPI-based proxy for OpenAI. It provides a simple interface
 # sources
 
 transparent proxy : https://github.com/fangwentong/openai-proxy
+OpenAI schema : https://github.com/openai/openai-openapi/blob/manual_spec/openapi.yaml

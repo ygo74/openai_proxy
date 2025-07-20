@@ -1,5 +1,5 @@
 """Model endpoints module."""
-from typing import List, Optional, Dict, Any, Tuple
+from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status as http_status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -8,8 +8,9 @@ import logging
 from ....infrastructure.db.session import get_db
 from ....infrastructure.db.unit_of_work import SQLUnitOfWork
 from ....application.services.model_service import ModelService
-from ....domain.models.model import Model, ModelStatus
+from ....domain.models.llm_model import LlmModel, LlmModelStatus
 from ....domain.models.configuration import AppConfig
+from ....domain.models.llm import LLMProvider
 from ..decorators import endpoint_handler
 
 logger = logging.getLogger(__name__)
@@ -18,30 +19,33 @@ router = APIRouter()
 
 class ModelResponse(BaseModel):
     """Model response schema."""
-    id: int
+    id: Optional[int] = None
     url: str
     name: str
     technical_name: str
-    status: ModelStatus
-    capabilities: dict = {}
+    provider: LLMProvider  # Utiliser l'enum directement
+    status: LlmModelStatus
+    capabilities: Dict[str, Any] = {}
 
 class ModelCreate(BaseModel):
     """Model creation schema."""
     url: str
     name: str
     technical_name: str
-    capabilities: dict = {}
+    provider: LLMProvider
+    capabilities: Dict[str, Any] = {}
 
 class ModelUpdate(BaseModel):
     """Model update schema."""
     url: Optional[str] = None
     name: Optional[str] = None
     technical_name: Optional[str] = None
-    capabilities: Optional[dict] = None
+    provider: LLMProvider
+    capabilities: Optional[Dict[str, Any]] = {}
 
 class UpdateModelStatusRequest(BaseModel):
     """Request schema for updating model status."""
-    status: ModelStatus
+    status: LlmModelStatus
 
 
 def get_model_service(db: Session = Depends(get_db)) -> ModelService:
@@ -60,19 +64,19 @@ async def get_models(
     service: ModelService = Depends(get_model_service)
 ) -> List[ModelResponse]:
     """Get list of models with optional status filtering."""
-    models: List[Model] = service.get_all_models()
+    models: List[LlmModel] = service.get_all_models()
 
     # Apply status filter if provided
     if status_filter:
         try:
             # Convert string to ModelStatus enum
-            status_enum = ModelStatus(status_filter)
+            status_enum = LlmModelStatus(status_filter)
             models = [m for m in models if m.status == status_enum]
         except ValueError:
             # Invalid status value, raise error
             raise HTTPException(
                 status_code=http_status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid status value: {status_filter}. Valid values are: {[s.value for s in ModelStatus]}"
+                detail=f"Invalid status value: {status_filter}. Valid values are: {[s.value for s in LlmModelStatus]}"
             )
 
     # Apply pagination
@@ -83,6 +87,7 @@ async def get_models(
         url=m.url,
         name=m.name,
         technical_name=m.technical_name,
+        provider=m.provider,  # Maintenant compatible
         status=m.status,
         capabilities=m.capabilities
     ) for m in paginated_models]
@@ -94,14 +99,14 @@ async def get_model_statistics(
     service: ModelService = Depends(get_model_service)
 ) -> Dict[str, Any]:
     """Get model statistics."""
-    models: List[Model] = service.get_all_models()
+    models: List[LlmModel] = service.get_all_models()
 
-    stats = {
+    stats: Dict[str, Any] = {
         "total": len(models),
         "by_status": {}
     }
 
-    for status_value in ModelStatus:
+    for status_value in LlmModelStatus:
         stats["by_status"][status_value.value] = len([m for m in models if m.status == status_value])
 
     return stats
@@ -114,7 +119,7 @@ async def search_models_by_name(
     service: ModelService = Depends(get_model_service)
 ) -> List[ModelResponse]:
     """Search models by name."""
-    models: List[Model] = service.get_all_models()
+    models: List[LlmModel] = service.get_all_models()
 
     # Simple name filtering
     filtered_models = [m for m in models if name.lower() in m.name.lower()]
@@ -124,6 +129,7 @@ async def search_models_by_name(
         url=m.url,
         name=m.name,
         technical_name=m.technical_name,
+        provider=m.provider,  # Ajouter le provider
         status=m.status,
         capabilities=m.capabilities
     ) for m in filtered_models]
@@ -136,10 +142,12 @@ async def create_model(
     service: ModelService = Depends(get_model_service)
 ) -> ModelResponse:
     """Create a new model."""
-    status_result, created_model = service.add_or_update_model(
+    _, created_model = service.add_or_update_model(
+        model_id=-1,
         url=model.url,
         name=model.name,
         technical_name=model.technical_name,
+        provider=model.provider,  # Ajouter le provider
         capabilities=model.capabilities
     )
     return ModelResponse(
@@ -147,6 +155,7 @@ async def create_model(
         url=created_model.url,
         name=created_model.name,
         technical_name=created_model.technical_name,
+        provider=created_model.provider,  # Ajouter le provider
         status=created_model.status,
         capabilities=created_model.capabilities
     )
@@ -159,15 +168,18 @@ async def get_model(
     service: ModelService = Depends(get_model_service)
 ) -> ModelResponse:
     """Get a specific model by ID."""
-    model: Model = service.get_model_by_id(model_id)
-    return ModelResponse(
-        id=model.id,
-        url=model.url,
-        name=model.name,
-        technical_name=model.technical_name,
-        status=model.status,
-        capabilities=model.capabilities
-    )
+    model: LlmModel | None = service.get_model_by_id(model_id)
+
+    if model:
+        return ModelResponse(
+            id=model.id,
+            url=model.url,
+            name=model.name,
+            technical_name=model.technical_name,
+            provider=model.provider,  # Ajouter le provider
+            status=model.status,
+            capabilities=model.capabilities
+        )
 
 
 @router.put("/{model_id}", response_model=ModelResponse)
@@ -178,11 +190,12 @@ async def update_model(
     service: ModelService = Depends(get_model_service)
 ) -> ModelResponse:
     """Update a model."""
-    status_result, updated_model = service.add_or_update_model(
+    _, updated_model = service.add_or_update_model(
         model_id=model_id,
         url=model.url,
         name=model.name,
         technical_name=model.technical_name,
+        provider=model.provider,  # Ajouter le provider
         capabilities=model.capabilities
     )
 
@@ -191,6 +204,7 @@ async def update_model(
         url=updated_model.url,
         name=updated_model.name,
         technical_name=updated_model.technical_name,
+        provider=updated_model.provider,  # Ajouter le provider
         status=updated_model.status,
         capabilities=updated_model.capabilities
     )
@@ -215,12 +229,13 @@ async def update_model_status(
     service: ModelService = Depends(get_model_service)
 ) -> ModelResponse:
     """Update the status of a model."""
-    updated_model: Model = service.update_model_status(model_id, request.status)
+    updated_model: LlmModel = service.update_model_status(model_id, request.status)
     return ModelResponse(
         id=updated_model.id,
         url=updated_model.url,
         name=updated_model.name,
         technical_name=updated_model.technical_name,
+        provider=updated_model.provider,  # Ajouter le provider
         status=updated_model.status,
         capabilities=updated_model.capabilities,
     )

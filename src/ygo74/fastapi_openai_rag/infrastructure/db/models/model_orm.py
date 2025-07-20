@@ -3,7 +3,7 @@ from typing import Dict, Any, Optional, List
 from sqlalchemy import Column, String, DateTime, UniqueConstraint, JSON, Integer, Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from datetime import datetime, timezone
-from ....domain.models.model import ModelStatus
+from ....domain.models.llm_model import LlmModelStatus
 from .base import Base
 from .model_authorization import model_authorization
 
@@ -27,10 +27,11 @@ class ModelORM(Base):
     url: Mapped[str] = mapped_column(String(255), nullable=False)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     technical_name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
-    status: Mapped[ModelStatus] = mapped_column(
-        SQLEnum(ModelStatus),
+    provider: Mapped[str] = mapped_column(String(100), nullable=False)
+    status: Mapped[LlmModelStatus] = mapped_column(
+        SQLEnum(LlmModelStatus),
         nullable=False,
-        default=ModelStatus.NEW
+        default=LlmModelStatus.NEW
     )
     capabilities: Mapped[Dict[str, Any]] = mapped_column(
         JSON,

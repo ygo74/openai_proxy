@@ -1,7 +1,9 @@
 """Tests for Model domain model."""
+from typing import Dict, Any
 from datetime import datetime, timezone
 import pytest
-from src.ygo74.fastapi_openai_rag.domain.models.model import Model, ModelStatus
+from ygo74.fastapi_openai_rag.domain.models.llm_model import LlmModel, LlmModelStatus
+from ygo74.fastapi_openai_rag.domain.models.llm import LLMProvider
 
 
 class TestModel:
@@ -13,11 +15,12 @@ class TestModel:
         now = datetime.now(timezone.utc)
 
         # Act
-        model = Model(
+        model = LlmModel(
             url="http://test.com",
             name="Test Model",
             technical_name="test_model",
-            status=ModelStatus.NEW,
+            status=LlmModelStatus.NEW,
+            provider=LLMProvider.OPENAI,
             capabilities={"test": True},
             created=now,
             updated=now
@@ -27,7 +30,8 @@ class TestModel:
         assert model.url == "http://test.com"
         assert model.name == "Test Model"
         assert model.technical_name == "test_model"
-        assert model.status == ModelStatus.NEW
+        assert model.status == LlmModelStatus.NEW
+        assert model.provider == LLMProvider.OPENAI
         assert model.capabilities == {"test": True}
         assert model.created == now
         assert model.updated == now
@@ -37,30 +41,32 @@ class TestModel:
         """Test model creation with default status."""
         # Arrange & Act
         now = datetime.now(timezone.utc)
-        model = Model(
+        model = LlmModel(
             url="http://test.com",
             name="Test Model",
             technical_name="test_model",
+            provider=LLMProvider.OPENAI,
             created=now,
             updated=now
         )
 
         # Assert
-        assert model.status == ModelStatus.NEW
+        assert model.status == LlmModelStatus.NEW
         assert model.capabilities == {}
 
     def test_create_model_with_all_statuses(self):
         """Test model creation with different status values."""
         # Arrange
         now = datetime.now(timezone.utc)
-        statuses = [ModelStatus.NEW, ModelStatus.APPROVED, ModelStatus.DEPRECATED, ModelStatus.RETIRED]
+        statuses = [LlmModelStatus.NEW, LlmModelStatus.APPROVED, LlmModelStatus.DEPRECATED, LlmModelStatus.RETIRED]
 
         for status in statuses:
             # Act
-            model = Model(
+            model = LlmModel(
                 url="http://test.com",
                 name="Test Model",
                 technical_name=f"test_model_{status.value}",
+                provider=LLMProvider.OPENAI,
                 status=status,
                 created=now,
                 updated=now
@@ -73,7 +79,7 @@ class TestModel:
         """Test model with complex capabilities configuration."""
         # Arrange
         now = datetime.now(timezone.utc)
-        capabilities = {
+        capabilities: Dict[str, Any] = {
             "max_tokens": 4096,
             "supports_streaming": True,
             "supports_functions": False,
@@ -84,10 +90,11 @@ class TestModel:
         }
 
         # Act
-        model = Model(
+        model = LlmModel(
             url="http://test.com",
             name="Test Model",
             technical_name="test_model",
+            provider=LLMProvider.OPENAI,
             capabilities=capabilities,
             created=now,
             updated=now
