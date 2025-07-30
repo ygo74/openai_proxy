@@ -1,7 +1,7 @@
 """Chat completion service for handling OpenAI-compatible requests."""
 import time
 import uuid
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union
 from datetime import datetime, timezone
 from ...domain.models.chat_completion import (
     ChatCompletionRequest, ChatCompletionResponse, ChatCompletionChoice,
@@ -11,7 +11,7 @@ from ...domain.models.completion import (
     CompletionRequest, CompletionResponse, CompletionChoice
 )
 from ...domain.models.llm import LLMProvider, TokenUsage
-from ...domain.models.llm_model import LlmModel, LlmModelStatus
+from ...domain.models.llm_model import LlmModel, LlmModelStatus, AzureLlmModel
 from ...domain.unit_of_work import UnitOfWork
 from ...domain.repositories.model_repository import IModelRepository
 from ...domain.exceptions.entity_not_found_exception import EntityNotFoundError
@@ -121,14 +121,14 @@ class ChatCompletionService:
             logger.error(f"Error in text completion: {str(e)}")
             raise
 
-    async def _get_and_validate_model(self, model_name: str) -> LlmModel:
+    async def _get_and_validate_model(self, model_name: str) -> Union[LlmModel, AzureLlmModel]:
         """Get and validate model from database.
 
         Args:
             model_name (str): Model name or technical name
 
         Returns:
-            Model: Validated model entity
+            Union[LlmModel, AzureLlmModel]: Validated model entity
 
         Raises:
             EntityNotFoundError: If model not found
@@ -150,13 +150,15 @@ class ChatCompletionService:
             if model.status != LlmModelStatus.APPROVED:
                 raise ValidationError(f"Model {model_name} is not approved for use")
 
+            # The repository will return the appropriate type based on the stored data
+            # If it's an Azure model, it will be an AzureLlmModel instance
             return model
 
-    def _get_or_create_client(self, model: LlmModel) -> LLMClientProtocol:
+    def _get_or_create_client(self, model: Union[LlmModel, AzureLlmModel]) -> LLMClientProtocol:
         """Get or create LLM client for the model.
 
         Args:
-            model (LlmModel): Model entity
+            model (Union[LlmModel, AzureLlmModel]): Model entity
 
         Returns:
             LLMClientProtocol: Provider client

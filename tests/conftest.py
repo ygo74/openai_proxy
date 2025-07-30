@@ -107,6 +107,12 @@ class MockSession:
             return self.query_result[0]
         raise NoResultFound()
 
+    def merge(self, instance):
+        """Mock merge method."""
+        if hasattr(self, '_merge_mock'):
+            return self._merge_mock(instance)
+        return instance
+
     # Helper methods for test configuration
     def set_commit_error(self, error: Exception) -> None:
         """Set error to raise on commit."""

@@ -1,4 +1,4 @@
-"""OpenAI proxy client for transparent API calls."""
+"""Azure OpenAI proxy client for Azure-specific API calls."""
 import asyncio
 import httpx
 import json
@@ -21,46 +21,27 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-class OpenAIProxyClient:
-    """Transparent OpenAI proxy client for compatible providers."""
+class AzureOpenAIProxyClient:
+    """Azure OpenAI proxy client with API versioning support."""
 
-    def __init__(self, api_key: str, base_url: str, provider: LLMProvider):
-        """Initialize OpenAI proxy client.
+    def __init__(self, api_key: str, base_url: str, api_version: str, provider: LLMProvider = LLMProvider.AZURE):
+        """Initialize Azure OpenAI proxy client.
 
         Args:
             api_key (str): API key for authentication
-            base_url (str): Base URL for the OpenAI-compatible API
-            provider (LLMProvider): Provider type (OPENAI, AZURE, etc.)
+            base_url (str): Base URL for the Azure OpenAI API
+            api_version (str): Azure API version (e.g., "2024-06-01")
+            provider (LLMProvider): Provider type (defaults to AZURE)
         """
         self.api_key = api_key
         self.base_url = base_url.rstrip('/')
+        self.api_version = api_version
         self.provider = provider
         self._client = httpx.AsyncClient(timeout=120.0)
-        logger.debug(f"OpenAIProxyClient initialized for {provider} at {base_url}")
-
-    @staticmethod
-    def create_client(provider: LLMProvider, api_key: str, base_url: str, api_version: Optional[str] = None):
-        """Factory method to create appropriate client based on provider.
-
-        Args:
-            provider (LLMProvider): Provider type
-            api_key (str): API key for authentication
-            base_url (str): Base URL for the API
-            api_version (Optional[str]): API version for Azure
-
-        Returns:
-            OpenAIProxyClient or AzureOpenAIProxyClient: Appropriate client
-        """
-        if provider == LLMProvider.AZURE:
-            if not api_version:
-                raise ValueError("api_version is required for Azure OpenAI")
-            from .azure_openai_proxy_client import AzureOpenAIProxyClient
-            return AzureOpenAIProxyClient(api_key, base_url, api_version, provider)
-        else:
-            return OpenAIProxyClient(api_key, base_url, provider)
+        logger.debug(f"AzureOpenAIProxyClient initialized for {provider} at {base_url} with API version {api_version}")
 
     async def chat_completion(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
-        """Create chat completion via transparent proxy.
+        """Create chat completion via Azure OpenAI API.
 
         Args:
             request (ChatCompletionRequest): Chat completion request
@@ -72,14 +53,12 @@ class OpenAIProxyClient:
             httpx.HTTPError: If API request fails
         """
         start_time = time.time()
-        url = f"{self.base_url}/chat/completions"
+        url = self._build_url("chat/completions", request.model)
 
         headers = self._get_headers()
-
-        # Convert domain model to OpenAI API format
         payload = self._prepare_chat_payload(request)
 
-        logger.debug(f"Making chat completion request to {url}")
+        logger.debug(f"Making Azure chat completion request to {url}")
 
         try:
             response = await self._client.post(
@@ -93,18 +72,17 @@ class OpenAIProxyClient:
             response_data = response.json()
             latency_ms = (time.time() - start_time) * 1000
 
-            # Convert response to domain model
             return self._parse_chat_response(response_data, latency_ms)
 
         except httpx.HTTPError as e:
-            logger.error(f"HTTP error in chat completion: {str(e)}")
+            logger.error(f"HTTP error in Azure chat completion: {str(e)}")
             raise
         except Exception as e:
-            logger.error(f"Unexpected error in chat completion: {str(e)}")
+            logger.error(f"Unexpected error in Azure chat completion: {str(e)}")
             raise
 
     async def completion(self, request: CompletionRequest) -> CompletionResponse:
-        """Create text completion via transparent proxy.
+        """Create text completion via Azure OpenAI API.
 
         Args:
             request (CompletionRequest): Text completion request
@@ -116,14 +94,12 @@ class OpenAIProxyClient:
             httpx.HTTPError: If API request fails
         """
         start_time = time.time()
-        url = f"{self.base_url}/completions"
+        url = self._build_url("completions", request.model)
 
         headers = self._get_headers()
-
-        # Convert domain model to OpenAI API format
         payload = self._prepare_completion_payload(request)
 
-        logger.debug(f"Making text completion request to {url}")
+        logger.debug(f"Making Azure text completion request to {url}")
 
         try:
             response = await self._client.post(
@@ -137,18 +113,17 @@ class OpenAIProxyClient:
             response_data = response.json()
             latency_ms = (time.time() - start_time) * 1000
 
-            # Convert response to domain model
             return self._parse_completion_response(response_data, latency_ms)
 
         except httpx.HTTPError as e:
-            logger.error(f"HTTP error in text completion: {str(e)}")
+            logger.error(f"HTTP error in Azure text completion: {str(e)}")
             raise
         except Exception as e:
-            logger.error(f"Unexpected error in text completion: {str(e)}")
+            logger.error(f"Unexpected error in Azure text completion: {str(e)}")
             raise
 
     async def stream_chat_completion(self, request: ChatCompletionRequest) -> AsyncGenerator[ChatCompletionStreamResponse, None]:
-        """Stream chat completion via transparent proxy.
+        """Stream chat completion via Azure OpenAI API.
 
         Args:
             request (ChatCompletionRequest): Chat completion request
@@ -156,14 +131,13 @@ class OpenAIProxyClient:
         Yields:
             ChatCompletionStreamResponse: Streaming response chunks
         """
-        url = f"{self.base_url}/chat/completions"
+        url = self._build_url("chat/completions", request.model)
         headers = self._get_headers()
 
-        # Enable streaming
         payload = self._prepare_chat_payload(request)
         payload["stream"] = True
 
-        logger.debug(f"Starting streaming chat completion to {url}")
+        logger.debug(f"Starting Azure streaming chat completion to {url}")
 
         async with self._client.stream(
             "POST",
@@ -176,7 +150,7 @@ class OpenAIProxyClient:
 
             async for line in response.aiter_lines():
                 if line.startswith("data: "):
-                    data = line[6:]  # Remove "data: " prefix
+                    data = line[6:]
 
                     if data.strip() == "[DONE]":
                         break
@@ -187,26 +161,32 @@ class OpenAIProxyClient:
                     except json.JSONDecodeError:
                         continue
 
+    def _build_url(self, endpoint: str, deployment_name: str) -> str:
+        """Build Azure OpenAI API URL with deployment and API version.
+
+        Args:
+            endpoint (str): API endpoint (e.g., "chat/completions")
+            deployment_name (str): Azure deployment name
+
+        Returns:
+            str: Complete API URL
+        """
+        return f"{self.base_url}/openai/deployments/{deployment_name}/{endpoint}?api-version={self.api_version}"
+
     def _get_headers(self) -> Dict[str, str]:
-        """Get headers for API requests.
+        """Get headers for Azure OpenAI API requests.
 
         Returns:
             Dict[str, str]: Request headers
         """
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
+        return {
+            "api-key": self.api_key,
             "Content-Type": "application/json",
             "User-Agent": "fastapi-openai-rag/1.0.0"
         }
 
-        # Add provider-specific headers
-        if self.provider == LLMProvider.AZURE:
-            headers["api-key"] = self.api_key
-
-        return headers
-
     def _prepare_chat_payload(self, request: ChatCompletionRequest) -> Dict[str, Any]:
-        """Prepare chat completion payload.
+        """Prepare chat completion payload for Azure API.
 
         Args:
             request (ChatCompletionRequest): Domain request
@@ -214,10 +194,11 @@ class OpenAIProxyClient:
         Returns:
             Dict[str, Any]: API payload
         """
-        # Convert to dict and filter None values
         payload = request.model_dump(exclude_none=True)
 
-        # Convert messages to API format
+        # Remove model from payload as it's in the URL for Azure
+        payload.pop("model", None)
+
         if "messages" in payload:
             payload["messages"] = [
                 msg.model_dump(exclude_none=True) for msg in request.messages
@@ -226,7 +207,7 @@ class OpenAIProxyClient:
         return payload
 
     def _prepare_completion_payload(self, request: CompletionRequest) -> Dict[str, Any]:
-        """Prepare text completion payload.
+        """Prepare text completion payload for Azure API.
 
         Args:
             request (CompletionRequest): Domain request
@@ -234,10 +215,13 @@ class OpenAIProxyClient:
         Returns:
             Dict[str, Any]: API payload
         """
-        return request.model_dump(exclude_none=True)
+        payload = request.model_dump(exclude_none=True)
+        # Remove model from payload as it's in the URL for Azure
+        payload.pop("model", None)
+        return payload
 
     def _parse_chat_response(self, response_data: Dict[str, Any], latency_ms: float) -> ChatCompletionResponse:
-        """Parse chat completion response.
+        """Parse Azure chat completion response.
 
         Args:
             response_data (Dict[str, Any]): Raw API response
@@ -246,7 +230,6 @@ class OpenAIProxyClient:
         Returns:
             ChatCompletionResponse: Domain response
         """
-        # Extract choices
         choices = []
         for choice_data in response_data.get("choices", []):
             message_data = choice_data.get("message", {})
@@ -264,7 +247,6 @@ class OpenAIProxyClient:
             )
             choices.append(choice)
 
-        # Extract usage
         usage_data = response_data.get("usage", {})
         usage = TokenUsage(
             prompt_tokens=usage_data.get("prompt_tokens", 0),
@@ -287,7 +269,7 @@ class OpenAIProxyClient:
         )
 
     def _parse_completion_response(self, response_data: Dict[str, Any], latency_ms: float) -> CompletionResponse:
-        """Parse text completion response.
+        """Parse Azure text completion response.
 
         Args:
             response_data (Dict[str, Any]): Raw API response
@@ -296,7 +278,6 @@ class OpenAIProxyClient:
         Returns:
             CompletionResponse: Domain response
         """
-        # Extract choices
         choices = []
         for choice_data in response_data.get("choices", []):
             choice = CompletionChoice(
@@ -307,7 +288,6 @@ class OpenAIProxyClient:
             )
             choices.append(choice)
 
-        # Extract usage
         usage_data = response_data.get("usage", {})
         usage = TokenUsage(
             prompt_tokens=usage_data.get("prompt_tokens", 0),
@@ -330,7 +310,7 @@ class OpenAIProxyClient:
         )
 
     def _parse_stream_chunk(self, chunk_data: Dict[str, Any]) -> ChatCompletionStreamResponse:
-        """Parse streaming response chunk.
+        """Parse Azure streaming response chunk.
 
         Args:
             chunk_data (Dict[str, Any]): Raw chunk data
@@ -338,14 +318,12 @@ class OpenAIProxyClient:
         Returns:
             ChatCompletionStreamResponse: Streaming response
         """
-        # This is a simplified implementation
-        # You would need to implement proper streaming response parsing
         return ChatCompletionStreamResponse(
             id=chunk_data.get("id", ""),
             object=chunk_data.get("object", "chat.completion.chunk"),
             created=chunk_data.get("created", int(time.time())),
             model=chunk_data.get("model", ""),
-            choices=[]  # Would need proper parsing
+            choices=[]
         )
 
     async def close(self):

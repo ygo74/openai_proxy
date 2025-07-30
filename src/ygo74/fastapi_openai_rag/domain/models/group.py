@@ -1,8 +1,10 @@
 """Group domain model."""
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, TYPE_CHECKING
 from pydantic import BaseModel
-from .llm_model import LlmModel
+
+if TYPE_CHECKING:
+    from .llm_model import LlmModel
 
 class Group(BaseModel):
     """Group domain model.
@@ -21,6 +23,3 @@ class Group(BaseModel):
     created: datetime
     updated: datetime
     models: List['LlmModel'] = []
-
-LlmModel.model_rebuild()  # Ensure forward reference resolution
-Group.model_rebuild()  # Ensure forward reference resolution

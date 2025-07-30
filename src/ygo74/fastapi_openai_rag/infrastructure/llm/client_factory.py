@@ -4,6 +4,7 @@ from ...domain.models.llm import LLMProvider
 from ...domain.models.llm_model import LlmModel
 from ...domain.protocols.llm_client import LLMClientProtocol
 from .openai_proxy_client import OpenAIProxyClient
+from .azure_openai_proxy_client import AzureOpenAIProxyClient
 import logging
 
 logger = logging.getLogger(__name__)
@@ -16,18 +17,29 @@ class LLMClientFactory:
         """Create appropriate LLM client based on model configuration.
 
         Args:
-            model (Model): Model configuration
+            model (LlmModel): Model configuration
             api_key (str): API key for authentication
 
         Returns:
             LLMClientProtocol: Configured client
 
         Raises:
-            ValueError: If provider not supported
+            ValueError: If provider not supported or missing required configuration
         """
         provider = model.provider
 
-        if provider in [LLMProvider.OPENAI, LLMProvider.AZURE]:
+        if provider == LLMProvider.AZURE:
+            if not model.api_version:
+                raise ValueError("api_version is required for Azure OpenAI provider")
+
+            logger.debug(f"Creating Azure OpenAI proxy client for {provider} at {model.url} with API version {model.api_version}")
+            return AzureOpenAIProxyClient(
+                api_key=api_key,
+                base_url=model.url,
+                api_version=model.api_version,
+                provider=provider
+            )
+        elif provider == LLMProvider.OPENAI:
             logger.debug(f"Creating OpenAI proxy client for {provider} at {model.url}")
             return OpenAIProxyClient(
                 api_key=api_key,

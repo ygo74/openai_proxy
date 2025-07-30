@@ -2,7 +2,7 @@
 from datetime import datetime
 from enum import Enum
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 from .llm import LLMProvider
 
 if TYPE_CHECKING:
@@ -47,3 +47,41 @@ class LlmModel(BaseModel):
     updated: datetime
     capabilities: Dict[str, Any] = {}
     groups: List['Group'] = []
+
+
+class AzureLlmModel(LlmModel):
+    """Azure-specific LLM model with API version support.
+
+    Attributes:
+        api_version (str): Azure API version (required for Azure OpenAI)
+    """
+
+    api_version: str
+    provider: LLMProvider = LLMProvider.AZURE
+
+    @field_validator('provider')
+    @classmethod
+    def validate_azure_provider(cls, v: LLMProvider) -> LLMProvider:
+        """Validate that provider is Azure.
+
+        Args:
+            v (LLMProvider): Provider value
+
+        Returns:
+            LLMProvider: Validated provider
+
+        Raises:
+            ValueError: If provider is not Azure
+        """
+        if v != LLMProvider.AZURE:
+            raise ValueError("AzureLlmModel must have Azure provider")
+        return v
+
+# Resolve forward references after all models are defined
+try:
+    from .group import Group
+    LlmModel.model_rebuild()
+    AzureLlmModel.model_rebuild()
+except ImportError:
+    # Group not yet available, will be resolved later
+    pass
