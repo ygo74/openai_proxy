@@ -8,9 +8,12 @@ from .domain.exceptions.entity_not_found_exception import EntityNotFoundError
 from .domain.exceptions.entity_already_exists import EntityAlreadyExistsError
 from .domain.exceptions.validation_error import ValidationError
 from .application.services.config_service import config_service
+from .config.logging_config import setup_logging
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Setup logging before anything else
+setup_logging()
+
+# Get logger after logging is configured
 logger = logging.getLogger(__name__)
 
 # Initialize FastAPI app
@@ -59,4 +62,5 @@ async def startup_event():
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
+    logger.debug("Health check endpoint called")
     return {"status": "healthy"}

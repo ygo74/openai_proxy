@@ -250,6 +250,8 @@ class AzureOpenAIProxyClient:
         Returns:
             Dict[str, Any]: API payload
         """
+        #  payload="{\"messages\":[{\"role\":\"system\",\"content\":[{\"type\":\"text\",\"text\":\"Vous êtes un(e) assistant(e) IA qui permet aux utilisateurs de trouver des informations.\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"test\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Bonjour ! Comment puis-je vous aider aujourd'hui ?\"}]}],\"temperature\":0.7,\"top_p\":0.95,\"max_tokens\":1600}"
+
         payload = request.model_dump(exclude_none=True)
         # Remove model from payload as it's in the URL for Azure
         payload.pop("model", None)

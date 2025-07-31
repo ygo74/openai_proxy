@@ -20,7 +20,8 @@
             "cwd": "${workspaceFolder}",
             "env": {
                 "PYTHONPATH": "${workspaceFolder}/src",
-                "ENV": "development"
+                "ENV": "development",
+                "LOG_LEVEL": "DEBUG"
             },
             "justMyCode": false,
             "stopOnEntry": false
@@ -67,7 +68,8 @@
             "cwd": "${workspaceFolder}",
             "env": {
                 "PYTHONPATH": "${workspaceFolder}/src",
-                "ENV": "development"
+                "ENV": "development",
+                "LOG_LEVEL": "DEBUG"
             },
             "justMyCode": false,
             "stopOnEntry": false

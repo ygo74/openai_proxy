@@ -248,5 +248,5 @@ async def refresh_models(
 ) -> Dict[str, Any]:
     """Refresh available models from configured providers."""
     config = AppConfig.load_from_json()
-    service.fetch_available_models(config.model_configs)
+    await service.fetch_available_models(config.model_configs)
     return {"message": "Models refreshed successfully"}

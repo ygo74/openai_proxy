@@ -244,7 +244,7 @@ class ModelService:
                 provider=existing_model.provider,
                 status=status,
                 capabilities=existing_model.capabilities,
-                api_version=getattr(existing_model, 'api_version', None) if isinstance(existing_model, AzureLlmModel) else None,
+                api_version=getattr(existing_model, 'api_version', None) if existing_model.is_azure_model() else None,
                 created=existing_model.created,
                 updated=datetime.now(timezone.utc)
             )
@@ -354,7 +354,7 @@ class ModelService:
                     provider=provider,
                     status=existing_model.status,
                     capabilities=capabilities,
-                    api_version=api_version or (getattr(existing_model, 'api_version', None) if isinstance(existing_model, AzureLlmModel) else None),
+                    api_version=api_version or (getattr(existing_model, 'api_version', None) if existing_model.is_azure_model() else None),
                     created=existing_model.created,
                     updated=datetime.now(timezone.utc)
                 )

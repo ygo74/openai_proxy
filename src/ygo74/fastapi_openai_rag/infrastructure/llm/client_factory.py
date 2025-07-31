@@ -29,7 +29,7 @@ class LLMClientFactory:
         provider = model.provider
 
         if provider == LLMProvider.AZURE:
-            if not isinstance(model, AzureLlmModel):
+            if not model.is_azure_model() or not model.api_version:
                 raise ValueError("Azure provider requires AzureLlmModel with api_version")
 
             logger.debug(f"Creating Azure OpenAI proxy client for {provider} at {model.url} with API version {model.api_version}")

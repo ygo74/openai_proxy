@@ -1,6 +1,6 @@
 """Mapper for Model domain and ORM entities."""
 from typing import List, Union
-from ....domain.models.llm_model import LlmModel, AzureLlmModel, LlmModelStatus
+from ....domain.models.llm_model import LlmModel, AzureLlmModel, LlmModelStatus  # Ensure correct import path
 from ....domain.models.llm import LLMProvider
 from ..models.model_orm import ModelORM, AzureModelORM
 from .group_mapper import GroupMapper
@@ -89,7 +89,7 @@ class ModelMapper:
             "capabilities": domain_model.capabilities
         }
 
-        if isinstance(domain_model, AzureLlmModel):
+        if domain_model.is_azure_model():
             base_data["api_version"] = domain_model.api_version
             base_data["model_type"] = "azure"
             return AzureModelORM(**base_data)

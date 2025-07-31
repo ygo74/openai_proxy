@@ -20,6 +20,7 @@ class ModelConfig(BaseModel):
     url: str
     provider: str
     api_key: Optional[str] = None
+    api_version: Optional[str] = None  # For Azure models
     rate_limit: Optional[int] = None
     capabilities: Dict[str, Any] = {}
 

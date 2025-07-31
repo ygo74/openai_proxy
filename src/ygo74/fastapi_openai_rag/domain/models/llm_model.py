@@ -48,6 +48,23 @@ class LlmModel(BaseModel):
     capabilities: Dict[str, Any] = {}
     groups: List['Group'] = []
 
+    def is_azure_model(self) -> bool:
+        """Check if this is an Azure model.
+
+        Returns:
+            bool: True if this is an Azure model
+        """
+        return hasattr(self, 'api_version') and self.provider == LLMProvider.AZURE
+
+    @property
+    def model_type(self) -> str:
+        """Get the model type identifier.
+
+        Returns:
+            str: Model type identifier
+        """
+        return "azure" if self.is_azure_model() else "standard"
+
 
 class AzureLlmModel(LlmModel):
     """Azure-specific LLM model with API version support.
@@ -58,6 +75,14 @@ class AzureLlmModel(LlmModel):
 
     api_version: str
     provider: LLMProvider = LLMProvider.AZURE
+
+    def is_azure_model(self) -> bool:
+        """Check if this is an Azure model.
+
+        Returns:
+            bool: Always True for AzureLlmModel
+        """
+        return True
 
     @field_validator('provider')
     @classmethod
