@@ -1,5 +1,5 @@
 """Protocols for LLM client implementations."""
-from typing import Protocol
+from typing import Protocol, List, Dict, Any
 from ..models.chat_completion import ChatCompletionRequest, ChatCompletionResponse
 from ..models.completion import CompletionRequest, CompletionResponse
 
@@ -27,3 +27,27 @@ class LLMClientProtocol(Protocol):
             CompletionResponse: Generated response with metadata
         """
         ...
+
+    async def list_models(self) -> List[Dict[str, Any]]:
+        """List available models from the LLM provider.
+
+        Returns:
+            List[Dict[str, Any]]: List of available models with their metadata
+        """
+        ...
+
+    async def close(self) -> None:
+        """Close the client and cleanup resources.
+
+        Should be called when the client is no longer needed to properly
+        cleanup HTTP connections and other resources.
+        """
+        ...
+
+    async def __aenter__(self):
+        """Async context manager entry."""
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit with automatic cleanup."""
+        await self.close()

@@ -4,7 +4,7 @@ import httpx
 import json
 import time
 import uuid
-from typing import Dict, Any, Optional, AsyncGenerator
+from typing import Dict, Any, Optional, AsyncGenerator, List
 from datetime import datetime, timezone
 
 from ...domain.models.chat_completion import (
@@ -160,6 +160,41 @@ class AzureOpenAIProxyClient:
                         yield self._parse_stream_chunk(chunk_data)
                     except json.JSONDecodeError:
                         continue
+
+    async def list_models(self) -> List[Dict[str, Any]]:
+        """List available models from Azure OpenAI API.
+
+        Returns:
+            List[Dict[str, Any]]: List of available models
+
+        Raises:
+            httpx.HTTPError: If API request fails
+        """
+        url = f"{self.base_url}/openai/models?api-version={self.api_version}"
+        headers = self._get_headers()
+
+        logger.debug(f"Fetching available Azure models from {url}")
+
+        try:
+            response = await self._client.get(
+                url=url,
+                headers=headers,
+                timeout=30.0
+            )
+            response.raise_for_status()
+
+            response_data = response.json()
+            models = response_data.get("data", [])
+
+            logger.debug(f"Found {len(models)} available Azure models")
+            return models
+
+        except httpx.HTTPError as e:
+            logger.error(f"HTTP error fetching Azure models: {str(e)}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error fetching Azure models: {str(e)}")
+            raise
 
     def _build_url(self, endpoint: str, deployment_name: str) -> str:
         """Build Azure OpenAI API URL with deployment and API version.
@@ -326,6 +361,16 @@ class AzureOpenAIProxyClient:
             choices=[]
         )
 
-    async def close(self):
-        """Close the HTTP client."""
-        await self._client.aclose()
+    async def close(self) -> None:
+        """Close the HTTP client and cleanup resources."""
+        if hasattr(self, '_client') and self._client:
+            await self._client.aclose()
+            logger.debug(f"Azure OpenAI proxy client closed for {self.provider} with API version {self.api_version}")
+
+    async def __aenter__(self):
+        """Async context manager entry."""
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit with automatic cleanup."""
+        await self.close()

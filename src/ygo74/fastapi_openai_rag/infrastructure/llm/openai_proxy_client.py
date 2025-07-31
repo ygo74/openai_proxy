@@ -4,7 +4,7 @@ import httpx
 import json
 import time
 import uuid
-from typing import Dict, Any, Optional, AsyncGenerator
+from typing import Dict, Any, Optional, AsyncGenerator, List
 from datetime import datetime, timezone
 
 from ...domain.models.chat_completion import (
@@ -38,26 +38,6 @@ class OpenAIProxyClient:
         self._client = httpx.AsyncClient(timeout=120.0)
         logger.debug(f"OpenAIProxyClient initialized for {provider} at {base_url}")
 
-    @staticmethod
-    def create_client(provider: LLMProvider, api_key: str, base_url: str, api_version: Optional[str] = None):
-        """Factory method to create appropriate client based on provider.
-
-        Args:
-            provider (LLMProvider): Provider type
-            api_key (str): API key for authentication
-            base_url (str): Base URL for the API
-            api_version (Optional[str]): API version for Azure
-
-        Returns:
-            OpenAIProxyClient or AzureOpenAIProxyClient: Appropriate client
-        """
-        if provider == LLMProvider.AZURE:
-            if not api_version:
-                raise ValueError("api_version is required for Azure OpenAI")
-            from .azure_openai_proxy_client import AzureOpenAIProxyClient
-            return AzureOpenAIProxyClient(api_key, base_url, api_version, provider)
-        else:
-            return OpenAIProxyClient(api_key, base_url, provider)
 
     async def chat_completion(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
         """Create chat completion via transparent proxy.
@@ -186,6 +166,41 @@ class OpenAIProxyClient:
                         yield self._parse_stream_chunk(chunk_data)
                     except json.JSONDecodeError:
                         continue
+
+    async def list_models(self) -> List[Dict[str, Any]]:
+        """List available models from OpenAI-compatible API.
+
+        Returns:
+            List[Dict[str, Any]]: List of available models
+
+        Raises:
+            httpx.HTTPError: If API request fails
+        """
+        url = f"{self.base_url}/models"
+        headers = self._get_headers()
+
+        logger.debug(f"Fetching available models from {url}")
+
+        try:
+            response = await self._client.get(
+                url=url,
+                headers=headers,
+                timeout=30.0
+            )
+            response.raise_for_status()
+
+            response_data = response.json()
+            models = response_data.get("data", [])
+
+            logger.debug(f"Found {len(models)} available models")
+            return models
+
+        except httpx.HTTPError as e:
+            logger.error(f"HTTP error fetching models: {str(e)}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error fetching models: {str(e)}")
+            raise
 
     def _get_headers(self) -> Dict[str, str]:
         """Get headers for API requests.
@@ -348,6 +363,16 @@ class OpenAIProxyClient:
             choices=[]  # Would need proper parsing
         )
 
-    async def close(self):
-        """Close the HTTP client."""
-        await self._client.aclose()
+    async def close(self) -> None:
+        """Close the HTTP client and cleanup resources."""
+        if hasattr(self, '_client') and self._client:
+            await self._client.aclose()
+            logger.debug(f"OpenAI proxy client closed for {self.provider}")
+
+    async def __aenter__(self):
+        """Async context manager entry."""
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit with automatic cleanup."""
+        await self.close()

@@ -1,8 +1,7 @@
 """Base SQLAlchemy ORM model."""
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy import DateTime
-from typing import Optional
 
 class Base(DeclarativeBase):
     """Base class for all ORM models."""
@@ -10,11 +9,11 @@ class Base(DeclarativeBase):
     created: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow
+        default=datetime.now(timezone.utc)
     )
     updated: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow
+        default=datetime.now(timezone.utc),
+        onupdate=datetime.now(timezone.utc)
     )

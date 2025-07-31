@@ -1,11 +1,12 @@
 """Model ORM implementation."""
 from typing import Dict, Any, Optional, List
-from sqlalchemy import Column, String, DateTime, UniqueConstraint, JSON, Integer, Enum as SQLEnum
+from sqlalchemy import String, DateTime, UniqueConstraint, JSON, Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from datetime import datetime, timezone
 from ....domain.models.llm_model import LlmModelStatus
 from .base import Base
 from .model_authorization import model_authorization
+from .group_orm import GroupORM
 
 class ModelORM(Base):
     """SQLAlchemy model for LLM models.
@@ -71,7 +72,7 @@ class AzureModelORM(ModelORM):
         "polymorphic_identity": "azure",
     }
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: dict[str, Any]):
         """Initialize Azure model with required api_version."""
         if 'api_version' not in kwargs or not kwargs['api_version']:
             raise ValueError("api_version is required for Azure models")

@@ -156,7 +156,7 @@ class TestModelService:
                 provider=LLMProvider.OPENAI
             )
 
-        assert "URL, name, and technical_name are required for new models" in str(exc_info.value)
+        assert "URL, name, technical_name, and provider are required for new models" in str(exc_info.value)
 
     def test_update_model_success(self, service: ModelService, mock_repository: Mock) -> None:
         """Test successful model update."""

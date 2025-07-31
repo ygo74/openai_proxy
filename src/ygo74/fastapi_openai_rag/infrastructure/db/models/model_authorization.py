@@ -1,5 +1,5 @@
 """Model authorization association table."""
-from sqlalchemy import MetaData, Table, Column, Integer, ForeignKey
+from sqlalchemy import Table, Column, Integer, ForeignKey
 from .base import Base
 
 metadata = Base.metadata
