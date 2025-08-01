@@ -36,6 +36,17 @@ class LLMClientProtocol(Protocol):
         """
         ...
 
+    async def list_deployments(self) -> List[Dict[str, Any]]:
+        """List deployed models from the LLM provider.
+
+        For Azure, this returns actual deployments.
+        For other providers, this may return the same as list_models.
+
+        Returns:
+            List[Dict[str, Any]]: List of deployed models with deployment info
+        """
+        ...
+
     async def close(self) -> None:
         """Close the client and cleanup resources.
 

@@ -24,7 +24,8 @@ logger = logging.getLogger(__name__)
 class AzureOpenAIProxyClient:
     """Azure OpenAI proxy client with API versioning support."""
 
-    def __init__(self, api_key: str, base_url: str, api_version: str, provider: LLMProvider = LLMProvider.AZURE):
+    def __init__(self, api_key: str, base_url: str, api_version: str, provider: LLMProvider = LLMProvider.AZURE,
+                 management_client: Optional['AzureManagementClient'] = None):
         """Initialize Azure OpenAI proxy client.
 
         Args:
@@ -32,11 +33,13 @@ class AzureOpenAIProxyClient:
             base_url (str): Base URL for the Azure OpenAI API
             api_version (str): Azure API version (e.g., "2024-06-01")
             provider (LLMProvider): Provider type (defaults to AZURE)
+            management_client (Optional[AzureManagementClient]): Optional management client for deployment listing
         """
         self.api_key = api_key
         self.base_url = base_url.rstrip('/')
         self.api_version = api_version
         self.provider = provider
+        self.management_client = management_client
         self._client = httpx.AsyncClient(timeout=120.0)
         logger.debug(f"AzureOpenAIProxyClient initialized for {provider} at {base_url} with API version {api_version}")
 
@@ -335,6 +338,90 @@ class AzureOpenAIProxyClient:
         except Exception as e:
             logger.error(f"Unexpected error fetching Azure models: {str(e)}")
             raise
+
+    async def list_deployments(self) -> List[Dict[str, Any]]:
+        """List deployed models from Azure using Management API or fallback to models endpoint.
+
+        Returns:
+            List[Dict[str, Any]]: List of deployed models with deployment info
+
+        Raises:
+            httpx.HTTPError: If API request fails
+        """
+        # If management client is available, use it for true deployment listing
+        if self.management_client:
+            try:
+                return await self.management_client.list_deployments()
+            except Exception as e:
+                logger.warning(f"Failed to get deployments from Management API, falling back to models endpoint: {e}")
+
+        # Fallback to the standard models endpoint
+        logger.info("Using models endpoint as fallback for deployment listing")
+        models = await self.list_models()
+
+        # Transform to deployment format for consistency
+        deployment_models = []
+        for model in models:
+            model_id = model.get("id", "")
+
+            deployment_model = {
+                "id": model_id,
+                "object": "model",
+                "model": model.get("model", model_id),
+                "deployment_id": model_id,
+                "deployment_status": "succeeded",  # Assume available if listed
+                "scale_settings": {},
+                "created": model.get("created", 0),
+                "owned_by": "azure-openai",
+                "capabilities": {
+                    "chat_completions": self._supports_chat_completions(model_id),
+                    "completions": self._supports_completions(model_id),
+                    "embeddings": self._supports_embeddings(model_id)
+                }
+            }
+            deployment_models.append(deployment_model)
+
+        logger.debug(f"Found {len(deployment_models)} available Azure models (fallback method)")
+        return deployment_models
+
+    def _supports_chat_completions(self, model_name: str) -> bool:
+        """Check if a model supports chat completions.
+
+        Args:
+            model_name (str): Model name
+
+        Returns:
+            bool: True if model supports chat completions
+        """
+        chat_models = ["gpt-4", "gpt-3.5-turbo", "gpt-35-turbo"]
+        return any(chat_model in model_name.lower() for chat_model in chat_models)
+
+    def _supports_completions(self, model_name: str) -> bool:
+        """Check if a model supports text completions.
+
+        Args:
+            model_name (str): Model name
+
+        Returns:
+            bool: True if model supports completions
+        """
+        completion_models = [
+            "text-davinci-003", "text-davinci-002", "text-curie-001",
+            "text-babbage-001", "text-ada-001", "davinci-002", "babbage-002"
+        ]
+        return any(comp_model in model_name.lower() for comp_model in completion_models)
+
+    def _supports_embeddings(self, model_name: str) -> bool:
+        """Check if a model supports embeddings.
+
+        Args:
+            model_name (str): Model name
+
+        Returns:
+            bool: True if model supports embeddings
+        """
+        embedding_models = ["text-embedding", "ada-002"]
+        return any(emb_model in model_name.lower() for emb_model in embedding_models)
 
     def _build_url(self, endpoint: str, deployment_name: str) -> str:
         """Build Azure OpenAI API URL with deployment and API version.

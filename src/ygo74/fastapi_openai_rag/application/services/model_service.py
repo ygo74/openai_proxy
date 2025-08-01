@@ -306,19 +306,26 @@ class ModelService:
                 )
 
                 # Use async context manager for proper resource cleanup
-                async with self._llm_client_factory(temp_model, model_config.api_key) as client:
-                    # Fetch models using client
-                    models_data: List[Dict[str, Any]] = await client.list_models()
+                async with self._llm_client_factory(temp_model, model_config.api_key, model_config=model_config) as client:
+                    # For Azure, use deployments; for others, use models
+                    if provider_enum == LLMProvider.AZURE:
+                        models_data: List[Dict[str, Any]] = await client.list_deployments()
+                        logger.debug(f"Successfully fetched {len(models_data)} deployments from Azure")
+                    else:
+                        models_data: List[Dict[str, Any]] = await client.list_models()
+                        logger.debug(f"Successfully fetched {len(models_data)} models from {model_config.provider}")
 
-                    logger.debug(f"Successfully fetched {len(models_data)} models from {model_config.provider}")
-
-                    # Process each model
+                    # Process each model/deployment
                     for model in models_data:
-                        technical_name: str = f"{model_config.provider}_{model['id']}"
+                        # For Azure deployments, use deployment_id as the model identifier
+                        model_id = model.get("deployment_id") or model.get("id", "")
+                        model_name = model.get("model") or model.get("id", "")
+
+                        technical_name: str = f"{model_config.provider}_{model_id}"
 
                         await self._save_or_update_model_async(
                             url=model_config.url,
-                            name=model["id"],
+                            name=model_id,  # Use deployment name for Azure
                             technical_name=technical_name,
                             provider=provider_enum,
                             capabilities=model.get("capabilities", {}),

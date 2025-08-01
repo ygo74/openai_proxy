@@ -76,11 +76,15 @@ class OpenAIProxyClient:
             # Convert response to domain model
             return self._parse_chat_response(response_data, latency_ms)
 
+        except httpx.HTTPStatusError as e:
+            error_details = self._parse_openai_error(e)
+            logger.error(f"OpenAI HTTP error in text completion: {error_details}")
+            raise httpx.HTTPError(f"OpenAI API error: {error_details}")
         except httpx.HTTPError as e:
-            logger.error(f"HTTP error in chat completion: {str(e)}")
+            logger.error(f"HTTP error in text completion: {str(e)}")
             raise
         except Exception as e:
-            logger.error(f"Unexpected error in chat completion: {str(e)}")
+            logger.error(f"Unexpected error in text completion: {str(e)}")
             raise
 
     async def completion(self, request: CompletionRequest) -> CompletionResponse:
@@ -334,6 +338,28 @@ class OpenAIProxyClient:
         except Exception as e:
             logger.error(f"Unexpected error fetching models: {str(e)}")
             raise
+
+    async def list_deployments(self) -> List[Dict[str, Any]]:
+        """List deployed models from OpenAI-compatible API.
+
+        For non-Azure providers, this returns the same as list_models
+        since there's no separate deployment concept.
+
+        Returns:
+            List[Dict[str, Any]]: List of available models
+        """
+        # For non-Azure providers, deployments are the same as models
+        models = await self.list_models()
+
+        # Transform to match deployment format for consistency
+        deployments = []
+        for model in models:
+            deployment = model.copy()
+            deployment["deployment_id"] = model.get("id", "")
+            deployment["deployment_status"] = "succeeded"  # Assume available
+            deployments.append(deployment)
+
+        return deployments
 
     def _get_headers(self) -> Dict[str, str]:
         """Get headers for API requests.

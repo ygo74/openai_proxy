@@ -200,7 +200,7 @@ class ChatCompletionService:
         """
         # Create a copy with updated model information
         request_dict = request.model_dump()
-        request_dict['model'] = model.technical_name  # Use technical name for API calls
+        request_dict['model'] = model.name  # Use technical name for API calls
         return ChatCompletionRequest(**request_dict)
 
     def _prepare_completion_request(self, request: CompletionRequest, model: LlmModel) -> CompletionRequest:
@@ -215,7 +215,7 @@ class ChatCompletionService:
         """
         # Create a copy with updated model information
         request_dict = request.model_dump()
-        request_dict['model'] = model.technical_name  # Use technical name for API calls
+        request_dict['model'] = model.name  # Use technical name for API calls
         return CompletionRequest(**request_dict)
 
     def _get_provider_from_url(self, url: str) -> LLMProvider:

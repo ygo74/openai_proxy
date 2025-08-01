@@ -187,7 +187,7 @@ if __name__ == "__main__":
         chat_model = create_proxy_chat_model(
             proxy_url="http://localhost:8000",
             api_key="your-proxy-api-key",
-            model="gpt-3.5-turbo"
+            model="gpt-4o"
         )
         print("✅ Chat model created successfully")
 
@@ -195,7 +195,7 @@ if __name__ == "__main__":
         llm = create_proxy_llm(
             proxy_url="http://localhost:8000",
             api_key="your-proxy-api-key",
-            model="gpt-4o-2024-08-06"
+            model="gpt-4o"
         )
         print("✅ LLM created successfully")
 
@@ -208,7 +208,14 @@ if __name__ == "__main__":
         print("   # For completion:")
         print("   response = llm.invoke('Tell me a joke')")
 
-        response = llm.invoke('Tell me a joke')
+        response = llm.invoke('Who are you')
+        print(f"🤖 LLM response: {response}")
+
+        from langchain_core.messages import HumanMessage
+        messages = [HumanMessage(content='Hello!, who are you ? can you give me you cutoff date')]
+        response = chat_model.invoke(messages)
+        print(f"🤖 LLM response: {response}")
+
 
     except Exception as e:
         logger.error(f"Example execution failed: {str(e)}")
