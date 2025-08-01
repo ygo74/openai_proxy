@@ -40,6 +40,183 @@ class AzureOpenAIProxyClient:
         self._client = httpx.AsyncClient(timeout=120.0)
         logger.debug(f"AzureOpenAIProxyClient initialized for {provider} at {base_url} with API version {api_version}")
 
+    async def completion(self, request: CompletionRequest) -> CompletionResponse:
+        """Create text completion via Azure OpenAI API with smart routing.
+
+        Args:
+            request (CompletionRequest): Text completion request
+
+        Returns:
+            CompletionResponse: Generated response
+
+        Raises:
+            httpx.HTTPError: If API request fails
+        """
+        # Check if model supports completions endpoint
+        model_name = request.model
+        if self._should_use_chat_completions(model_name):
+            logger.info(f"Model {model_name} doesn't support completions endpoint, converting to chat completion")
+            return await self._completion_via_chat(request)
+
+        # Use standard completions endpoint
+        return await self._direct_completion(request)
+
+    async def _direct_completion(self, request: CompletionRequest) -> CompletionResponse:
+        """Direct completion via completions endpoint.
+
+        Args:
+            request (CompletionRequest): Text completion request
+
+        Returns:
+            CompletionResponse: Generated response
+        """
+        start_time = time.time()
+        url = self._build_url("completions", request.model)
+
+        headers = self._get_headers()
+        payload = self._prepare_completion_payload(request)
+
+        logger.debug(f"Making Azure text completion request to {url}")
+        logger.debug(f"Request payload: {payload}")
+
+        try:
+            response = await self._client.post(
+                url=url,
+                headers=headers,
+                json=payload,
+                timeout=120.0
+            )
+            response.raise_for_status()
+
+            response_data = response.json()
+            latency_ms = (time.time() - start_time) * 1000
+
+            return self._parse_completion_response(response_data, latency_ms)
+
+        except httpx.HTTPStatusError as e:
+            error_details = self._parse_azure_error(e)
+            logger.error(f"Azure HTTP error in text completion: {error_details}")
+            raise httpx.HTTPError(f"Azure OpenAI API error: {error_details}")
+        except httpx.HTTPError as e:
+            logger.error(f"HTTP error in Azure text completion: {str(e)}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error in Azure text completion: {str(e)}")
+            raise
+
+    async def _completion_via_chat(self, request: CompletionRequest) -> CompletionResponse:
+        """Convert completion request to chat completion for models that don't support completions.
+
+        Args:
+            request (CompletionRequest): Text completion request
+
+        Returns:
+            CompletionResponse: Generated response converted from chat completion
+        """
+        from ...domain.models.chat_completion import ChatCompletionRequest, ChatMessage
+
+        # Convert completion request to chat completion request
+        messages = []
+
+        # Handle prompt conversion
+        if isinstance(request.prompt, str):
+            content = request.prompt
+        elif isinstance(request.prompt, list):
+            content = "\n".join(str(p) for p in request.prompt)
+        else:
+            content = str(request.prompt)
+
+        messages.append(ChatMessage(role="user", content=content))
+
+        # Ensure max_tokens is properly set - use higher default if not specified
+        max_tokens = request.max_tokens
+        if max_tokens is None:
+            max_tokens = 1000  # Higher default for better responses
+            logger.debug(f"No max_tokens specified, using default: {max_tokens}")
+
+        logger.debug(f"Converting completion to chat completion with max_tokens: {max_tokens}")
+
+        # Create chat completion request
+        chat_request = ChatCompletionRequest(
+            model=request.model,
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=request.temperature,
+            top_p=request.top_p,
+            n=request.n,
+            stream=request.stream,
+            stop=request.stop,
+            presence_penalty=request.presence_penalty,
+            frequency_penalty=request.frequency_penalty,
+            user=request.user,
+            seed=request.seed
+        )
+
+        # Make chat completion request
+        chat_response = await self.chat_completion(chat_request)
+
+        # Convert chat response back to completion response
+        return self._convert_chat_to_completion_response(chat_response)
+
+    def _convert_chat_to_completion_response(self, chat_response) -> CompletionResponse:
+        """Convert chat completion response to completion response.
+
+        Args:
+            chat_response: Chat completion response
+
+        Returns:
+            CompletionResponse: Converted completion response
+        """
+        choices = []
+        for chat_choice in chat_response.choices:
+            choice = CompletionChoice(
+                text=chat_choice.message.content or "",
+                index=chat_choice.index,
+                logprobs=None,  # Chat completions don't provide logprobs in the same format
+                finish_reason=chat_choice.finish_reason
+            )
+            choices.append(choice)
+
+        return CompletionResponse(
+            id=chat_response.id,
+            object="text_completion",  # Keep original object type
+            created=chat_response.created,
+            model=chat_response.model,
+            system_fingerprint=chat_response.system_fingerprint,
+            choices=choices,
+            usage=chat_response.usage,
+            provider=chat_response.provider,
+            latency_ms=chat_response.latency_ms,
+            timestamp=chat_response.timestamp,
+            raw_response=chat_response.raw_response
+        )
+
+    def _should_use_chat_completions(self, model_name: str) -> bool:
+        """Determine if model should use chat completions endpoint.
+
+        Args:
+            model_name (str): Model name
+
+        Returns:
+            bool: True if should use chat completions
+        """
+        # List of models that support completions endpoint
+        completion_models = [
+            "text-davinci-003",
+            "text-davinci-002",
+            "text-curie-001",
+            "text-babbage-001",
+            "text-ada-001",
+            "davinci-002",
+            "babbage-002"
+        ]
+
+        model_name_lower = model_name.lower()
+        supports_completions = any(comp_model in model_name_lower for comp_model in completion_models)
+
+        # If it doesn't support completions, use chat completions
+        return not supports_completions
+
     async def chat_completion(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
         """Create chat completion via Azure OpenAI API.
 
@@ -74,52 +251,15 @@ class AzureOpenAIProxyClient:
 
             return self._parse_chat_response(response_data, latency_ms)
 
+        except httpx.HTTPStatusError as e:
+            error_details = self._parse_azure_error(e)
+            logger.error(f"Azure HTTP error in chat completion: {error_details}")
+            raise httpx.HTTPError(f"Azure OpenAI API error: {error_details}")
         except httpx.HTTPError as e:
             logger.error(f"HTTP error in Azure chat completion: {str(e)}")
             raise
         except Exception as e:
             logger.error(f"Unexpected error in Azure chat completion: {str(e)}")
-            raise
-
-    async def completion(self, request: CompletionRequest) -> CompletionResponse:
-        """Create text completion via Azure OpenAI API.
-
-        Args:
-            request (CompletionRequest): Text completion request
-
-        Returns:
-            CompletionResponse: Generated response
-
-        Raises:
-            httpx.HTTPError: If API request fails
-        """
-        start_time = time.time()
-        url = self._build_url("completions", request.model)
-
-        headers = self._get_headers()
-        payload = self._prepare_completion_payload(request)
-
-        logger.debug(f"Making Azure text completion request to {url}")
-
-        try:
-            response = await self._client.post(
-                url=url,
-                headers=headers,
-                json=payload,
-                timeout=120.0
-            )
-            response.raise_for_status()
-
-            response_data = response.json()
-            latency_ms = (time.time() - start_time) * 1000
-
-            return self._parse_completion_response(response_data, latency_ms)
-
-        except httpx.HTTPError as e:
-            logger.error(f"HTTP error in Azure text completion: {str(e)}")
-            raise
-        except Exception as e:
-            logger.error(f"Unexpected error in Azure text completion: {str(e)}")
             raise
 
     async def stream_chat_completion(self, request: ChatCompletionRequest) -> AsyncGenerator[ChatCompletionStreamResponse, None]:
@@ -250,11 +390,61 @@ class AzureOpenAIProxyClient:
         Returns:
             Dict[str, Any]: API payload
         """
-        #  payload="{\"messages\":[{\"role\":\"system\",\"content\":[{\"type\":\"text\",\"text\":\"Vous êtes un(e) assistant(e) IA qui permet aux utilisateurs de trouver des informations.\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"test\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Bonjour ! Comment puis-je vous aider aujourd'hui ?\"}]}],\"temperature\":0.7,\"top_p\":0.95,\"max_tokens\":1600}"
-
         payload = request.model_dump(exclude_none=True)
+
         # Remove model from payload as it's in the URL for Azure
         payload.pop("model", None)
+
+        # Azure-specific adjustments
+        # Remove parameters that Azure doesn't support or handle differently
+        unsupported_params = ["best_of", "suffix", "echo", "logit_bias"]
+        for param in unsupported_params:
+            payload.pop(param, None)
+
+        # Ensure prompt is properly formatted
+        if "prompt" in payload:
+            # Azure expects prompt as string, not array
+            if isinstance(payload["prompt"], list):
+                # Join multiple prompts with newlines
+                payload["prompt"] = "\n".join(str(p) for p in payload["prompt"])
+
+        # Adjust logprobs parameter - Azure may have different limits
+        if "logprobs" in payload and payload["logprobs"] is not None:
+            # Azure supports logprobs but may have different limits
+            payload["logprobs"] = min(payload["logprobs"], 5)
+
+        # Ensure stop sequences are properly formatted
+        if "stop" in payload and payload["stop"] is not None:
+            if isinstance(payload["stop"], str):
+                # Convert single string to array
+                payload["stop"] = [payload["stop"]]
+            elif isinstance(payload["stop"], list):
+                # Limit to maximum 4 stop sequences for Azure
+                payload["stop"] = payload["stop"][:4]
+
+        # Set reasonable defaults for Azure - use higher default for max_tokens
+        if "max_tokens" not in payload or payload["max_tokens"] is None:
+            payload["max_tokens"] = 1000  # Higher default for better responses
+            logger.debug("No max_tokens specified, using default: 1000")
+
+        # Ensure temperature is within Azure limits
+        if "temperature" in payload and payload["temperature"] is not None:
+            payload["temperature"] = max(0.0, min(2.0, payload["temperature"]))
+
+        # Ensure top_p is within limits
+        if "top_p" in payload and payload["top_p"] is not None:
+            payload["top_p"] = max(0.0, min(1.0, payload["top_p"]))
+
+        # Ensure n is within Azure limits
+        if "n" in payload and payload["n"] is not None:
+            payload["n"] = max(1, min(128, payload["n"]))
+
+        # Ensure penalties are within limits
+        for penalty_field in ["presence_penalty", "frequency_penalty"]:
+            if penalty_field in payload and payload[penalty_field] is not None:
+                payload[penalty_field] = max(-2.0, min(2.0, payload[penalty_field]))
+
+        logger.debug(f"Prepared Azure completion payload: {payload}")
         return payload
 
     def _parse_chat_response(self, response_data: Dict[str, Any], latency_ms: float) -> ChatCompletionResponse:
@@ -362,6 +552,38 @@ class AzureOpenAIProxyClient:
             model=chunk_data.get("model", ""),
             choices=[]
         )
+
+    def _parse_azure_error(self, error: httpx.HTTPStatusError) -> str:
+        """Parse Azure OpenAI error response.
+
+        Args:
+            error (httpx.HTTPStatusError): HTTP status error
+
+        Returns:
+            str: Formatted error message
+        """
+        try:
+            error_body = error.response.text
+            logger.debug(f"Raw Azure error response: {error_body}")
+
+            # Try to parse JSON error response
+            if error_body:
+                try:
+                    error_data = error.response.json()
+                    if "error" in error_data:
+                        error_info = error_data["error"]
+                        code = error_info.get("code", "Unknown")
+                        message = error_info.get("message", "No message provided")
+                        return f"Code: {code}, Message: {message}"
+                except Exception:
+                    # Fallback to raw text if JSON parsing fails
+                    return f"Status: {error.response.status_code}, Body: {error_body[:500]}"
+
+            return f"HTTP {error.response.status_code}: {error.response.reason_phrase}"
+
+        except Exception as e:
+            logger.warning(f"Failed to parse Azure error: {e}")
+            return f"HTTP {error.response.status_code}: {str(error)}"
 
     async def close(self) -> None:
         """Close the HTTP client and cleanup resources."""

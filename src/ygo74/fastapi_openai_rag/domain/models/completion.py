@@ -30,7 +30,7 @@ class CompletionRequest(BaseModel):
     model: str
     prompt: Union[str, List[str]] = ""
     suffix: Optional[str] = None
-    max_tokens: Optional[int] = Field(None, ge=1)
+    max_tokens: Optional[int] = Field(1000, ge=1)
     temperature: Optional[float] = Field(1.0, ge=0, le=2)
     top_p: Optional[float] = Field(1.0, ge=0, le=1)
     n: Optional[int] = Field(1, ge=1, le=128)

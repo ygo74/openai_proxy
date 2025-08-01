@@ -56,6 +56,61 @@ class LlmModel(BaseModel):
         """
         return hasattr(self, 'api_version') and self.provider == LLMProvider.AZURE
 
+    def supports_completions_endpoint(self) -> bool:
+        """Check if this model supports the completions endpoint.
+
+        Returns:
+            bool: True if model supports completions endpoint
+        """
+        # List of models that support completions endpoint
+        completion_models = [
+            "text-davinci-003",
+            "text-davinci-002",
+            "text-curie-001",
+            "text-babbage-001",
+            "text-ada-001",
+            "davinci-002",
+            "babbage-002",
+            "davinci",
+            "curie",
+            "babbage",
+            "ada"
+        ]
+
+        model_name_lower = self.name.lower()
+        return any(comp_model in model_name_lower for comp_model in completion_models)
+
+    def supports_chat_completions_endpoint(self) -> bool:
+        """Check if this model supports the chat completions endpoint.
+
+        Returns:
+            bool: True if model supports chat completions endpoint
+        """
+        # Most modern models support chat completions
+        chat_models = [
+            "gpt-4",
+            "gpt-3.5-turbo",
+            "gpt-35-turbo",  # Azure naming
+            "claude",
+            "mistral"
+        ]
+
+        model_name_lower = self.name.lower()
+        return any(chat_model in model_name_lower for chat_model in chat_models)
+
+    def should_use_chat_completions(self) -> bool:
+        """Determine if this model should use chat completions endpoint.
+
+        Returns:
+            bool: True if should use chat completions
+        """
+        # Prefer chat completions for modern models
+        if self.supports_chat_completions_endpoint():
+            return True
+
+        # Fallback to completions for legacy models
+        return not self.supports_completions_endpoint()
+
     @property
     def model_type(self) -> str:
         """Get the model type identifier.
