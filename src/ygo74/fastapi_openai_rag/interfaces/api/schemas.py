@@ -1,7 +1,7 @@
 """API schemas using Pydantic models."""
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
-from ygo74.fastapi_openai_rag.domain.models.model import ModelStatus
+from ygo74.fastapi_openai_rag.domain.models.llm_model import LlmModelStatus
 
 class ModelBase(BaseModel):
     """Base model schema."""
@@ -23,12 +23,12 @@ class ModelUpdate(ModelBase):
     provider: Optional[str] = None
     max_tokens: Optional[int] = None
     rate_limit: Optional[int] = None
-    status: Optional[ModelStatus] = None
+    status: Optional[LlmModelStatus] = None
 
 class ModelResponse(ModelBase):
     """Schema for model response."""
     id: int = Field(..., description="Model ID")
-    status: ModelStatus = Field(..., description="Model status")
+    status: LlmModelStatus = Field(..., description="Model status")
     groups: List['GroupResponse'] = Field(default_factory=list, description="Groups this model belongs to")
 
     class Config:

@@ -10,7 +10,8 @@ from sqlalchemy.exc import NoResultFound
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
 
-from ygo74.fastapi_openai_rag.domain.models.model import Model, ModelStatus
+from ygo74.fastapi_openai_rag.domain.models.llm_model import LlmModel, LlmModelStatus
+from ygo74.fastapi_openai_rag.domain.models.llm import LLMProvider
 from ygo74.fastapi_openai_rag.application.services.model_service import ModelService
 from ygo74.fastapi_openai_rag.domain.repositories.model_repository import IModelRepository
 from ygo74.fastapi_openai_rag.domain.unit_of_work import UnitOfWork
@@ -61,7 +62,7 @@ class TestModelService:
         repository.get_all = Mock()
         repository.add = Mock()
         repository.update = Mock()
-        repository.remove = Mock()
+        repository.delete = Mock()
         repository.get_by_group_id = Mock()
         return repository
 
@@ -83,13 +84,15 @@ class TestModelService:
         url: str = "http://test.com"
         name: str = "test-model"
         technical_name: str = "test_model"
+        provider: LLMProvider = LLMProvider.OPENAI
         capabilities: dict = {"feature": "test"}
-        new_model: Model = Model(
+        new_model: LlmModel = LlmModel(
             id=1,
             url=url,
             name=name,
             technical_name=technical_name,
-            status=ModelStatus.NEW,
+            provider=provider,
+            status=LlmModelStatus.NEW,
             capabilities=capabilities,
             created=datetime.now(timezone.utc),
             updated=datetime.now(timezone.utc)
@@ -99,9 +102,11 @@ class TestModelService:
 
         # act
         status, result_model = service.add_or_update_model(
+            model_id=0,  # Pour création
             url=url,
             name=name,
             technical_name=technical_name,
+            provider=provider,
             capabilities=capabilities
         )
 
@@ -115,12 +120,13 @@ class TestModelService:
         """Test model creation with existing technical name."""
         # arrange
         technical_name: str = "test_model"
-        existing_model: Model = Model(
+        existing_model: LlmModel = LlmModel(
             id=1,
             url="http://existing.com",
             name="existing-model",
             technical_name=technical_name,
-            status=ModelStatus.NEW,
+            provider=LLMProvider.OPENAI,
+            status=LlmModelStatus.NEW,
             capabilities={},
             created=datetime.now(timezone.utc),
             updated=datetime.now(timezone.utc)
@@ -130,9 +136,11 @@ class TestModelService:
         # act & assert
         with pytest.raises(EntityAlreadyExistsError) as exc_info:
             service.add_or_update_model(
+                model_id=0,
                 url="http://test.com",
                 name="test-model",
                 technical_name=technical_name,
+                provider=LLMProvider.OPENAI,
                 capabilities={}
             )
 
@@ -142,9 +150,13 @@ class TestModelService:
         """Test model creation without required fields."""
         # act & assert
         with pytest.raises(ValidationError) as exc_info:
-            service.add_or_update_model(name="test-model")
+            service.add_or_update_model(
+                model_id=0,
+                name="test-model",
+                provider=LLMProvider.OPENAI
+            )
 
-        assert "URL, name, and technical_name are required for new models" in str(exc_info.value)
+        assert "URL, name, technical_name, and provider are required for new models" in str(exc_info.value)
 
     def test_update_model_success(self, service: ModelService, mock_repository: Mock) -> None:
         """Test successful model update."""
@@ -152,22 +164,24 @@ class TestModelService:
         model_id: int = 1
         updated_url: str = "http://updated.com"
         updated_name: str = "updated-model"
-        existing_model: Model = Model(
+        existing_model: LlmModel = LlmModel(
             id=model_id,
             url="http://original.com",
             name="original-model",
             technical_name="original_model",
-            status=ModelStatus.NEW,
+            provider=LLMProvider.OPENAI,
+            status=LlmModelStatus.NEW,
             capabilities={},
             created=datetime.now(timezone.utc),
             updated=datetime.now(timezone.utc)
         )
-        updated_model: Model = Model(
+        updated_model: LlmModel = LlmModel(
             id=model_id,
             url=updated_url,
             name=updated_name,
             technical_name="original_model",
-            status=ModelStatus.NEW,
+            provider=LLMProvider.OPENAI,
+            status=LlmModelStatus.NEW,
             capabilities={},
             created=existing_model.created,
             updated=datetime.now(timezone.utc)
@@ -179,7 +193,9 @@ class TestModelService:
         status, result_model = service.add_or_update_model(
             model_id=model_id,
             url=updated_url,
-            name=updated_name
+            name=updated_name,
+            technical_name="original_model",
+            provider=LLMProvider.OPENAI
         )
 
         # assert
@@ -201,7 +217,8 @@ class TestModelService:
                 model_id=model_id,
                 url="http://example.com/new",
                 name="Updated Model",
-                technical_name="updated_model"
+                technical_name="updated_model",
+                provider=LLMProvider.OPENAI
             )
 
         assert "Model with identifier '999' not found" in str(exc_info.value)
@@ -210,22 +227,24 @@ class TestModelService:
         """Test successful model status update."""
         # arrange
         model_id: int = 1
-        new_status: ModelStatus = ModelStatus.APPROVED
-        existing_model: Model = Model(
+        new_status: LlmModelStatus = LlmModelStatus.APPROVED
+        existing_model: LlmModel = LlmModel(
             id=model_id,
             url="http://test.com",
             name="test-model",
             technical_name="test_model",
-            status=ModelStatus.NEW,
+            provider=LLMProvider.OPENAI,
+            status=LlmModelStatus.NEW,
             capabilities={},
             created=datetime.now(timezone.utc),
             updated=datetime.now(timezone.utc)
         )
-        updated_model: Model = Model(
+        updated_model: LlmModel = LlmModel(
             id=model_id,
             url="http://test.com",
             name="test-model",
             technical_name="test_model",
+            provider=LLMProvider.OPENAI,
             status=new_status,
             capabilities={},
             created=existing_model.created,
@@ -235,7 +254,7 @@ class TestModelService:
         mock_repository.update.return_value = updated_model
 
         # act
-        result: Model = service.update_model_status(model_id, new_status)
+        result: LlmModel = service.update_model_status(model_id, new_status)
 
         # assert
         assert result.status == new_status
@@ -250,30 +269,32 @@ class TestModelService:
 
         # act & assert
         with pytest.raises(EntityNotFoundError) as exc_info:
-            service.update_model_status(model_id, ModelStatus.APPROVED)
+            service.update_model_status(model_id, LlmModelStatus.APPROVED)
 
         assert "Model with identifier '999' not found" in str(exc_info.value)
 
     def test_get_all_models(self, service: ModelService, mock_repository: Mock) -> None:
         """Test getting all models."""
         # arrange
-        models: List[Model] = [
-            Model(
+        models: List[LlmModel] = [
+            LlmModel(
                 id=1,
                 url="http://test1.com",
                 name="model1",
                 technical_name="test_model1",
-                status=ModelStatus.NEW,
+                provider=LLMProvider.OPENAI,
+                status=LlmModelStatus.NEW,
                 capabilities={},
                 created=datetime.now(timezone.utc),
                 updated=datetime.now(timezone.utc)
             ),
-            Model(
+            LlmModel(
                 id=2,
                 url="http://test2.com",
                 name="model2",
                 technical_name="test_model2",
-                status=ModelStatus.APPROVED,
+                provider=LLMProvider.ANTHROPIC,
+                status=LlmModelStatus.APPROVED,
                 capabilities={},
                 created=datetime.now(timezone.utc),
                 updated=datetime.now(timezone.utc)
@@ -282,14 +303,14 @@ class TestModelService:
         mock_repository.get_all.return_value = models
 
         # act
-        result: List[Model] = service.get_all_models()
+        result: List[LlmModel] = service.get_all_models()
 
         # assert
         assert len(result) == 2
         assert result[0].name == "model1"
         assert result[1].name == "model2"
-        assert isinstance(result[0], Model)
-        assert isinstance(result[1], Model)
+        assert isinstance(result[0], LlmModel)
+        assert isinstance(result[1], LlmModel)
         mock_repository.get_all.assert_called_once()
 
     def test_get_all_models_empty(self, service: ModelService, mock_repository: Mock) -> None:
@@ -298,7 +319,7 @@ class TestModelService:
         mock_repository.get_all.return_value = []
 
         # act
-        result: List[Model] = service.get_all_models()
+        result: List[LlmModel] = service.get_all_models()
 
         # assert
         assert len(result) == 0
@@ -313,18 +334,19 @@ class TestModelService:
         service.delete_model(model_id)
 
         # assert
-        mock_repository.remove.assert_called_once_with(model_id)
+        mock_repository.delete.assert_called_once_with(model_id)
 
     def test_get_model_by_id(self, service: ModelService, mock_repository: Mock) -> None:
         """Test getting model by ID."""
         # arrange
         model_id: int = 1
-        expected_model: Model = Model(
+        expected_model: LlmModel = LlmModel(
             id=model_id,
             url="http://test.com",
             name="test-model",
             technical_name="test_model",
-            status=ModelStatus.NEW,
+            provider=LLMProvider.OPENAI,
+            status=LlmModelStatus.NEW,
             capabilities={},
             created=datetime.now(timezone.utc),
             updated=datetime.now(timezone.utc)
@@ -332,7 +354,7 @@ class TestModelService:
         mock_repository.get_by_id.return_value = expected_model
 
         # act
-        result: Optional[Model] = service.get_model_by_id(model_id)
+        result: Optional[LlmModel] = service.get_model_by_id(model_id)
 
         # assert
         assert result == expected_model
@@ -342,12 +364,13 @@ class TestModelService:
         """Test getting model by technical name."""
         # arrange
         technical_name: str = "test_model"
-        expected_model: Model = Model(
+        expected_model: LlmModel = LlmModel(
             id=1,
             url="http://test.com",
             name="test-model",
             technical_name=technical_name,
-            status=ModelStatus.NEW,
+            provider=LLMProvider.OPENAI,
+            status=LlmModelStatus.NEW,
             capabilities={},
             created=datetime.now(timezone.utc),
             updated=datetime.now(timezone.utc)
@@ -355,7 +378,7 @@ class TestModelService:
         mock_repository.get_by_technical_name.return_value = expected_model
 
         # act
-        result: Optional[Model] = service.get_model_by_technical_name(technical_name)
+        result: Optional[LlmModel] = service.get_model_by_technical_name(technical_name)
 
         # assert
         assert result == expected_model

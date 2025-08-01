@@ -1,6 +1,6 @@
 """Main API router module."""
 from fastapi import APIRouter
-from .endpoints import models, groups, admin
+from .endpoints import models, groups, admin, chat_completions
 
 # Create main API router
 api_router = APIRouter(prefix="/v1")
@@ -22,4 +22,11 @@ api_router.include_router(
     admin.router,
     prefix="/admin",
     tags=["admin"]
+)
+
+# Include the chat completions router (OpenAI-compatible)
+api_router.include_router(
+    chat_completions.router,
+    prefix="",
+    tags=["openai-compatible"]
 )

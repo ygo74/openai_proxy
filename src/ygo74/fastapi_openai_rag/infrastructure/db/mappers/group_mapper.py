@@ -1,5 +1,4 @@
 """Mapper for Group domain and ORM models."""
-from typing import Optional
 from .base import BaseMapper
 from ....domain.models.group import Group
 from ..models.group_orm import GroupORM

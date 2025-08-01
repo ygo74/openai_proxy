@@ -1,6 +1,7 @@
 """Tests for Models API endpoints."""
 import sys
 import os
+from typing import Dict, Any
 from datetime import datetime, timezone
 from typing import List, Tuple
 from unittest.mock import MagicMock, patch
@@ -10,9 +11,10 @@ from fastapi.testclient import TestClient
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
 
-from ygo74.fastapi_openai_rag.domain.models.model import Model, ModelStatus
+from ygo74.fastapi_openai_rag.domain.models.llm_model import LlmModel, LlmModelStatus
 from ygo74.fastapi_openai_rag.main import app
 from ygo74.fastapi_openai_rag.domain.exceptions.entity_already_exists import EntityAlreadyExistsError
+from ygo74.fastapi_openai_rag.domain.models.llm import LLMProvider
 
 @pytest.fixture
 def client() -> TestClient:
@@ -42,23 +44,25 @@ class TestModelsEndpoints:
     def test_get_models_success(self, client: TestClient, mock_model_service: MagicMock) -> None:
         """Test successful retrieval of models."""
         # arrange
-        models: List[Model] = [
-            Model(
+        models: List[LlmModel] = [
+            LlmModel(
                 id=1,
                 url="http://test1.com",
                 name="Test Model 1",
                 technical_name="test_model_1",
-                status=ModelStatus.APPROVED,
+                provider=LLMProvider.OPENAI,
+                status=LlmModelStatus.APPROVED,
                 capabilities={"feature": "test1"},
                 created=datetime.now(timezone.utc),
                 updated=datetime.now(timezone.utc)
             ),
-            Model(
+            LlmModel(
                 id=2,
                 url="http://test2.com",
                 name="Test Model 2",
                 technical_name="test_model_2",
-                status=ModelStatus.NEW,
+                provider=LLMProvider.ANTHROPIC,
+                status=LlmModelStatus.NEW,
                 capabilities={"feature": "test2"},
                 created=datetime.now(timezone.utc),
                 updated=datetime.now(timezone.utc)
@@ -81,23 +85,26 @@ class TestModelsEndpoints:
     def test_create_model_success(self, client: TestClient, mock_model_service: MagicMock) -> None:
         """Test successful model creation."""
         # arrange
-        model_data: dict = {
+        model_data: Dict[str,Any] = {
+            "model_id": -1,
             "url": "http://newmodel.com",
             "name": "New Model",
             "technical_name": "new_model",
+            "provider": "openai",
             "capabilities": {"feature": "new"}
         }
-        created_model: Model = Model(
+        created_model: LlmModel = LlmModel(
             id=1,
             url=model_data["url"],
             name=model_data["name"],
             technical_name=model_data["technical_name"],
-            status=ModelStatus.NEW,
+            provider=LLMProvider.OPENAI,
+            status=LlmModelStatus.NEW,
             capabilities=model_data["capabilities"],
             created=datetime.now(timezone.utc),
             updated=datetime.now(timezone.utc)
         )
-        status_result: Tuple[str, Model] = ("created", created_model)
+        status_result: Tuple[str, LlmModel] = ("created", created_model)
         mock_model_service.add_or_update_model.return_value = status_result
 
         # act
@@ -110,16 +117,18 @@ class TestModelsEndpoints:
         assert response_data["technical_name"] == model_data["technical_name"]
         assert "id" in response_data
         mock_model_service.add_or_update_model.assert_called_once_with(
+            model_id=model_data["model_id"],
             url=model_data["url"],
             name=model_data["name"],
             technical_name=model_data["technical_name"],
+            provider=LLMProvider.OPENAI,
             capabilities=model_data["capabilities"]
         )
 
     def test_create_model_validation_error(self, client: TestClient) -> None:
         """Test model creation with invalid data."""
         # arrange
-        invalid_data: dict = {"name": "Invalid Model"}  # Missing required fields
+        invalid_data: Dict[str,str] = {"name": "Invalid Model"}  # Missing required fields
 
         # act
         response = client.post("/v1/models/", json=invalid_data)
@@ -130,10 +139,11 @@ class TestModelsEndpoints:
     def test_create_model_already_exists(self, client: TestClient, mock_model_service: MagicMock) -> None:
         """Test model creation when technical name already exists."""
         # arrange
-        model_data: dict = {
+        model_data: Dict[str,Any]  = {
             "url": "http://existing.com",
             "name": "Existing Model",
             "technical_name": "existing_model",
+            "provider": "openai",
             "capabilities": {}
         }
         mock_model_service.add_or_update_model.side_effect = EntityAlreadyExistsError("Model",  "with technical_name existing_model already exists")
@@ -149,12 +159,13 @@ class TestModelsEndpoints:
         """Test successful retrieval of model by ID."""
         # arrange
         model_id: int = 1
-        model: Model = Model(
+        model: LlmModel = LlmModel(
             id=model_id,
             url="http://test.com",
             name="Test Model",
             technical_name="test_model",
-            status=ModelStatus.APPROVED,
+            provider=LLMProvider.AZURE,
+            status=LlmModelStatus.APPROVED,
             capabilities={},
             created=datetime.now(timezone.utc),
             updated=datetime.now(timezone.utc)
@@ -194,19 +205,21 @@ class TestModelsEndpoints:
         update_data: dict = {
             "name": "Updated Model",
             "url": "http://updatedmodel.com",
+            "provider": "mistral",
             "capabilities": {"feature": "updated"}
         }
-        updated_model: Model = Model(
+        updated_model: LlmModel = LlmModel(
             id=model_id,
             url=update_data["url"],
             name=update_data["name"],
             technical_name="test_model",
-            status=ModelStatus.APPROVED,
+            provider=LLMProvider.MISTRAL,
+            status=LlmModelStatus.APPROVED,
             capabilities=update_data["capabilities"],
             created=datetime.now(timezone.utc),
             updated=datetime.now(timezone.utc)
         )
-        status_result: Tuple[str, Model] = ("updated", updated_model)
+        status_result: Tuple[str, LlmModel] = ("updated", updated_model)
         mock_model_service.add_or_update_model.return_value = status_result
 
         # act
@@ -222,6 +235,7 @@ class TestModelsEndpoints:
             url=update_data["url"],
             name=update_data["name"],
             technical_name=update_data.get("technical_name"),
+            provider=LLMProvider.MISTRAL,
             capabilities=update_data["capabilities"]
         )
 
@@ -231,7 +245,8 @@ class TestModelsEndpoints:
         model_id: int = 999
         update_data: dict = {
             "name": "Updated Model",
-            "url": "http://updated.com"
+            "url": "http://updated.com",
+            "provider": "openai"
         }
         # Import the domain exception that the service layer should raise
         from ygo74.fastapi_openai_rag.domain.exceptions.entity_not_found_exception import EntityNotFoundError
@@ -278,12 +293,13 @@ class TestModelsEndpoints:
         """Test successful model status update."""
         # arrange
         model_id: int = 1
-        new_status: ModelStatus = ModelStatus.APPROVED
-        updated_model: Model = Model(
+        new_status: LlmModelStatus = LlmModelStatus.APPROVED
+        updated_model: LlmModel = LlmModel(
             id=model_id,
             url="http://test.com",
             name="Test Model",
             technical_name="test_model",
+            provider=LLMProvider.COHERE,
             status=new_status,
             capabilities={},
             created=datetime.now(timezone.utc),
@@ -303,13 +319,16 @@ class TestModelsEndpoints:
     def test_get_model_statistics_success(self, client: TestClient, mock_model_service: MagicMock) -> None:
         """Test successful retrieval of model statistics."""
         # arrange
-        models: List[Model] = [
-            Model(id=1, url="http://test1.com", name="Model 1", technical_name="model_1",
-                  status=ModelStatus.APPROVED, capabilities={}, created=datetime.now(timezone.utc), updated=datetime.now(timezone.utc)),
-            Model(id=2, url="http://test2.com", name="Model 2", technical_name="model_2",
-                  status=ModelStatus.NEW, capabilities={}, created=datetime.now(timezone.utc), updated=datetime.now(timezone.utc)),
-            Model(id=3, url="http://test3.com", name="Model 3", technical_name="model_3",
-                  status=ModelStatus.APPROVED, capabilities={}, created=datetime.now(timezone.utc), updated=datetime.now(timezone.utc))
+        models: List[LlmModel] = [
+            LlmModel(id=1, url="http://test1.com", name="Model 1", technical_name="model_1",
+                  provider=LLMProvider.OPENAI, status=LlmModelStatus.APPROVED, capabilities={},
+                  created=datetime.now(timezone.utc), updated=datetime.now(timezone.utc)),
+            LlmModel(id=2, url="http://test2.com", name="Model 2", technical_name="model_2",
+                  provider=LLMProvider.ANTHROPIC, status=LlmModelStatus.NEW, capabilities={},
+                  created=datetime.now(timezone.utc), updated=datetime.now(timezone.utc)),
+            LlmModel(id=3, url="http://test3.com", name="Model 3", technical_name="model_3",
+                  provider=LLMProvider.AZURE, status=LlmModelStatus.APPROVED, capabilities={},
+                  created=datetime.now(timezone.utc), updated=datetime.now(timezone.utc))
         ]
         mock_model_service.get_all_models.return_value = models
 
@@ -320,20 +339,21 @@ class TestModelsEndpoints:
         assert response.status_code == 200
         response_data = response.json()
         assert response_data["total"] == 3
-        assert response_data["by_status"][ModelStatus.APPROVED] == 2
-        assert response_data["by_status"][ModelStatus.NEW] == 1
+        assert response_data["by_status"][LlmModelStatus.APPROVED] == 2
+        assert response_data["by_status"][LlmModelStatus.NEW] == 1
 
     def test_get_models_with_status_filter(self, client: TestClient, mock_model_service: MagicMock) -> None:
         """Test models retrieval with status filter."""
         # arrange
-        models: List[Model] = [
-            Model(id=1, url="http://test1.com", name="Model 1", technical_name="model_1",
-                  status=ModelStatus.APPROVED, capabilities={}, created=datetime.now(timezone.utc), updated=datetime.now(timezone.utc))
+        models: List[LlmModel] = [
+            LlmModel(id=1, url="http://test1.com", name="Model 1", technical_name="model_1",
+                  provider=LLMProvider.MISTRAL, status=LlmModelStatus.APPROVED, capabilities={},
+                  created=datetime.now(timezone.utc), updated=datetime.now(timezone.utc))
         ]
         mock_model_service.get_all_models.return_value = models
 
         # act
-        response = client.get(f"/v1/models/?status_filter={ModelStatus.APPROVED.value}")  # Use the correct enum value
+        response = client.get(f"/v1/models/?status_filter={LlmModelStatus.APPROVED.value}")  # Use the correct enum value
 
         # assert
         assert response.status_code == 200
@@ -343,7 +363,7 @@ class TestModelsEndpoints:
     def test_get_models_with_invalid_status_filter(self, client: TestClient, mock_model_service: MagicMock) -> None:
         """Test models retrieval with invalid status filter."""
         # arrange
-        models: List[Model] = []
+        models: List[LlmModel] = []
         mock_model_service.get_all_models.return_value = models
 
         # act
@@ -356,11 +376,13 @@ class TestModelsEndpoints:
     def test_search_models_by_name(self, client: TestClient, mock_model_service: MagicMock) -> None:
         """Test searching models by name."""
         # arrange
-        models: List[Model] = [
-            Model(id=1, url="http://test1.com", name="OpenAI Model", technical_name="openai_model",
-                  status=ModelStatus.APPROVED, capabilities={}, created=datetime.now(timezone.utc), updated=datetime.now(timezone.utc)),
-            Model(id=2, url="http://test2.com", name="Anthropic Model", technical_name="anthropic_model",
-                  status=ModelStatus.APPROVED, capabilities={}, created=datetime.now(timezone.utc), updated=datetime.now(timezone.utc))
+        models: List[LlmModel] = [
+            LlmModel(id=1, url="http://test1.com", name="OpenAI Model", technical_name="openai_model",
+                  provider=LLMProvider.OPENAI, status=LlmModelStatus.APPROVED, capabilities={},
+                  created=datetime.now(timezone.utc), updated=datetime.now(timezone.utc)),
+            LlmModel(id=2, url="http://test2.com", name="Anthropic Model", technical_name="anthropic_model",
+                  provider=LLMProvider.ANTHROPIC, status=LlmModelStatus.APPROVED, capabilities={},
+                  created=datetime.now(timezone.utc), updated=datetime.now(timezone.utc))
         ]
         mock_model_service.get_all_models.return_value = models
 
