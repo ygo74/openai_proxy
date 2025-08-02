@@ -2,6 +2,8 @@
 
 from typing import Any
 import logging
+import os
+import sys
 
 # Handle missing langchain_openai dependency
 try:
@@ -16,8 +18,25 @@ except ImportError as e:
     print("   pip install langchain[openai]")
     print()
 
+log_level: str = os.getenv("LOG_LEVEL", "INFO").upper()
+
+# Validate log level
+numeric_level: int = getattr(logging, log_level, logging.INFO)
+if not isinstance(numeric_level, int):
+    numeric_level = logging.INFO
 
 logger = logging.getLogger(__name__)
+    # Configure root logger
+
+logging.basicConfig(
+    level=numeric_level,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logging.getLogger("httpx").setLevel(logging.INFO)
+logging.getLogger("httpcore").setLevel(logging.INFO)
 
 
 class ProxyLangchainFactory:

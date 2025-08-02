@@ -1,15 +1,23 @@
 """Azure Management API client for deployment management."""
 import httpx
+import ssl
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional, Union
 from .azure_auth_client import AzureAuthClient
+from .http_client_factory import HttpClientFactory
 
 logger = logging.getLogger(__name__)
 
 class AzureManagementClient:
     """Client for Azure Management API to manage Cognitive Services deployments."""
 
-    def __init__(self, auth_client: AzureAuthClient, subscription_id: str, resource_group: str, account_name: str):
+    def __init__(self, auth_client: AzureAuthClient, subscription_id: str, resource_group: str, account_name: str,
+                 proxy_url: Optional[str] = None,
+                 proxy_auth: Optional[httpx.Auth] = None,
+                 verify_ssl: Union[bool, str, ssl.SSLContext] = True,
+                 ca_cert_file: Optional[str] = None,
+                 client_cert_file: Optional[str] = None,
+                 client_key_file: Optional[str] = None):
         """Initialize Azure Management client.
 
         Args:
@@ -17,12 +25,31 @@ class AzureManagementClient:
             subscription_id (str): Azure subscription ID
             resource_group (str): Resource group name
             account_name (str): Cognitive Services account name
+            proxy_url (Optional[str]): Corporate proxy URL
+            proxy_auth (Optional[httpx.Auth]): Proxy authentication
+            verify_ssl (Union[bool, str, ssl.SSLContext]): SSL verification setting
+            ca_cert_file (Optional[str]): Path to custom CA certificate file
+            client_cert_file (Optional[str]): Path to client certificate file
+            client_key_file (Optional[str]): Path to client private key file
         """
         self.auth_client = auth_client
         self.subscription_id = subscription_id
         self.resource_group = resource_group
         self.account_name = account_name
-        self._client = httpx.AsyncClient(timeout=60.0)
+
+        # Create HTTP client using factory with enterprise settings
+        self._client = HttpClientFactory.create_async_client(
+            target_url="https://management.azure.com",
+            timeout=60.0,
+            proxy_url=proxy_url,
+            proxy_auth=proxy_auth,
+            verify_ssl=verify_ssl,
+            ca_cert_file=ca_cert_file,
+            client_cert_file=client_cert_file,
+            client_key_file=client_key_file
+        )
+
+        logger.debug(f"AzureManagementClient initialized for subscription {subscription_id}")
 
     async def list_deployments(self) -> List[Dict[str, Any]]:
         """List deployments using Azure Management API.

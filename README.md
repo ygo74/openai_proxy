@@ -8,45 +8,55 @@ This project is a FastAPI-based proxy for OpenAI. It provides a simple interface
 transparent proxy : https://github.com/fangwentong/openai-proxy
 OpenAI schema : https://github.com/openai/openai-openapi/blob/manual_spec/openapi.yaml
 
-``` python
-    def fetch_available_models(self, model_configs: List[ModelConfig]) -> None:
-        """Fetch available models from external APIs.
+# Azure configuration
 
-        Args:
-            model_configs (List[ModelConfig]): List of model configurations
-        """
-        logger.debug("Starting to fetch available models.")
-        for model_config in model_configs:
-            logger.debug(f"Fetching models from URL: {model_config.url} with API key: {model_config.api_key}")
-            headers: dict = {"Authorization": f"Bearer {model_config.api_key}"}
-            params: dict = {"api-version": "2023-03-15-preview"}
-            full_url: str = f"{model_config.url}/openai/models"
+Pour pouvoir lister les modèles déployés sur Azure via l’API REST que tu mentionnes, il te faut une authentification OAuth 2.0 avec Azure Active Directory (AAD). Voici comment procéder étape par étape pour intégrer cela dans une API :
 
-            try:
-                response = requests.get(full_url, headers=headers, params=params)
-                if response.status_code == 200:
-                    logger.debug(f"Successfully fetched models from {full_url}")
-                    models_data = response.json()["data"]
-                    for model in models_data:
-                        technical_name: str = f"{model_config.provider}_{model['id']}"
+## 🔐 Étapes pour s'authentifier sur Azure via une API
 
-                        # Convert string provider to LLMProvider enum
-                        try:
-                            provider_enum = LLMProvider(model_config.provider.lower())
-                        except ValueError:
-                            logger.warning(f"Unknown provider '{model_config.provider}', skipping model {technical_name}")
-                            continue
+1. Enregistrer ton application dans Azure AD
+Va sur Azure Portal
 
-                        self._save_or_update_model(
-                            url=model_config.url,
-                            name=model["id"],
-                            technical_name=technical_name,
-                            provider=provider_enum,
-                            capabilities=model.get("capabilities", {})
-                        )
-                else:
-                    logger.error(f"Failed to fetch models from {full_url}. Status code: {response.status_code}")
-            except Exception as e:
-                logger.error(f"Error fetching models from {full_url}: {str(e)}")
+Navigue vers Azure Active Directory > App registrations
 
-```
+Clique sur New registration
+
+Note le Client ID (Application ID) et le Tenant ID
+
+2. Créer un secret ou certificat pour l’application
+Dans ton application enregistrée > Certificates & Secrets
+
+Crée un secret client (Client Secret) et sauvegarde sa valeur
+
+3. Attribuer les autorisations API
+Dans ton application > API permissions
+
+Ajoute l’autorisation Azure Service Management > user_impersonation (ou selon l’API utilisée)
+
+Clique sur Grant admin consent si nécessaire
+
+## 🔍 Étapes pour le retrouver dans le portail Azure
+Connecte-toi au portail Azure
+
+Dans le menu de gauche, clique sur Abonnements (ou cherche "Subscriptions" dans la barre de recherche)
+
+Tu verras la liste de tes abonnements. L’ID d’abonnement est affiché dans la deuxième colonne
+
+Tu peux aussi cliquer sur le nom de l’abonnement pour voir plus de détails et copier l’ID facilement
+
+## 🔐 Étapes pour donner accès au service azure openai
+
+1. Vérifie que ton application a bien le rôle requis
+Tu dois attribuer à ton application Azure AD un rôle sur la ressource Azure OpenAI. Voici comment faire :
+
+Va sur Azure Portal
+
+Navigue vers la ressource Azure OpenAI
+
+Clique sur Contrôle d’accès (IAM) dans le menu de gauche
+
+Clique sur Ajouter un rôle
+
+Sélectionne le rôle Lecteur ou Cognitive Services Contributor
+
+Dans la section Membre, choisis Identité managée ou application et sélectionne ton application
