@@ -4,7 +4,7 @@ import os
 from typing import Dict, Any
 from datetime import datetime, timezone
 from typing import List, Tuple
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, AsyncMock
 import pytest
 from fastapi.testclient import TestClient
 
@@ -397,7 +397,8 @@ class TestModelsEndpoints:
     def test_refresh_models_success(self, client: TestClient, mock_model_service: MagicMock) -> None:
         """Test successful models refresh."""
         # arrange
-        mock_model_service.fetch_available_models.return_value = None
+        # Configure the mock as an AsyncMock for the async method
+        mock_model_service.fetch_available_models = AsyncMock(return_value=None)
 
         # act
         response = client.post("/v1/models/refresh")
@@ -406,3 +407,4 @@ class TestModelsEndpoints:
         assert response.status_code == 200
         response_data = response.json()
         assert "refreshed successfully" in response_data["message"]
+        mock_model_service.fetch_available_models.assert_called_once()
