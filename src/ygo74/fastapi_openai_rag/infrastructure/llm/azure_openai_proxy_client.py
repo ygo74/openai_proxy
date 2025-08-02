@@ -5,6 +5,8 @@ import json
 import time
 import uuid
 import ssl
+import os
+import urllib.parse
 from typing import Dict, Any, Optional, AsyncGenerator, List, Union
 from datetime import datetime, timezone
 
@@ -17,22 +19,19 @@ from ...domain.models.completion import (
 )
 from ...domain.models.llm import LLMProvider, TokenUsage
 from .http_client_factory import HttpClientFactory
+from .retry_handler import with_enterprise_retry, LLMRetryHandler
+from .enterprise_config import EnterpriseConfig
 import logging
 
 logger = logging.getLogger(__name__)
 
 class AzureOpenAIProxyClient:
-    """Azure OpenAI proxy client with API versioning support."""
+    """Azure OpenAI proxy client with API versioning support and retry resilience."""
 
     def __init__(self, api_key: str, base_url: str, api_version: str, provider: LLMProvider = LLMProvider.AZURE,
                  management_client: Optional['AzureManagementClient'] = None,
-                 proxy_url: Optional[str] = None,
-                 proxy_auth: Optional[httpx.Auth] = None,
-                 verify_ssl: Union[bool, str, ssl.SSLContext] = True,
-                 ca_cert_file: Optional[str] = None,
-                 client_cert_file: Optional[str] = None,
-                 client_key_file: Optional[str] = None):
-        """Initialize Azure OpenAI proxy client.
+                 enterprise_config: Optional[EnterpriseConfig] = None):
+        """Initialize Azure OpenAI proxy client with enterprise configuration.
 
         Args:
             api_key (str): API key for authentication
@@ -40,12 +39,7 @@ class AzureOpenAIProxyClient:
             api_version (str): Azure API version (e.g., "2024-06-01")
             provider (LLMProvider): Provider type (defaults to AZURE)
             management_client (Optional[AzureManagementClient]): Optional management client for deployment listing
-            proxy_url (Optional[str]): Corporate proxy URL (e.g., "http://proxy.company.com:8080")
-            proxy_auth (Optional[httpx.Auth]): Proxy authentication (Basic, Digest, etc.)
-            verify_ssl (Union[bool, str, ssl.SSLContext]): SSL verification. Can be True, False, path to CA bundle, or SSLContext
-            ca_cert_file (Optional[str]): Path to custom CA certificate file for enterprise SSL interception
-            client_cert_file (Optional[str]): Path to client certificate file for mutual TLS
-            client_key_file (Optional[str]): Path to client private key file for mutual TLS
+            enterprise_config (Optional[EnterpriseConfig]): Enterprise configuration
         """
         self.api_key = api_key
         self.base_url = base_url.rstrip('/')
@@ -53,174 +47,29 @@ class AzureOpenAIProxyClient:
         self.provider = provider
         self.management_client = management_client
 
+        # Use default enterprise config if none provided
+        if enterprise_config is None:
+            enterprise_config = EnterpriseConfig()
+
+        self.enterprise_config = enterprise_config
+
         # Create HTTP client using factory with enterprise settings
         self._client = HttpClientFactory.create_async_client(
             target_url=self.base_url,
             timeout=120.0,
-            proxy_url=proxy_url,
-            proxy_auth=proxy_auth,
-            verify_ssl=verify_ssl,
-            ca_cert_file=ca_cert_file,
-            client_cert_file=client_cert_file,
-            client_key_file=client_key_file
+            proxy_url=enterprise_config.proxy_url,
+            proxy_auth=enterprise_config.proxy_auth,
+            verify_ssl=enterprise_config.verify_ssl,
+            ca_cert_file=enterprise_config.ca_cert_file,
+            client_cert_file=enterprise_config.client_cert_file,
+            client_key_file=enterprise_config.client_key_file
         )
 
-        logger.debug(f"AzureOpenAIProxyClient initialized for {provider} at {base_url} with API version {api_version}")
+        logger.debug(f"AzureOpenAIProxyClient initialized for {provider} at {base_url} with API version {api_version}, retry enabled: {enterprise_config.enable_retry}")
 
-    def _configure_proxy(self, proxy_url: Optional[str], proxy_auth: Optional[httpx.Auth]) -> Optional[httpx.Proxy]:
-        """Configure proxy settings from parameters or environment variables.
-
-        Args:
-            proxy_url (Optional[str]): Explicit proxy URL
-            proxy_auth (Optional[httpx.Auth]): Explicit proxy authentication
-
-        Returns:
-            Optional[httpx.Proxy]: Configured proxy or None
-        """
-        # If proxy URL is explicitly provided, use it
-        if proxy_url:
-            logger.debug(f"Using explicit proxy configuration: {proxy_url}")
-            return httpx.Proxy(url=proxy_url, auth=proxy_auth)
-
-        # Check environment variables for proxy configuration
-        env_proxy = self._get_proxy_from_env()
-        if env_proxy:
-            return env_proxy
-
-        return None
-
-    def _get_proxy_from_env(self) -> Optional[httpx.Proxy]:
-        """Get proxy configuration from environment variables.
-
-        Checks for standard proxy environment variables:
-        - http_proxy / HTTP_PROXY
-        - https_proxy / HTTPS_PROXY
-        - no_proxy / NO_PROXY
-
-        Returns:
-            Optional[httpx.Proxy]: Configured proxy or None
-        """
-        # Check if target URL should bypass proxy
-        if self._should_bypass_proxy():
-            logger.debug("Target URL matches no_proxy pattern, bypassing proxy")
-            return None
-
-        # Determine which proxy to use based on target URL scheme
-        target_scheme = urllib.parse.urlparse(self.base_url).scheme.lower()
-
-        # Check for scheme-specific proxy first
-        proxy_env_vars = []
-        if target_scheme == 'https':
-            proxy_env_vars = ['https_proxy', 'HTTPS_PROXY', 'http_proxy', 'HTTP_PROXY']
-        else:
-            proxy_env_vars = ['http_proxy', 'HTTP_PROXY']
-
-        for env_var in proxy_env_vars:
-            proxy_url = os.environ.get(env_var)
-            if proxy_url:
-                logger.debug(f"Found proxy configuration in environment variable {env_var}: {proxy_url}")
-
-                # Parse proxy URL and extract authentication if present
-                proxy_auth = self._parse_proxy_auth(proxy_url)
-
-                # Remove auth from URL if present (httpx handles it separately)
-                clean_proxy_url = self._clean_proxy_url(proxy_url)
-
-                return httpx.Proxy(url=clean_proxy_url, auth=proxy_auth)
-
-        return None
-
-    def _should_bypass_proxy(self) -> bool:
-        """Check if target URL should bypass proxy based on no_proxy environment variable.
-
-        Returns:
-            bool: True if proxy should be bypassed
-        """
-        no_proxy = os.environ.get('no_proxy') or os.environ.get('NO_PROXY')
-        if not no_proxy:
-            return False
-
-        # Parse target hostname
-        target_parsed = urllib.parse.urlparse(self.base_url)
-        target_host = target_parsed.hostname
-        if not target_host:
-            return False
-
-        # Check each no_proxy entry
-        for no_proxy_entry in no_proxy.split(','):
-            no_proxy_entry = no_proxy_entry.strip()
-            if not no_proxy_entry:
-                continue
-
-            # Handle different no_proxy patterns
-            if no_proxy_entry == '*':
-                return True
-            elif no_proxy_entry.startswith('.'):
-                # Domain suffix match (e.g., .company.com)
-                if target_host.endswith(no_proxy_entry[1:]):
-                    return True
-            elif no_proxy_entry == target_host:
-                # Exact hostname match
-                return True
-            elif '/' in no_proxy_entry:
-                # CIDR notation - simplified check for exact match
-                if target_host == no_proxy_entry.split('/')[0]:
-                    return True
-
-        return False
-
-    def _parse_proxy_auth(self, proxy_url: str) -> Optional[httpx.Auth]:
-        """Parse authentication from proxy URL.
-
-        Args:
-            proxy_url (str): Proxy URL potentially containing authentication
-
-        Returns:
-            Optional[httpx.Auth]: Authentication object or None
-        """
-        try:
-            parsed = urllib.parse.urlparse(proxy_url)
-            if parsed.username and parsed.password:
-                logger.debug("Found proxy authentication in URL")
-                return httpx.BasicAuth(username=parsed.username, password=parsed.password)
-        except Exception as e:
-            logger.warning(f"Failed to parse proxy authentication: {e}")
-
-        return None
-
-    def _clean_proxy_url(self, proxy_url: str) -> str:
-        """Remove authentication from proxy URL.
-
-        Args:
-            proxy_url (str): Proxy URL potentially containing authentication
-
-        Returns:
-            str: Clean proxy URL without authentication
-        """
-        try:
-            parsed = urllib.parse.urlparse(proxy_url)
-            if parsed.username or parsed.password:
-                # Reconstruct URL without authentication
-                clean_netloc = parsed.hostname
-                if parsed.port:
-                    clean_netloc = f"{clean_netloc}:{parsed.port}"
-
-                clean_url = urllib.parse.urlunparse((
-                    parsed.scheme,
-                    clean_netloc,
-                    parsed.path,
-                    parsed.params,
-                    parsed.query,
-                    parsed.fragment
-                ))
-                return clean_url
-        except Exception as e:
-            logger.warning(f"Failed to clean proxy URL: {e}")
-
-        return proxy_url
-
+    @with_enterprise_retry
     async def completion(self, request: CompletionRequest) -> CompletionResponse:
-        """Create text completion via Azure OpenAI API with smart routing.
+        """Create text completion via Azure OpenAI API with smart routing and retry resilience.
 
         Args:
             request (CompletionRequest): Text completion request
@@ -229,7 +78,7 @@ class AzureOpenAIProxyClient:
             CompletionResponse: Generated response
 
         Raises:
-            httpx.HTTPError: If API request fails
+            httpx.HTTPError: If API request fails after all retries
         """
         # Check if model supports completions endpoint
         model_name = request.model
@@ -241,7 +90,7 @@ class AzureOpenAIProxyClient:
         return await self._direct_completion(request)
 
     async def _direct_completion(self, request: CompletionRequest) -> CompletionResponse:
-        """Direct completion via completions endpoint.
+        """Direct completion via completions endpoint with automatic retry.
 
         Args:
             request (CompletionRequest): Text completion request
@@ -396,8 +245,9 @@ class AzureOpenAIProxyClient:
         # If it doesn't support completions, use chat completions
         return not supports_completions
 
+    @with_enterprise_retry
     async def chat_completion(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
-        """Create chat completion via Azure OpenAI API.
+        """Create chat completion via Azure OpenAI API with retry resilience.
 
         Args:
             request (ChatCompletionRequest): Chat completion request
@@ -406,7 +256,7 @@ class AzureOpenAIProxyClient:
             ChatCompletionResponse: Generated response
 
         Raises:
-            httpx.HTTPError: If API request fails
+            httpx.HTTPError: If API request fails after all retries
         """
         start_time = time.time()
         url = self._build_url("chat/completions", request.model)
@@ -442,13 +292,29 @@ class AzureOpenAIProxyClient:
             raise
 
     async def stream_chat_completion(self, request: ChatCompletionRequest) -> AsyncGenerator[ChatCompletionStreamResponse, None]:
-        """Stream chat completion via Azure OpenAI API.
+        """Stream chat completion via Azure OpenAI API with retry for connection establishment.
 
         Args:
             request (ChatCompletionRequest): Chat completion request
 
         Yields:
             ChatCompletionStreamResponse: Streaming response chunks
+        """
+        # Apply retry only to the connection establishment, not the entire stream
+        stream_response = await self._establish_stream_connection(request)
+
+        async for chunk in stream_response:
+            yield chunk
+
+    @with_enterprise_retry
+    async def _establish_stream_connection(self, request: ChatCompletionRequest):
+        """Establish streaming connection with retry capability.
+
+        Args:
+            request (ChatCompletionRequest): Chat completion request
+
+        Returns:
+            Async generator for streaming response
         """
         url = self._build_url("chat/completions", request.model)
         headers = self._get_headers()
@@ -480,14 +346,15 @@ class AzureOpenAIProxyClient:
                     except json.JSONDecodeError:
                         continue
 
+    @with_enterprise_retry
     async def list_models(self) -> List[Dict[str, Any]]:
-        """List available models from Azure OpenAI API.
+        """List available models from Azure OpenAI API with retry resilience.
 
         Returns:
             List[Dict[str, Any]]: List of available models
 
         Raises:
-            httpx.HTTPError: If API request fails
+            httpx.HTTPError: If API request fails after all retries
         """
         url = f"{self.base_url}/openai/models?api-version={self.api_version}"
         headers = self._get_headers()
@@ -515,14 +382,15 @@ class AzureOpenAIProxyClient:
             logger.error(f"Unexpected error fetching Azure models: {str(e)}")
             raise
 
+    @with_enterprise_retry
     async def list_deployments(self) -> List[Dict[str, Any]]:
-        """List deployed models from Azure using Management API or fallback to models endpoint.
+        """List deployed models from Azure using Management API or fallback to models endpoint with retry.
 
         Returns:
             List[Dict[str, Any]]: List of deployed models with deployment info
 
         Raises:
-            httpx.HTTPError: If API request fails
+            httpx.HTTPError: If API request fails after all retries
         """
         # If management client is available, use it for true deployment listing
         if self.management_client:
@@ -531,34 +399,8 @@ class AzureOpenAIProxyClient:
             except Exception as e:
                 logger.warning(f"Failed to get deployments from Management API, falling back to models endpoint: {e}")
 
-        # Fallback to the standard models endpoint
-        logger.info("Using models endpoint as fallback for deployment listing")
-        models = await self.list_models()
-
-        # Transform to deployment format for consistency
-        deployment_models = []
-        for model in models:
-            model_id = model.get("id", "")
-
-            deployment_model = {
-                "id": model_id,
-                "object": "model",
-                "model": model.get("model", model_id),
-                "deployment_id": model_id,
-                "deployment_status": "succeeded",  # Assume available if listed
-                "scale_settings": {},
-                "created": model.get("created", 0),
-                "owned_by": "azure-openai",
-                "capabilities": {
-                    "chat_completions": self._supports_chat_completions(model_id),
-                    "completions": self._supports_completions(model_id),
-                    "embeddings": self._supports_embeddings(model_id)
-                }
-            }
-            deployment_models.append(deployment_model)
-
-        logger.debug(f"Found {len(deployment_models)} available Azure models (fallback method)")
-        return deployment_models
+        # Fallback to the standard models endpoint with retry
+        return await self.list_models()
 
     def _supports_chat_completions(self, model_name: str) -> bool:
         """Check if a model supports chat completions.

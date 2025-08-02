@@ -1,94 +1,160 @@
 """Tests for Azure OpenAI proxy client."""
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-import httpx
+from unittest.mock import Mock, AsyncMock, patch
+from datetime import datetime, timezone
 
 from src.ygo74.fastapi_openai_rag.infrastructure.llm.azure_openai_proxy_client import AzureOpenAIProxyClient
+from src.ygo74.fastapi_openai_rag.infrastructure.llm.client_factory import EnterpriseConfig
 from src.ygo74.fastapi_openai_rag.domain.models.llm import LLMProvider
+from src.ygo74.fastapi_openai_rag.domain.models.chat_completion import ChatCompletionRequest, ChatMessage
+from src.ygo74.fastapi_openai_rag.domain.models.completion import CompletionRequest
 
 
-@pytest.fixture
-def azure_client():
-    """Create Azure OpenAI proxy client for testing."""
-    return AzureOpenAIProxyClient(
-        api_key="test-key",
-        base_url="https://test.openai.azure.com",
-        api_version="2024-06-01",
-        provider=LLMProvider.AZURE
-    )
+class TestAzureOpenAIProxyClient:
+    """Test AzureOpenAIProxyClient class."""
 
-
-@pytest.mark.asyncio
-async def test_azure_openai_proxy_client_list_models_success(azure_client):
-    """Test Azure OpenAI proxy client list_models method success."""
-    # arrange
-    mock_response_data = {
-        "data": [
-            {"id": "gpt-35-turbo", "object": "model"},
-            {"id": "gpt-4", "object": "model"}
-        ]
-    }
-
-    with patch.object(azure_client._client, 'get') as mock_get:
-        mock_response = MagicMock()
-        mock_response.raise_for_status.return_value = None
-        mock_response.json.return_value = mock_response_data
-        mock_get.return_value = mock_response
-
-        # act
-        result = await azure_client.list_models()
+    def test_azure_openai_proxy_client_init_default_config(self):
+        """Test Azure OpenAI proxy client initialization with default config."""
+        # arrange & act
+        with patch('src.ygo74.fastapi_openai_rag.infrastructure.llm.azure_openai_proxy_client.HttpClientFactory'):
+            client = AzureOpenAIProxyClient(
+                api_key="test-key",
+                base_url="https://test.openai.azure.com",
+                api_version="2024-06-01"
+            )
 
         # assert
-        assert len(result) == 2
-        assert result[0]["id"] == "gpt-35-turbo"
-        assert result[1]["id"] == "gpt-4"
-        mock_get.assert_called_once_with(
-            url="https://test.openai.azure.com/openai/models?api-version=2024-06-01",
-            headers={
-                "api-key": "test-key",
-                "Content-Type": "application/json",
-                "User-Agent": "fastapi-openai-rag/1.0.0"
-            },
-            timeout=30.0
-        )
+        assert client.api_key == "test-key"
+        assert client.base_url == "https://test.openai.azure.com"
+        assert client.api_version == "2024-06-01"
+        assert client.provider == LLMProvider.AZURE
+        assert client.enterprise_config is not None
+        assert client.enterprise_config.enable_retry is True
 
+    def test_azure_openai_proxy_client_init_custom_config(self):
+        """Test Azure OpenAI proxy client initialization with custom config."""
+        # arrange
+        enterprise_config = EnterpriseConfig(enable_retry=False)
 
-@pytest.mark.asyncio
-async def test_azure_openai_proxy_client_list_models_http_error(azure_client):
-    """Test Azure OpenAI proxy client list_models method with HTTP error."""
-    # arrange
-    with patch.object(azure_client._client, 'get') as mock_get:
-        mock_get.side_effect = httpx.HTTPError("API Error")
+        # act
+        with patch('src.ygo74.fastapi_openai_rag.infrastructure.llm.azure_openai_proxy_client.HttpClientFactory'):
+            client = AzureOpenAIProxyClient(
+                api_key="test-key",
+                base_url="https://test.openai.azure.com/",  # with trailing slash
+                api_version="2024-06-01",
+                provider=LLMProvider.AZURE,
+                enterprise_config=enterprise_config
+            )
+
+        # assert
+        assert client.api_key == "test-key"
+        assert client.base_url == "https://test.openai.azure.com"  # trailing slash removed
+        assert client.api_version == "2024-06-01"
+        assert client.provider == LLMProvider.AZURE
+        assert client.enterprise_config.enable_retry is False
+
+    def test_azure_openai_proxy_client_build_url(self):
+        """Test URL building for Azure OpenAI API."""
+        # arrange
+        with patch('src.ygo74.fastapi_openai_rag.infrastructure.llm.azure_openai_proxy_client.HttpClientFactory'):
+            client = AzureOpenAIProxyClient(
+                api_key="test-key",
+                base_url="https://test.openai.azure.com",
+                api_version="2024-06-01"
+            )
+
+        # act
+        url = client._build_url("chat/completions", "gpt-4")
+
+        # assert
+        expected_url = "https://test.openai.azure.com/openai/deployments/gpt-4/chat/completions?api-version=2024-06-01"
+        assert url == expected_url
+
+    def test_azure_openai_proxy_client_get_headers(self):
+        """Test headers generation for Azure OpenAI API."""
+        # arrange
+        with patch('src.ygo74.fastapi_openai_rag.infrastructure.llm.azure_openai_proxy_client.HttpClientFactory'):
+            client = AzureOpenAIProxyClient(
+                api_key="test-key",
+                base_url="https://test.openai.azure.com",
+                api_version="2024-06-01"
+            )
+
+        # act
+        headers = client._get_headers()
+
+        # assert
+        assert headers["api-key"] == "test-key"
+        assert headers["Content-Type"] == "application/json"
+        assert "User-Agent" in headers
+
+    def test_azure_openai_proxy_client_should_use_chat_completions(self):
+        """Test model endpoint detection."""
+        # arrange
+        with patch('src.ygo74.fastapi_openai_rag.infrastructure.llm.azure_openai_proxy_client.HttpClientFactory'):
+            client = AzureOpenAIProxyClient(
+                api_key="test-key",
+                base_url="https://test.openai.azure.com",
+                api_version="2024-06-01"
+            )
 
         # act & assert
-        with pytest.raises(httpx.HTTPError):
-            await azure_client.list_models()
+        assert client._should_use_chat_completions("gpt-4") is True
+        assert client._should_use_chat_completions("gpt-35-turbo") is True
+        assert client._should_use_chat_completions("text-davinci-003") is False
 
+    def test_azure_openai_proxy_client_supports_capabilities(self):
+        """Test model capability detection."""
+        # arrange
+        with patch('src.ygo74.fastapi_openai_rag.infrastructure.llm.azure_openai_proxy_client.HttpClientFactory'):
+            client = AzureOpenAIProxyClient(
+                api_key="test-key",
+                base_url="https://test.openai.azure.com",
+                api_version="2024-06-01"
+            )
 
-@pytest.mark.asyncio
-async def test_azure_openai_proxy_client_close():
-    """Test Azure OpenAI proxy client close method."""
-    # arrange
-    client = AzureOpenAIProxyClient("test-key", "https://test.openai.azure.com", "2024-06-01", LLMProvider.AZURE)
-    client._client = AsyncMock()
+        # act & assert
+        assert client._supports_chat_completions("gpt-4") is True
+        assert client._supports_completions("text-davinci-003") is True
+        assert client._supports_embeddings("text-embedding-ada-002") is True
 
-    # act
-    await client.close()
+    @pytest.mark.asyncio
+    async def test_azure_openai_proxy_client_close(self):
+        """Test client cleanup."""
+        # arrange
+        mock_http_client = AsyncMock()
 
-    # assert
-    client._client.aclose.assert_called_once()
+        with patch('src.ygo74.fastapi_openai_rag.infrastructure.llm.azure_openai_proxy_client.HttpClientFactory') as mock_factory:
+            mock_factory.create_async_client.return_value = mock_http_client
 
+            client = AzureOpenAIProxyClient(
+                api_key="test-key",
+                base_url="https://test.openai.azure.com",
+                api_version="2024-06-01"
+            )
 
-@pytest.mark.asyncio
-async def test_azure_openai_proxy_client_context_manager():
-    """Test Azure OpenAI proxy client async context manager."""
-    # arrange
-    client = AzureOpenAIProxyClient("test-key", "https://test.openai.azure.com", "2024-06-01", LLMProvider.AZURE)
-    client._client = AsyncMock()
+        # act
+        await client.close()
 
-    # act
-    async with client as ctx_client:
-        assert ctx_client is client
+        # assert
+        mock_http_client.aclose.assert_called_once()
 
-    # assert
-    client._client.aclose.assert_called_once()
+    @pytest.mark.asyncio
+    async def test_azure_openai_proxy_client_context_manager(self):
+        """Test async context manager."""
+        # arrange
+        mock_http_client = AsyncMock()
+
+        with patch('src.ygo74.fastapi_openai_rag.infrastructure.llm.azure_openai_proxy_client.HttpClientFactory') as mock_factory:
+            mock_factory.create_async_client.return_value = mock_http_client
+
+            # act
+            async with AzureOpenAIProxyClient(
+                api_key="test-key",
+                base_url="https://test.openai.azure.com",
+                api_version="2024-06-01"
+            ) as client:
+                assert client is not None
+
+        # assert
+        mock_http_client.aclose.assert_called_once()

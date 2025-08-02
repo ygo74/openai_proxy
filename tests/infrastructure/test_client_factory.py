@@ -1,98 +1,143 @@
 """Tests for LLM client factory."""
 import pytest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+import ssl
 
-from src.ygo74.fastapi_openai_rag.infrastructure.llm.client_factory import LLMClientFactory
-from src.ygo74.fastapi_openai_rag.infrastructure.llm.openai_proxy_client import OpenAIProxyClient
-from src.ygo74.fastapi_openai_rag.infrastructure.llm.azure_openai_proxy_client import AzureOpenAIProxyClient
+from src.ygo74.fastapi_openai_rag.infrastructure.llm.client_factory import (
+    LLMClientFactory, EnterpriseConfig
+)
 from src.ygo74.fastapi_openai_rag.domain.models.llm import LLMProvider
-from src.ygo74.fastapi_openai_rag.domain.models.llm_model import LlmModel, AzureLlmModel, LlmModelStatus
-from datetime import datetime, timezone
+from src.ygo74.fastapi_openai_rag.domain.models.llm_model import LlmModel, AzureLlmModel
 
 
-def test_client_factory_create_openai_client():
-    """Test client factory creates OpenAI client correctly."""
-    # arrange
-    model = LlmModel(
-        url="https://api.openai.com/v1",
-        name="GPT-4",
-        technical_name="openai_gpt-4",
-        provider=LLMProvider.OPENAI,
-        status=LlmModelStatus.APPROVED,
-        created=datetime.now(timezone.utc),
-        updated=datetime.now(timezone.utc)
-    )
-    api_key = "test-api-key"
+class TestEnterpriseConfig:
+    """Test EnterpriseConfig dataclass."""
 
-    # act
-    client = LLMClientFactory.create_client(model, api_key)
+    def test_enterprise_config_default_values(self):
+        """Test enterprise config default values."""
+        # arrange & act
+        config = EnterpriseConfig()
 
-    # assert
-    assert isinstance(client, OpenAIProxyClient)
-    assert client.api_key == api_key
-    assert client.base_url == "https://api.openai.com/v1"
-    assert client.provider == LLMProvider.OPENAI
+        # assert
+        assert config.enable_retry is True
+        assert config.retry_handler is None
+        assert config.proxy_url is None
+        assert config.proxy_auth is None
+        assert config.verify_ssl is True
+        assert config.ca_cert_file is None
+        assert config.client_cert_file is None
+        assert config.client_key_file is None
 
+    def test_enterprise_config_should_auto_detect_proxy_default(self):
+        """Test should auto-detect proxy with default settings."""
+        # arrange & act
+        config = EnterpriseConfig()
 
-def test_client_factory_create_azure_client():
-    """Test client factory creates Azure OpenAI client correctly."""
-    # arrange
-    model = AzureLlmModel(
-        url="https://test.openai.azure.com",
-        name="GPT-4",
-        technical_name="azure_gpt-4",
-        provider=LLMProvider.AZURE,
-        api_version="2024-06-01",
-        status=LlmModelStatus.APPROVED,
-        created=datetime.now(timezone.utc),
-        updated=datetime.now(timezone.utc)
-    )
-    api_key = "test-api-key"
+        # assert
+        assert config.should_auto_detect_proxy() is True
 
-    # act
-    client = LLMClientFactory.create_client(model, api_key)
+    def test_enterprise_config_should_auto_detect_proxy_explicit_empty(self):
+        """Test should not auto-detect proxy when explicitly set to empty."""
+        # arrange & act
+        config = EnterpriseConfig(proxy_url="")
 
-    # assert
-    assert isinstance(client, AzureOpenAIProxyClient)
-    assert client.api_key == api_key
-    assert client.base_url == "https://test.openai.azure.com"
-    assert client.provider == LLMProvider.AZURE
-    assert client.api_version == "2024-06-01"
+        # assert
+        assert config.should_auto_detect_proxy() is False
+
+    def test_enterprise_config_should_auto_detect_proxy_explicit_url(self):
+        """Test should not auto-detect proxy when URL is set."""
+        # arrange & act
+        config = EnterpriseConfig(proxy_url="http://proxy.example.com:8080")
+
+        # assert
+        assert config.should_auto_detect_proxy() is False
 
 
-def test_client_factory_azure_without_azure_model():
-    """Test client factory raises error for Azure provider without AzureLlmModel."""
-    # arrange
-    model = LlmModel(
-        url="https://test.openai.azure.com",
-        name="GPT-4",
-        technical_name="azure_gpt-4",
-        provider=LLMProvider.AZURE,
-        status=LlmModelStatus.APPROVED,
-        created=datetime.now(timezone.utc),
-        updated=datetime.now(timezone.utc)
-    )
-    api_key = "test-api-key"
+class TestLLMClientFactory:
+    """Test LLMClientFactory class."""
 
-    # act & assert
-    with pytest.raises(ValueError, match="Azure provider requires AzureLlmModel with api_version"):
-        LLMClientFactory.create_client(model, api_key)
+    def test_llm_client_factory_create_azure_client(self):
+        """Test creating Azure OpenAI client."""
+        # arrange
+        model = AzureLlmModel(
+            name="gpt-4",
+            provider=LLMProvider.AZURE,
+            url="https://test.openai.azure.com",
+            api_version="2024-06-01"
+        )
 
+        # act
+        with patch('src.ygo74.fastapi_openai_rag.infrastructure.llm.client_factory.AzureOpenAIProxyClient') as mock_client:
+            client = LLMClientFactory.create_client(model, "test-key")
 
-def test_client_factory_unsupported_provider():
-    """Test client factory raises error for unsupported provider."""
-    # arrange
-    model = LlmModel(
-        url="https://api.anthropic.com",
-        name="Claude",
-        technical_name="anthropic_claude",
-        provider=LLMProvider.ANTHROPIC,
-        status=LlmModelStatus.APPROVED,
-        created=datetime.now(timezone.utc),
-        updated=datetime.now(timezone.utc)
-    )
-    api_key = "test-api-key"
+        # assert
+        mock_client.assert_called_once()
+        call_args = mock_client.call_args
+        assert call_args[1]['api_key'] == "test-key"
+        assert call_args[1]['base_url'] == "https://test.openai.azure.com"
+        assert call_args[1]['api_version'] == "2024-06-01"
+        assert call_args[1]['provider'] == LLMProvider.AZURE
 
-    # act & assert
-    with pytest.raises(ValueError, match="Anthropic client not yet implemented"):
-        LLMClientFactory.create_client(model, api_key)
+    def test_llm_client_factory_create_openai_client(self):
+        """Test creating OpenAI client."""
+        # arrange
+        model = LlmModel(
+            name="gpt-4",
+            provider=LLMProvider.OPENAI,
+            url="https://api.openai.com/v1"
+        )
+
+        # act
+        with patch('src.ygo74.fastapi_openai_rag.infrastructure.llm.client_factory.OpenAIProxyClient') as mock_client:
+            client = LLMClientFactory.create_client(model, "test-key")
+
+        # assert
+        mock_client.assert_called_once()
+
+    def test_llm_client_factory_create_azure_client_invalid_model(self):
+        """Test creating Azure client with invalid model."""
+        # arrange
+        model = LlmModel(  # Not AzureLlmModel
+            name="gpt-4",
+            provider=LLMProvider.AZURE,
+            url="https://test.openai.azure.com"
+        )
+
+        # act & assert
+        with pytest.raises(ValueError, match="Azure provider requires AzureLlmModel with api_version"):
+            LLMClientFactory.create_client(model, "test-key")
+
+    def test_llm_client_factory_create_unsupported_provider(self):
+        """Test creating client with unsupported provider."""
+        # arrange
+        model = LlmModel(
+            name="claude-3",
+            provider=LLMProvider.ANTHROPIC,
+            url="https://api.anthropic.com"
+        )
+
+        # act & assert
+        with pytest.raises(ValueError, match="Anthropic client not yet implemented"):
+            LLMClientFactory.create_client(model, "test-key")
+
+    def test_llm_client_factory_create_enterprise_client(self):
+        """Test creating enterprise client with defaults."""
+        # arrange
+        model = AzureLlmModel(
+            name="gpt-4",
+            provider=LLMProvider.AZURE,
+            url="https://test.openai.azure.com",
+            api_version="2024-06-01"
+        )
+
+        # act
+        with patch('src.ygo74.fastapi_openai_rag.infrastructure.llm.client_factory.AzureOpenAIProxyClient') as mock_client:
+            client = LLMClientFactory.create_enterprise_client(model, "test-key")
+
+        # assert
+        mock_client.assert_called_once()
+        call_args = mock_client.call_args
+        enterprise_config = call_args[1]['enterprise_config']
+        assert enterprise_config.enable_retry is True
+        assert enterprise_config.retry_handler is not None
+        assert enterprise_config.verify_ssl is True
