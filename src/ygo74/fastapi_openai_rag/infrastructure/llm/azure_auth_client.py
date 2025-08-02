@@ -1,28 +1,58 @@
 """Azure AD authentication client."""
 import httpx
+import ssl
 import logging
-from typing import Optional
+from typing import Optional, Union
 from datetime import datetime, timedelta
+from .http_client_factory import HttpClientFactory
 
 logger = logging.getLogger(__name__)
 
 class AzureAuthClient:
     """Azure AD authentication client for management API access."""
 
-    def __init__(self, tenant_id: str, client_id: str, client_secret: str):
+    def __init__(self, tenant_id: str, client_id: str, client_secret: str,
+                 proxy_url: Optional[str] = None,
+                 proxy_auth: Optional[httpx.Auth] = None,
+                 verify_ssl: Union[bool, str, ssl.SSLContext] = True,
+                 ca_cert_file: Optional[str] = None,
+                 client_cert_file: Optional[str] = None,
+                 client_key_file: Optional[str] = None):
         """Initialize Azure AD authentication client.
 
         Args:
             tenant_id (str): Azure AD tenant ID
             client_id (str): Service principal client ID
             client_secret (str): Service principal client secret
+            proxy_url (Optional[str]): Corporate proxy URL
+            proxy_auth (Optional[httpx.Auth]): Proxy authentication
+            verify_ssl (Union[bool, str, ssl.SSLContext]): SSL verification setting
+            ca_cert_file (Optional[str]): Path to custom CA certificate file
+            client_cert_file (Optional[str]): Path to client certificate file
+            client_key_file (Optional[str]): Path to client private key file
         """
         self.tenant_id = tenant_id
         self.client_id = client_id
         self.client_secret = client_secret
-        self._client = httpx.AsyncClient(timeout=30.0)
         self._access_token: Optional[str] = None
         self._token_expiry: Optional[datetime] = None
+
+        # Target URL for proxy configuration
+        target_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+
+        # Create HTTP client using factory with enterprise settings
+        self._client = HttpClientFactory.create_async_client(
+            target_url=target_url,
+            timeout=30.0,
+            proxy_url=proxy_url,
+            proxy_auth=proxy_auth,
+            verify_ssl=verify_ssl,
+            ca_cert_file=ca_cert_file,
+            client_cert_file=client_cert_file,
+            client_key_file=client_key_file
+        )
+
+        logger.debug(f"AzureAuthClient initialized for tenant {tenant_id}")
 
     async def get_access_token(self) -> str:
         """Get valid access token for Azure Management API.

@@ -4,7 +4,8 @@ import httpx
 import json
 import time
 import uuid
-from typing import Dict, Any, Optional, AsyncGenerator, List
+import ssl
+from typing import Dict, Any, Optional, AsyncGenerator, List, Union
 from datetime import datetime, timezone
 
 from ...domain.models.chat_completion import (
@@ -15,8 +16,7 @@ from ...domain.models.completion import (
     CompletionRequest, CompletionResponse, CompletionChoice
 )
 from ...domain.models.llm import LLMProvider, TokenUsage
-from ...domain.models.llm_model import LlmModel
-from ...domain.protocols.llm_client import LLMClientProtocol
+from .http_client_factory import HttpClientFactory
 import logging
 
 logger = logging.getLogger(__name__)
@@ -24,20 +24,43 @@ logger = logging.getLogger(__name__)
 class OpenAIProxyClient:
     """Transparent OpenAI proxy client for compatible providers."""
 
-    def __init__(self, api_key: str, base_url: str, provider: LLMProvider):
+    def __init__(self, api_key: str, base_url: str, provider: LLMProvider,
+                 proxy_url: Optional[str] = None,
+                 proxy_auth: Optional[httpx.Auth] = None,
+                 verify_ssl: Union[bool, str, ssl.SSLContext] = True,
+                 ca_cert_file: Optional[str] = None,
+                 client_cert_file: Optional[str] = None,
+                 client_key_file: Optional[str] = None):
         """Initialize OpenAI proxy client.
 
         Args:
             api_key (str): API key for authentication
             base_url (str): Base URL for the OpenAI-compatible API
             provider (LLMProvider): Provider type (OPENAI, AZURE, etc.)
+            proxy_url (Optional[str]): Corporate proxy URL (e.g., "http://proxy.company.com:8080")
+            proxy_auth (Optional[httpx.Auth]): Proxy authentication (Basic, Digest, etc.)
+            verify_ssl (Union[bool, str, ssl.SSLContext]): SSL verification. Can be True, False, path to CA bundle, or SSLContext
+            ca_cert_file (Optional[str]): Path to custom CA certificate file for enterprise SSL interception
+            client_cert_file (Optional[str]): Path to client certificate file for mutual TLS
+            client_key_file (Optional[str]): Path to client private key file for mutual TLS
         """
         self.api_key = api_key
         self.base_url = base_url.rstrip('/')
         self.provider = provider
-        self._client = httpx.AsyncClient(timeout=120.0)
-        logger.debug(f"OpenAIProxyClient initialized for {provider} at {base_url}")
 
+        # Create HTTP client using factory with enterprise settings
+        self._client = HttpClientFactory.create_async_client(
+            target_url=self.base_url,
+            timeout=120.0,
+            proxy_url=proxy_url,
+            proxy_auth=proxy_auth,
+            verify_ssl=verify_ssl,
+            ca_cert_file=ca_cert_file,
+            client_cert_file=client_cert_file,
+            client_key_file=client_key_file
+        )
+
+        logger.debug(f"OpenAIProxyClient initialized for {provider} at {base_url}")
 
     async def chat_completion(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
         """Create chat completion via transparent proxy.
