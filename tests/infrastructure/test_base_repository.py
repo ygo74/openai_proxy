@@ -167,7 +167,7 @@ def test_base_repository_remove_found():
     repository = SQLBaseRepository(mock_session, MockORMEntity, mock_mapper)
 
     # act
-    repository.remove(1)
+    repository.delete(1)
 
     # assert
     mock_session.delete.assert_called_once_with(orm_entity)
@@ -186,4 +186,4 @@ def test_base_repository_remove_not_found():
 
     # act & assert
     with pytest.raises(ValueError, match="Entity with id 1 not found"):
-        repository.remove(1)
+        repository.delete(1)

@@ -2,7 +2,7 @@
 import ssl
 from typing import Dict, Optional, Union
 from ...domain.models.llm import LLMProvider
-from ...domain.models.llm_model import LlmModel, AzureLlmModel
+from ...domain.models.llm_model import LlmModel
 from ...domain.protocols.llm_client import LLMClientProtocol
 from .openai_proxy_client import OpenAIProxyClient
 from .azure_openai_proxy_client import AzureOpenAIProxyClient
@@ -21,17 +21,15 @@ class LLMClientFactory:
 
     @staticmethod
     def create_client(
-        model: Union[LlmModel, AzureLlmModel],
-        api_key: str,
-        model_config: Optional[Union[ModelConfig, AzureModelConfig]] = None,
+        model: LlmModel,
+        model_config: Union[ModelConfig, AzureModelConfig],
         enterprise_config: Optional[EnterpriseConfig] = None
     ) -> LLMClientProtocol:
         """Create appropriate LLM client based on model configuration with enterprise features.
 
         Args:
-            model (Union[LlmModel, AzureLlmModel]): Model configuration
-            api_key (str): API key for authentication
-            model_config (Optional[Union[ModelConfig, AzureModelConfig]]): Additional configuration
+            model (LlmModel): Model configuration
+            model_config (Union[ModelConfig, AzureModelConfig]): Additional configuration from the config file
             enterprise_config (Optional[EnterpriseConfig]): Enterprise configuration
 
         Returns:
@@ -47,8 +45,8 @@ class LLMClientFactory:
         provider = model.provider
 
         if provider == LLMProvider.AZURE:
-            if not model.is_azure_model() or not model.api_version:
-                raise ValueError("Azure provider requires AzureLlmModel with api_version")
+            if not model.is_azure_model() or not model_config.api_version or model_config.api_version.strip() == "":
+                raise ValueError("Azure provider requires api_version")
 
             management_client = None
 
@@ -72,11 +70,11 @@ class LLMClientFactory:
                 except Exception as e:
                     logger.warning(f"Failed to create Azure Management client: {e}")
 
-            logger.debug(f"Creating Azure OpenAI proxy client for {provider} at {model.url} with API version {model.api_version}")
+            logger.debug(f"Creating Azure OpenAI proxy client for {provider} at {model.url} with API version {model_config.api_version}")
             return AzureOpenAIProxyClient(
-                api_key=api_key,
+                api_key=model_config.api_key,
                 base_url=model.url,
-                api_version=model.api_version,
+                api_version=model_config.api_version,
                 provider=provider,
                 management_client=management_client,
                 enterprise_config=enterprise_config
@@ -85,7 +83,7 @@ class LLMClientFactory:
         elif provider == LLMProvider.OPENAI:
             logger.debug(f"Creating OpenAI proxy client for {provider} at {model.url}")
             return OpenAIProxyClient(
-                api_key=api_key,
+                api_key=model_config.api_key,
                 base_url=model.url,
                 provider=provider,
                 enterprise_config=enterprise_config
@@ -101,36 +99,3 @@ class LLMClientFactory:
 
         else:
             raise ValueError(f"Unsupported provider for client creation: {provider}")
-
-    @staticmethod
-    def create_enterprise_client(
-        model: Union[LlmModel, AzureLlmModel],
-        api_key: str,
-        model_config: Optional[Union[ModelConfig, AzureModelConfig]] = None,
-        **enterprise_kwargs
-    ) -> LLMClientProtocol:
-        """Create LLM client with default enterprise settings.
-
-        Args:
-            model (Union[LlmModel, AzureLlmModel]): Model configuration
-            api_key (str): API key for authentication
-            model_config (Optional[Union[ModelConfig, AzureModelConfig]]): Additional configuration
-            **enterprise_kwargs: Additional enterprise configuration parameters
-
-        Returns:
-            LLMClientProtocol: Configured client with enterprise defaults
-        """
-        # Create enterprise config with defaults
-        enterprise_config = EnterpriseConfig(
-            enable_retry=True,
-            retry_handler=LLMRetryHandler(),
-            verify_ssl=True,
-            **enterprise_kwargs
-        )
-
-        return LLMClientFactory.create_client(
-            model=model,
-            api_key=api_key,
-            model_config=model_config,
-            enterprise_config=enterprise_config
-        )

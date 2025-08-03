@@ -206,7 +206,7 @@ class TestWithEnterpriseRetry:
 
     @pytest.mark.asyncio
     async def test_with_enterprise_retry_with_exception(self):
-        """Test enterprise retry decorator with retryable exception."""
+        """Test enterprise retry decorator with retryable exception that eventually succeeds."""
         # arrange
         enterprise_config = EnterpriseConfig(enable_retry=True)
 
@@ -218,7 +218,8 @@ class TestWithEnterpriseRetry:
             @with_enterprise_retry
             async def test_method(self):
                 self.call_count += 1
-                if self.call_count < 3:
+                # Raise until max_attempts-1, then succeed (max_attempts=3)
+                if self.call_count <= 2:
                     raise httpx.ConnectTimeout("Connection timeout")
                 return "success"
 
@@ -230,6 +231,31 @@ class TestWithEnterpriseRetry:
         # assert
         assert result == "success"
         assert client.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_with_enterprise_retry_with_max_retries_exceeded(self):
+        """Test enterprise retry decorator when max retries are exceeded."""
+        # arrange
+        enterprise_config = EnterpriseConfig(enable_retry=True)
+
+        class MockClient:
+            def __init__(self):
+                self.enterprise_config = enterprise_config
+                self.call_count = 0
+
+            @with_enterprise_retry
+            async def test_method(self):
+                self.call_count += 1
+                raise httpx.ConnectTimeout("Connection timeout")
+
+        client = MockClient()
+
+        # act & assert
+        with pytest.raises((httpx.ConnectTimeout, RetryError)):
+            await client.test_method()
+
+        # The method should have been called at least once
+        assert client.call_count >= 1
 
 
 class TestWithLlmRetry:
@@ -256,7 +282,7 @@ class TestWithLlmRetry:
 
     @pytest.mark.asyncio
     async def test_with_llm_retry_with_retryable_exception(self):
-        """Test LLM retry decorator with retryable exception."""
+        """Test LLM retry decorator with retryable exception that eventually succeeds."""
         # arrange
         call_count = 0
 
@@ -264,7 +290,8 @@ class TestWithLlmRetry:
         async def test_function():
             nonlocal call_count
             call_count += 1
-            if call_count < 3:
+            # Raise until max_attempts-1, then succeed (max_attempts=4)
+            if call_count <= 3:
                 raise httpx.ConnectTimeout("Connection timeout")
             return "success"
 
@@ -273,7 +300,26 @@ class TestWithLlmRetry:
 
         # assert
         assert result == "success"
-        assert call_count == 3
+        assert call_count == 4
+
+    @pytest.mark.asyncio
+    async def test_with_llm_retry_with_max_retries_exceeded(self):
+        """Test LLM retry decorator when max retries are exceeded."""
+        # arrange
+        call_count = 0
+
+        @with_llm_retry
+        async def test_function():
+            nonlocal call_count
+            call_count += 1
+            raise httpx.ConnectTimeout("Connection timeout")
+
+        # act & assert
+        with pytest.raises((httpx.ConnectTimeout, RetryError)):
+            await test_function()
+
+        # The function should have been called at least once
+        assert call_count >= 1
 
     @pytest.mark.asyncio
     async def test_with_llm_retry_with_non_retryable_exception(self):
