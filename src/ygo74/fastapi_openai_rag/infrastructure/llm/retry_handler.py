@@ -95,7 +95,7 @@ class CloudRetryHandler:
         return retry(
             stop=stop_after_attempt(self.max_attempts),
             wait=self._get_wait_strategy(),
-            retry=self._should_retry_exception,
+            retry=self._should_retry_call_state,  # <-- Correction ici
             retry_error_callback=self._retry_error_callback,
             before_sleep=before_sleep_log(logger, logging.WARNING),
             after=after_log(logger, logging.INFO)
@@ -126,6 +126,20 @@ class CloudRetryHandler:
             wait_strategy = wait_strategy + jitter_wait
 
         return wait_strategy
+
+    def _should_retry_call_state(self, retry_state: RetryCallState) -> bool:
+        """Check if the exception in RetryCallState should trigger retry.
+
+        Args:
+            retry_state (RetryCallState): Retry state from tenacity
+
+        Returns:
+            bool: True if should retry
+        """
+        exc = retry_state.outcome.exception() if retry_state.outcome and retry_state.outcome.failed else None
+        if exc is None:
+            return False
+        return self._should_retry_exception(exc)
 
     def _should_retry_exception(self, exception: Exception) -> bool:
         """Check if exception should trigger retry.
@@ -161,6 +175,10 @@ class CloudRetryHandler:
         logger.error(
             f"All {self.max_attempts} retry attempts exhausted for {retry_state.outcome.exception()}"
         )
+        # Raise the last exception explicitly so that the caller/test sees the real error
+        exc = retry_state.outcome.exception() if retry_state.outcome and retry_state.outcome.failed else None
+        if exc:
+            raise exc
 
 class LLMRetryHandler(CloudRetryHandler):
     """Specialized retry handler for LLM API calls."""
@@ -194,8 +212,12 @@ def with_enterprise_retry(func: Callable) -> Callable:
         if (hasattr(self, 'enterprise_config') and
             self.enterprise_config.enable_retry):
 
-            # Get or create retry handler
-            retry_handler = self.enterprise_config.retry_handler or LLMRetryHandler()
+            # Get or create retry handler and persist it in the config
+            if not getattr(self.enterprise_config, "retry_handler", None):
+                self.enterprise_config.retry_handler = LLMRetryHandler()
+            retry_handler = self.enterprise_config.retry_handler
+
+            logger.debug(f"with_enterprise_retry: Using retry handler {retry_handler} for {func.__name__}")
 
             # Apply retry using the handler
             retry_decorator = retry_handler.create_async_retry_decorator()

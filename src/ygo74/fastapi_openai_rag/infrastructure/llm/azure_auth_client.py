@@ -5,6 +5,7 @@ import logging
 from typing import Optional, Union
 from datetime import datetime, timedelta
 from .http_client_factory import HttpClientFactory
+from .retry_handler import with_enterprise_retry
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,7 @@ class AzureAuthClient:
 
         logger.debug(f"AzureAuthClient initialized for tenant {tenant_id}")
 
+    @with_enterprise_retry
     async def get_access_token(self) -> str:
         """Get valid access token for Azure Management API.
 
@@ -72,6 +74,7 @@ class AzureAuthClient:
         await self._refresh_token()
         return self._access_token
 
+    @with_enterprise_retry
     async def _refresh_token(self) -> None:
         """Refresh the access token from Azure AD.
 
