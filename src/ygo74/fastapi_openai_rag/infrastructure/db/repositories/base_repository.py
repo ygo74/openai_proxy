@@ -85,7 +85,7 @@ class SQLBaseRepository(Generic[DomainType, ORMType]):
         self._session.flush()
         return self._mapper.to_domain(orm_entity)
 
-    def remove(self, id: int) -> None:
+    def delete(self, id: int) -> None:
         """Remove entity from session without committing.
 
         Args:

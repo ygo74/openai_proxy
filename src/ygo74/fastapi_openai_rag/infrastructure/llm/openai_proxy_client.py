@@ -17,6 +17,7 @@ from ...domain.models.completion import (
 )
 from ...domain.models.llm import LLMProvider, TokenUsage
 from .http_client_factory import HttpClientFactory
+from .retry_handler import with_enterprise_retry
 import logging
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,7 @@ class OpenAIProxyClient:
 
         logger.debug(f"OpenAIProxyClient initialized for {provider} at {base_url}")
 
+    @with_enterprise_retry
     async def chat_completion(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
         """Create chat completion via transparent proxy.
 
@@ -101,13 +103,13 @@ class OpenAIProxyClient:
 
         except httpx.HTTPStatusError as e:
             error_details = self._parse_openai_error(e)
-            logger.error(f"OpenAI HTTP error in text completion: {error_details}")
+            logger.error(f"OpenAI HTTP error in chat completion: {error_details}")
             raise httpx.HTTPError(f"OpenAI API error: {error_details}")
         except httpx.HTTPError as e:
-            logger.error(f"HTTP error in text completion: {str(e)}")
+            logger.error(f"HTTP error in chat completion: {str(e)}")
             raise
         except Exception as e:
-            logger.error(f"Unexpected error in text completion: {str(e)}")
+            logger.error(f"Unexpected error in chat completion: {str(e)}")
             raise
 
     async def completion(self, request: CompletionRequest) -> CompletionResponse:
@@ -131,6 +133,7 @@ class OpenAIProxyClient:
         # Use standard completions endpoint
         return await self._direct_completion(request)
 
+    @with_enterprise_retry
     async def _direct_completion(self, request: CompletionRequest) -> CompletionResponse:
         """Direct completion via completions endpoint.
 
@@ -287,6 +290,7 @@ class OpenAIProxyClient:
         # If it doesn't support completions, use chat completions
         return not supports_completions
 
+    @with_enterprise_retry
     async def stream_chat_completion(self, request: ChatCompletionRequest) -> AsyncGenerator[ChatCompletionStreamResponse, None]:
         """Stream chat completion via transparent proxy.
 
@@ -327,6 +331,7 @@ class OpenAIProxyClient:
                     except json.JSONDecodeError:
                         continue
 
+    @with_enterprise_retry
     async def list_models(self) -> List[Dict[str, Any]]:
         """List available models from OpenAI-compatible API.
 
@@ -355,6 +360,10 @@ class OpenAIProxyClient:
             logger.debug(f"Found {len(models)} available models")
             return models
 
+        except httpx.HTTPStatusError as e:
+            error_details = self._parse_openai_error(e)
+            logger.error(f"OpenAI HTTP error fetching models: {error_details}")
+            raise httpx.HTTPError(f"OpenAI API error: {error_details}")
         except httpx.HTTPError as e:
             logger.error(f"HTTP error fetching models: {str(e)}")
             raise
@@ -371,8 +380,18 @@ class OpenAIProxyClient:
         Returns:
             List[Dict[str, Any]]: List of available models
         """
-        # For non-Azure providers, deployments are the same as models
-        models = await self.list_models()
+        try:
+            models = await self.list_models()
+        except httpx.HTTPStatusError as e:
+            error_details = self._parse_openai_error(e)
+            logger.error(f"OpenAI HTTP error fetching deployments: {error_details}")
+            raise httpx.HTTPError(f"OpenAI API error: {error_details}")
+        except httpx.HTTPError as e:
+            logger.error(f"HTTP error fetching deployments: {str(e)}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error fetching deployments: {str(e)}")
+            raise
 
         # Transform to match deployment format for consistency
         deployments = []

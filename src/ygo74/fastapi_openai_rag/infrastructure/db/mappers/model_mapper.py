@@ -1,8 +1,8 @@
 """Mapper for Model domain and ORM entities."""
-from typing import List, Union
-from ....domain.models.llm_model import LlmModel, AzureLlmModel, LlmModelStatus  # Ensure correct import path
+from typing import List
+from ....domain.models.llm_model import LlmModel, LlmModelStatus
 from ....domain.models.llm import LLMProvider
-from ..models.model_orm import ModelORM, AzureModelORM
+from ..models.model_orm import ModelORM
 from .group_mapper import GroupMapper
 from datetime import datetime, timezone
 
@@ -10,14 +10,14 @@ class ModelMapper:
     """Mapper between Model domain and ORM entities."""
 
     @staticmethod
-    def to_domain(orm_model: Union[ModelORM, AzureModelORM]) -> Union[LlmModel, AzureLlmModel]:
+    def to_domain(orm_model: ModelORM) -> LlmModel:
         """Convert ORM entity to domain model.
 
         Args:
-            orm_model (Union[ModelORM, AzureModelORM]): ORM entity
+            orm_model (ModelORM): ORM entity
 
         Returns:
-            Union[LlmModel, AzureLlmModel]: Domain model
+            LlmModel: Domain model
 
         Raises:
             ValueError: If provider is None or invalid
@@ -27,10 +27,6 @@ class ModelMapper:
 
         if not orm_model.provider:
             raise ValueError("Provider cannot be None")
-
-        # Ensure we have all required fields
-        if not hasattr(orm_model, 'model_type') or orm_model.model_type is None:
-            orm_model.model_type = "standard"  # Default fallback
 
         # Normalize provider value to match enum values (lowercase)
         provider_value = orm_model.provider.lower() if orm_model.provider else ""
@@ -61,21 +57,17 @@ class ModelMapper:
             "groups": [GroupMapper.to_domain(group) for group in orm_model.groups] if orm_model.groups else []
         }
 
-        if isinstance(orm_model, AzureModelORM) or orm_model.model_type == "azure":
-            base_data["api_version"] = orm_model.api_version
-            return AzureLlmModel(**base_data)
-        else:
-            return LlmModel(**base_data)
+        return LlmModel(**base_data)
 
     @staticmethod
-    def to_orm(domain_model: Union[LlmModel, AzureLlmModel]) -> Union[ModelORM, AzureModelORM]:
+    def to_orm(domain_model: LlmModel) -> ModelORM:
         """Convert domain model to ORM entity.
 
         Args:
-            domain_model (Union[LlmModel, AzureLlmModel]): Domain model
+            domain_model (LlmModel): Domain model
 
         Returns:
-            Union[ModelORM, AzureModelORM]: ORM entity
+            ModelORM: ORM entity
         """
         base_data = {
             "id": domain_model.id,
@@ -89,22 +81,16 @@ class ModelMapper:
             "capabilities": domain_model.capabilities
         }
 
-        if domain_model.is_azure_model():
-            base_data["api_version"] = domain_model.api_version
-            base_data["model_type"] = "azure"
-            return AzureModelORM(**base_data)
-        else:
-            base_data["model_type"] = "standard"
-            return ModelORM(**base_data)
+        return ModelORM(**base_data)
 
     @staticmethod
-    def to_domain_list(orm_models: List[Union[ModelORM, AzureModelORM]]) -> List[Union[LlmModel, AzureLlmModel]]:
+    def to_domain_list(orm_models: List[ModelORM]) -> List[LlmModel]:
         """Convert list of ORM entities to domain models.
 
         Args:
-            orm_models (List[Union[ModelORM, AzureModelORM]]): List of ORM entities
+            orm_models (List[ModelORM]): List of ORM entities
 
         Returns:
-            List[Union[LlmModel, AzureLlmModel]]: List of domain models
+            List[LlmModel]: List of domain models
         """
         return [ModelMapper.to_domain(orm_model) for orm_model in orm_models]

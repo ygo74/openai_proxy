@@ -1,41 +1,52 @@
 """Factory for creating LLM clients."""
+import ssl
 from typing import Dict, Optional, Union
 from ...domain.models.llm import LLMProvider
-from ...domain.models.llm_model import LlmModel, AzureLlmModel
+from ...domain.models.llm_model import LlmModel
 from ...domain.protocols.llm_client import LLMClientProtocol
 from .openai_proxy_client import OpenAIProxyClient
 from .azure_openai_proxy_client import AzureOpenAIProxyClient
 from ...domain.models.configuration import AzureModelConfig, ModelConfig
 from .azure_auth_client import AzureAuthClient
 from .azure_management_client import AzureManagementClient
+from .retry_handler import LLMRetryHandler
+from .enterprise_config import EnterpriseConfig
+import httpx
 import logging
 
 logger = logging.getLogger(__name__)
 
 class LLMClientFactory:
-    """Factory for creating appropriate LLM clients."""
+    """Factory for creating appropriate LLM clients with enterprise features."""
 
     @staticmethod
-    def create_client(model: Union[LlmModel, AzureLlmModel], api_key: str,
-                     model_config: Optional[Union[ModelConfig, AzureModelConfig]] = None) -> LLMClientProtocol:
-        """Create appropriate LLM client based on model configuration.
+    def create_client(
+        model: LlmModel,
+        model_config: Union[ModelConfig, AzureModelConfig],
+        enterprise_config: Optional[EnterpriseConfig] = None
+    ) -> LLMClientProtocol:
+        """Create appropriate LLM client based on model configuration with enterprise features.
 
         Args:
-            model (Union[LlmModel, AzureLlmModel]): Model configuration
-            api_key (str): API key for authentication
-            model_config (Optional[Union[ModelConfig, AzureModelConfig]]): Additional configuration
+            model (LlmModel): Model configuration
+            model_config (Union[ModelConfig, AzureModelConfig]): Additional configuration from the config file
+            enterprise_config (Optional[EnterpriseConfig]): Enterprise configuration
 
         Returns:
-            LLMClientProtocol: Configured client
+            LLMClientProtocol: Configured client with enterprise features
 
         Raises:
             ValueError: If provider not supported or missing required configuration
         """
+        # Use default enterprise config if none provided
+        if enterprise_config is None:
+            enterprise_config = EnterpriseConfig()
+
         provider = model.provider
 
         if provider == LLMProvider.AZURE:
-            if not model.is_azure_model() or not model.api_version:
-                raise ValueError("Azure provider requires AzureLlmModel with api_version")
+            if not model.is_azure_model() or not model_config.api_version or model_config.api_version.strip() == "":
+                raise ValueError("Azure provider requires api_version")
 
             management_client = None
 
@@ -52,33 +63,39 @@ class LLMClientFactory:
                         auth_client=auth_client,
                         subscription_id=model_config.subscription_id,
                         resource_group=model_config.resource_group,
-                        account_name=model_config.resource_name  # Corrected field name
+                        account_name=model_config.resource_name
                     )
                     logger.debug("Azure Management client created for deployment listing")
 
                 except Exception as e:
                     logger.warning(f"Failed to create Azure Management client: {e}")
 
-            logger.debug(f"Creating Azure OpenAI proxy client for {provider} at {model.url} with API version {model.api_version}")
+            logger.debug(f"Creating Azure OpenAI proxy client for {provider} at {model.url} with API version {model_config.api_version}")
             return AzureOpenAIProxyClient(
-                api_key=api_key,
+                api_key=model_config.api_key,
                 base_url=model.url,
-                api_version=model.api_version,
+                api_version=model_config.api_version,
                 provider=provider,
-                management_client=management_client
+                management_client=management_client,
+                enterprise_config=enterprise_config
             )
+
         elif provider == LLMProvider.OPENAI:
             logger.debug(f"Creating OpenAI proxy client for {provider} at {model.url}")
             return OpenAIProxyClient(
-                api_key=api_key,
+                api_key=model_config.api_key,
                 base_url=model.url,
-                provider=provider
+                provider=provider,
+                enterprise_config=enterprise_config
             )
+
         elif provider == LLMProvider.ANTHROPIC:
             # Would implement AnthropicClient here
             raise ValueError(f"Anthropic client not yet implemented")
+
         elif provider == LLMProvider.MISTRAL:
             # Would implement MistralClient here
             raise ValueError(f"Mistral client not yet implemented")
+
         else:
             raise ValueError(f"Unsupported provider for client creation: {provider}")

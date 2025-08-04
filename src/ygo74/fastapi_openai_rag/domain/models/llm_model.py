@@ -2,7 +2,7 @@
 from datetime import datetime
 from enum import Enum
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict
 from .llm import LLMProvider
 
 if TYPE_CHECKING:
@@ -54,7 +54,7 @@ class LlmModel(BaseModel):
         Returns:
             bool: True if this is an Azure model
         """
-        return hasattr(self, 'api_version') and self.provider == LLMProvider.AZURE
+        return self.provider == LLMProvider.AZURE
 
     def supports_completions_endpoint(self) -> bool:
         """Check if this model supports the completions endpoint.
@@ -121,47 +121,10 @@ class LlmModel(BaseModel):
         return "azure" if self.is_azure_model() else "standard"
 
 
-class AzureLlmModel(LlmModel):
-    """Azure-specific LLM model with API version support.
-
-    Attributes:
-        api_version (str): Azure API version (required for Azure OpenAI)
-    """
-
-    api_version: str
-    provider: LLMProvider = LLMProvider.AZURE
-
-    def is_azure_model(self) -> bool:
-        """Check if this is an Azure model.
-
-        Returns:
-            bool: Always True for AzureLlmModel
-        """
-        return True
-
-    @field_validator('provider')
-    @classmethod
-    def validate_azure_provider(cls, v: LLMProvider) -> LLMProvider:
-        """Validate that provider is Azure.
-
-        Args:
-            v (LLMProvider): Provider value
-
-        Returns:
-            LLMProvider: Validated provider
-
-        Raises:
-            ValueError: If provider is not Azure
-        """
-        if v != LLMProvider.AZURE:
-            raise ValueError("AzureLlmModel must have Azure provider")
-        return v
-
 # Resolve forward references after all models are defined
 try:
     from .group import Group
     LlmModel.model_rebuild()
-    AzureLlmModel.model_rebuild()
 except ImportError:
     # Group not yet available, will be resolved later
     pass

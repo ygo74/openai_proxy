@@ -5,6 +5,7 @@ import logging
 from typing import Dict, Any, List, Optional, Union
 from .azure_auth_client import AzureAuthClient
 from .http_client_factory import HttpClientFactory
+from .retry_handler import with_enterprise_retry  # Ajout de l'import du décorateur
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,7 @@ class AzureManagementClient:
 
         logger.debug(f"AzureManagementClient initialized for subscription {subscription_id}")
 
+    @with_enterprise_retry
     async def list_deployments(self) -> List[Dict[str, Any]]:
         """List deployments using Azure Management API.
 

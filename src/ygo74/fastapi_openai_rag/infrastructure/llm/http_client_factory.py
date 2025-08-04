@@ -14,6 +14,41 @@ class HttpClientFactory:
     """Factory class for creating httpx clients with enterprise proxy and SSL configuration."""
 
     @staticmethod
+    def _configure_proxy(
+        proxy_url: Optional[str] = None,
+        proxy_auth: Optional[httpx.Auth] = None,
+        target_url: str = ""
+    ) -> Optional[httpx.Proxy]:
+        """Configure proxy settings from parameters or environment variables.
+
+        Args:
+            proxy_url (Optional[str]): Explicit proxy URL (None=auto-detect, ""=no proxy)
+            proxy_auth (Optional[httpx.Auth]): Explicit proxy authentication
+            target_url (str): Target URL to check against no_proxy patterns
+
+        Returns:
+            Optional[httpx.Proxy]: Configured proxy or None
+        """
+        # If proxy URL is explicitly provided (not None), use it
+        if proxy_url is not None:
+            if proxy_url == "":
+                # Empty string means explicitly no proxy
+                logger.debug("Proxy explicitly disabled")
+                return None
+            else:
+                # Non-empty string means explicit proxy
+                logger.debug(f"Using explicit proxy configuration: {proxy_url}")
+                return httpx.Proxy(url=proxy_url, auth=proxy_auth)
+
+        # Auto-detect from environment if proxy_url is None
+        logger.debug("Auto-detecting proxy from environment variables")
+        env_proxy = HttpClientFactory._get_proxy_from_env(target_url)
+        if env_proxy:
+            return env_proxy
+
+        return None
+
+    @staticmethod
     def create_async_client(
         target_url: str = "",
         timeout: float = 30.0,
@@ -30,7 +65,7 @@ class HttpClientFactory:
         Args:
             target_url (str): Target URL for proxy bypass checks
             timeout (float): Request timeout in seconds
-            proxy_url (Optional[str]): Explicit proxy URL
+            proxy_url (Optional[str]): Explicit proxy URL (None=auto-detect, ""=no proxy)
             proxy_auth (Optional[httpx.Auth]): Explicit proxy authentication
             verify_ssl (Union[bool, str, ssl.SSLContext]): SSL verification setting
             ca_cert_file (Optional[str]): Path to custom CA certificate file
@@ -46,7 +81,7 @@ class HttpClientFactory:
             verify_ssl, ca_cert_file, client_cert_file, client_key_file
         )
 
-        # Configure proxy settings - check environment variables if not provided
+        # Configure proxy settings
         proxy_config = HttpClientFactory._configure_proxy(
             proxy_url, proxy_auth, target_url
         )
@@ -84,7 +119,7 @@ class HttpClientFactory:
         Args:
             target_url (str): Target URL for proxy bypass checks
             timeout (float): Request timeout in seconds
-            proxy_url (Optional[str]): Explicit proxy URL
+            proxy_url (Optional[str]): Explicit proxy URL (None=auto-detect, ""=no proxy)
             proxy_auth (Optional[httpx.Auth]): Explicit proxy authentication
             verify_ssl (Union[bool, str, ssl.SSLContext]): SSL verification setting
             ca_cert_file (Optional[str]): Path to custom CA certificate file
@@ -100,7 +135,7 @@ class HttpClientFactory:
             verify_ssl, ca_cert_file, client_cert_file, client_key_file
         )
 
-        # Configure proxy settings - check environment variables if not provided
+        # Configure proxy settings
         proxy_config = HttpClientFactory._configure_proxy(
             proxy_url, proxy_auth, target_url
         )
@@ -120,34 +155,6 @@ class HttpClientFactory:
             logger.debug(f"Using custom CA certificates: {ca_cert_file}")
 
         return httpx.Client(**client_kwargs)
-
-    @staticmethod
-    def _configure_proxy(
-        proxy_url: Optional[str] = None,
-        proxy_auth: Optional[httpx.Auth] = None,
-        target_url: str = ""
-    ) -> Optional[httpx.Proxy]:
-        """Configure proxy settings from parameters or environment variables.
-
-        Args:
-            proxy_url (Optional[str]): Explicit proxy URL
-            proxy_auth (Optional[httpx.Auth]): Explicit proxy authentication
-            target_url (str): Target URL to check against no_proxy patterns
-
-        Returns:
-            Optional[httpx.Proxy]: Configured proxy or None
-        """
-        # If proxy URL is explicitly provided, use it
-        if proxy_url:
-            logger.debug(f"Using explicit proxy configuration: {proxy_url}")
-            return httpx.Proxy(url=proxy_url, auth=proxy_auth)
-
-        # Check environment variables for proxy configuration
-        env_proxy = HttpClientFactory._get_proxy_from_env(target_url)
-        if env_proxy:
-            return env_proxy
-
-        return None
 
     @staticmethod
     def _configure_ssl_context(

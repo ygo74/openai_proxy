@@ -256,7 +256,7 @@ class TestSQLGroupRepository:
         session.set_query_result([existing_orm])
 
         # act
-        repository.remove(group_id)
+        repository.delete(group_id)
 
         # assert
         assert session.deleted is True
@@ -269,4 +269,4 @@ class TestSQLGroupRepository:
 
         # act & assert
         with pytest.raises(ValueError, match="Entity with id 999 not found"):
-            repository.remove(group_id)
+            repository.delete(group_id)

@@ -8,7 +8,7 @@ class ModelConfig(BaseModel):
     """Model configuration settings.
 
     Attributes:
-        name (str): Display name of the model
+        name (str): Display name of the models' provider
         technical_name (str): Unique technical identifier
         url (str): API endpoint URL
         provider (str): Provider type (openai, azure, etc.)

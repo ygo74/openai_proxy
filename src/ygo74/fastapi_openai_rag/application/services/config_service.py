@@ -1,10 +1,7 @@
 """Configuration service for managing application configuration."""
-import json
 import os
-from typing import Dict, Optional
-from datetime import datetime
-from ...domain.models.configuration import AppConfig
-from ...domain.models.llm import LLMProvider
+from typing import Dict, Optional, Union
+from ...domain.models.configuration import AppConfig, ModelConfig, AzureModelConfig
 from ...domain.models.configuration import AppConfig
 from ...infrastructure.db.session import SessionManager
 from ...infrastructure.db.init_db import init_db, create_initial_data
@@ -67,11 +64,11 @@ class ConfigService:
             logger.error(f"Failed to load configuration: {str(e)}")
             raise
 
-    def get_api_key(self, provider: LLMProvider) -> Optional[str]:
-        """Get API key for specified provider.
+    def get_model_config(self, technical_name: str) -> Optional[Union[ModelConfig, AzureModelConfig]]:
+        """Get Model config for the provider.
 
         Args:
-            provider (LLMProvider): LLM provider
+            technical_name (str): technical name of the model provider
 
         Returns:
             Optional[str]: API key if found, None otherwise
@@ -84,36 +81,13 @@ class ConfigService:
 
         # Find the model config for this provider
         for model_config in self._config.model_configs:
-            if model_config.provider.lower() == provider.value.lower():
-                return model_config.api_key
+            if model_config.technical_name.lower() == technical_name.lower():
+                return model_config
 
-        logger.warning(f"No API key found for provider {provider}")
+        logger.warning(f"No model config for model provider {technical_name}")
         return None
 
-    def get_api_keys(self) -> Dict[LLMProvider, str]:
-        """Get all API keys mapped by provider.
 
-        Returns:
-            Dict[LLMProvider, str]: API keys by provider
-        """
-        self.reload_config()  # Check for updates
-
-        api_keys: Dict[LLMProvider, str] = {}
-
-        if not self._config or not self._config.model_configs:
-            logger.warning("No configuration loaded")
-            return api_keys
-
-        for model_config in self._config.model_configs:
-            try:
-                provider = LLMProvider(model_config.provider.lower())
-                api_keys[provider] = model_config.api_key
-            except ValueError:
-                logger.warning(f"Unknown provider '{model_config.provider}' in config")
-                continue
-
-        logger.debug(f"Loaded API keys for {len(api_keys)} providers")
-        return api_keys
 
     def get_config(self) -> Optional[AppConfig]:
         """Get the current application configuration.

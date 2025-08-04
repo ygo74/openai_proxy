@@ -36,7 +36,7 @@ class ModelORM(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     url: Mapped[str] = mapped_column(String(255), nullable=False)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
-    technical_name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
+    technical_name: Mapped[str] = mapped_column(String(100), nullable=False)
     provider: Mapped[str] = mapped_column(String(100), nullable=False)
     model_type: Mapped[str] = mapped_column(String(50), nullable=False)
     api_version: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
@@ -54,7 +54,7 @@ class ModelORM(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint("technical_name", name="uq_technical_name"),
+        UniqueConstraint("name", "technical_name", name="uq_name_technical_name"),
     )
 
     # Relationships
