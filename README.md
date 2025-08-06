@@ -8,6 +8,22 @@ This project is a FastAPI-based proxy for OpenAI. It provides a simple interface
 transparent proxy : https://github.com/fangwentong/openai-proxy
 OpenAI schema : https://github.com/openai/openai-openapi/blob/manual_spec/openapi.yaml
 
+# development
+
+## Start backends
+
+``` powershell
+docker compose -f .\docker-compose-backend.yml up -d
+
+```
+
+## start the service
+
+``` powershell
+poetry run uvicorn src.ygo74.fastapi_openai_rag.main:app --host 0.0.0.0 --port 8000 --reload --log-level debug
+
+```
+
 # Azure configuration
 
 Pour pouvoir lister les modèles déployés sur Azure via l’API REST que tu mentionnes, il te faut une authentification OAuth 2.0 avec Azure Active Directory (AAD). Voici comment procéder étape par étape pour intégrer cela dans une API :

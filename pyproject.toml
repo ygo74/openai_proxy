@@ -36,6 +36,7 @@ black = "^24.4.2"
 isort = "^5.13.2"
 flake8 = "^7.0.0"
 coverage = "^7.5.3"
+debugpy = "*"
 
 [tool.mypy]
 python_version = "3.9"

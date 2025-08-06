@@ -1,0 +1,39 @@
+version: "3.8"
+
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0.1
+    command: start-dev
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    ports:
+      - "8080:8080"
+    volumes:
+      - keycloak_data:/opt/keycloak/data
+
+  fastapi:
+    build:
+      context: .
+      dockerfile: ./src/Dockerfile
+    ports:
+      - "8000:8000"
+      - "5678:5678"
+    volumes:
+      - .:/code
+    working_dir: /code
+    environment:
+      - OAUTH_ISSUER=http://keycloak:8080/realms/dev-realm
+      - OAUTH_AUDIENCE=fastapi-client
+      - PYTHONPATH=/code/src
+    command: [
+      "poetry", "run",
+      "python", "-m", "debugpy", "--listen", "0.0.0.0:5678", "--wait-for-client",
+      "-m", "uvicorn", "src.ygo74.fastapi_openai_rag.main:app",
+      "--host", "0.0.0.0", "--port", "8000", "--reload", "--log-level", "debug"
+    ]
+    depends_on:
+      - keycloak
+
+volumes:
+  keycloak_data:
