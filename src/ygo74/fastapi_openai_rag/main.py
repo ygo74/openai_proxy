@@ -1,5 +1,6 @@
 """Main FastAPI application module."""
 import logging
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from .interfaces.api.router import api_router
@@ -18,11 +19,36 @@ setup_logging()
 # Get logger after logging is configured
 logger = logging.getLogger(__name__)
 
-# Initialize FastAPI app
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan events."""
+    # Startup
+    try:
+        # Load configuration at startup
+        config_service.reload_config()
+        logger.info("Application configuration loaded successfully")
+
+        # Initialize database
+        config_service.init_database()
+        logger.info("Database initialized successfully!")
+
+        # Other startup tasks...
+
+    except Exception as e:
+        logger.error(f"Failed to initialize application: {str(e)}")
+        raise
+
+    yield
+
+    # Shutdown - clean up resources here if needed
+    logger.info("Application shutdown")
+
+# Initialize FastAPI app with lifespan
 app = FastAPI(
     title="LLM Proxy API",
     description="A FastAPI proxy for various LLM providers with authentication and rate limiting",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 # Add middlewares
@@ -50,24 +76,6 @@ app.add_exception_handler(EntityNotFoundError, ExceptionHandlers.entity_not_foun
 app.add_exception_handler(EntityAlreadyExistsError, ExceptionHandlers.entity_already_exists_handler)
 app.add_exception_handler(ValidationError, ExceptionHandlers.validation_error_handler)
 app.add_exception_handler(Exception, ExceptionHandlers.generic_exception_handler)
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize application on startup."""
-    try:
-        # Load configuration at startup
-        config_service.reload_config()
-        logger.info("Application configuration loaded successfully")
-
-        # Initialize database
-        config_service.init_database()
-        logger.info("Database initialized successfully!")
-
-        # Other startup tasks...
-
-    except Exception as e:
-        logger.error(f"Failed to initialize application: {str(e)}")
-        raise
 
 @app.get("/health")
 async def health_check():
