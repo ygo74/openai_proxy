@@ -205,7 +205,7 @@ if __name__ == "__main__":
         # For chat models
         chat_model = create_proxy_chat_model(
             proxy_url="http://localhost:8000",
-            api_key="your-proxy-api-key",
+            api_key="sk-test-123",
             model="gpt-4o"
         )
         print("✅ Chat model created successfully")
@@ -213,7 +213,7 @@ if __name__ == "__main__":
         # For completion models
         llm = create_proxy_llm(
             proxy_url="http://localhost:8000",
-            api_key="your-proxy-api-key",
+            api_key="sk-test-123",
             model="gpt-4o"
         )
         print("✅ LLM created successfully")

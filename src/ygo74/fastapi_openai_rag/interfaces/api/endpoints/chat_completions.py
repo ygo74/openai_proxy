@@ -1,6 +1,6 @@
 """OpenAI-compatible chat completions endpoints."""
-from typing import Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, status as http_status
+from typing import Dict, Any, Optional
+from fastapi import APIRouter, Depends, HTTPException, status as http_status, Request
 from sqlalchemy.orm import Session
 import logging
 import json
@@ -12,6 +12,8 @@ from ....domain.models.chat_completion import ChatCompletionRequest, ChatComplet
 from ....domain.models.completion import CompletionRequest, CompletionResponse
 from ....domain.models.llm import LLMProvider
 from ..decorators import endpoint_handler
+from ..security.autenticated_user import AuthenticatedUser
+from ..security.auth import auth_jwt_or_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -30,11 +32,34 @@ def get_chat_completion_service(db: Session = Depends(get_db)) -> ChatCompletion
     uow = SQLUnitOfWork(session_factory)
     return ChatCompletionService(uow)
 
+@router.post("/completions", response_model=CompletionResponse)
+@endpoint_handler("create_completion")
+async def create_completion(
+    completion_request: CompletionRequest,
+    service: ChatCompletionService = Depends(get_chat_completion_service),
+    user: AuthenticatedUser = Depends(auth_jwt_or_api_key)
+) -> CompletionResponse:
+    """Create a text completion.
+
+    Compatible with OpenAI's /v1/completions endpoint.
+    Requires authentication via API key or Bearer token.
+
+    Args:
+        completion_request (CompletionRequest): Text completion request
+        service (ChatCompletionService): Service instance
+
+    Returns:
+        CompletionResponse: Generated text completion
+    """
+    response = await service.create_completion(completion_request)
+    return response
+
 @router.post("/chat/completions", response_model=ChatCompletionResponse)
 @endpoint_handler("create_chat_completion")
 async def create_chat_completion(
     request: ChatCompletionRequest,
-    service: ChatCompletionService = Depends(get_chat_completion_service)
+    service: ChatCompletionService = Depends(get_chat_completion_service),
+    user: AuthenticatedUser = Depends(auth_jwt_or_api_key)
 ) -> ChatCompletionResponse:
     """Create a chat completion.
 
@@ -69,26 +94,6 @@ async def create_chat_completion(
         response = await service.create_chat_completion(request)
         return response
 
-@router.post("/completions", response_model=CompletionResponse)
-@endpoint_handler("create_completion")
-async def create_completion(
-    request: CompletionRequest,
-    service: ChatCompletionService = Depends(get_chat_completion_service)
-) -> CompletionResponse:
-    """Create a text completion.
-
-    Compatible with OpenAI's /v1/completions endpoint.
-
-    Args:
-        request (CompletionRequest): Text completion request
-        service (ChatCompletionService): Service instance
-
-    Returns:
-        CompletionResponse: Generated text completion
-    """
-    response = await service.create_completion(request)
-    return response
-
 @router.get("/models")
 @endpoint_handler("list_models")
 async def list_models(
@@ -107,3 +112,4 @@ async def list_models(
         "object": "list",
         "data": []
     }
+

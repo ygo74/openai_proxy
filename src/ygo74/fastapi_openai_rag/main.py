@@ -1,6 +1,6 @@
 """Main FastAPI application module."""
 import logging
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from .interfaces.api.router import api_router
 from .interfaces.api.exception_handlers import ExceptionHandlers
@@ -9,6 +9,8 @@ from .domain.exceptions.entity_already_exists import EntityAlreadyExistsError
 from .domain.exceptions.validation_error import ValidationError
 from .application.services.config_service import config_service
 from .config.logging_config import setup_logging
+from .interfaces.api.middlewares.audit import AuditMiddleware
+from .interfaces.api.middlewares.audit import PrintForwarder
 
 # Setup logging before anything else
 setup_logging()
@@ -21,6 +23,14 @@ app = FastAPI(
     title="LLM Proxy API",
     description="A FastAPI proxy for various LLM providers with authentication and rate limiting",
     version="1.0.0"
+)
+
+# Add middlewares
+app.add_middleware(
+    AuditMiddleware,
+    forwarders=[
+        PrintForwarder(),
+    ]
 )
 
 # Configure CORS
@@ -64,3 +74,15 @@ async def health_check():
     """Health check endpoint."""
     logger.debug("Health check endpoint called")
     return {"status": "healthy"}
+
+
+# Exemple d'utilisation pour un endpoint de management :
+# from fastapi import Depends
+# @app.get("/management/some-endpoint")
+# async def management_endpoint(user=Depends(get_current_user_oauth)):
+#     ...
+
+# Exemple d'utilisation pour un endpoint chat compatible LangChain :
+# @app.post("/chat")
+# async def chat_endpoint(user=Depends(get_current_user_apikey)):
+#     ...
