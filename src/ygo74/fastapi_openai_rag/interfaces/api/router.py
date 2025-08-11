@@ -1,6 +1,6 @@
 """Main API router module."""
 from fastapi import APIRouter
-from .endpoints import models, groups, admin, chat_completions, users
+from .endpoints import models, groups, admin, chat_completions, users, debug_auth
 
 # Create main API router
 api_router = APIRouter(prefix="/v1")
@@ -28,3 +28,6 @@ api_router.include_router(
 # Include routers with prefixes
 api_router.include_router(groups.router, prefix="/admin/groups", tags=["groups"])
 api_router.include_router(users.router, prefix="/admin/users", tags=["users"])
+
+# Debug endpoints (development only)
+api_router.include_router(debug_auth.router, prefix="/debug", tags=["debug-auth"])
