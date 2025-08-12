@@ -12,6 +12,7 @@ from .application.services.config_service import config_service
 from .config.logging_config import setup_logging
 from .interfaces.api.middlewares.audit import AuditMiddleware
 from .interfaces.api.middlewares.audit import PrintForwarder
+from datetime import datetime
 
 # Setup logging before anything else
 setup_logging()
@@ -81,7 +82,11 @@ app.add_exception_handler(Exception, ExceptionHandlers.generic_exception_handler
 async def health_check():
     """Health check endpoint."""
     logger.debug("Health check endpoint called")
-    return {"status": "healthy"}
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "service": "fastapi-openai-rag"
+    }
 
 
 # Exemple d'utilisation pour un endpoint de management :
