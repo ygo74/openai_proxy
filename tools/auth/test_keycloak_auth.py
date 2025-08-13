@@ -14,7 +14,7 @@ KEYCLOAK_URL = "http://localhost:8080"
 REALM_NAME = "fastapi-openai-rag"
 CLIENT_ID = "fastapi-app"
 CLIENT_SECRET = "fastapi-secret-key"
-FASTAPI_URL = "http://localhost:8000/api/v1"
+FASTAPI_URL = "http://localhost:8000/v1"
 
 def get_access_token(username: str, password: str) -> Optional[Dict[str, Any]]:
     """Get access token from Keycloak.
