@@ -19,36 +19,95 @@ services:
       - "8080:8080"
     volumes:
       - keycloak_data:/opt/keycloak/data
+    networks:
+      - observability-net
 
+  # Tempo - Distributed tracing backend
+  tempo:
+    image: grafana/tempo:latest
+    command: [ "-config.file=/etc/tempo.yaml" ]
+    volumes:
+      - ./backends/tempo/tempo.yaml:/etc/tempo.yaml
+      - tempo_data:/tmp/tempo
+    ports:
+      - "3200:3200"   # tempo
+      - "4317:4317"   # otlp grpc
+      - "4318:4318"   # otlp http
+    networks:
+      - observability-net
+
+  # Loki - Log aggregation system
+  loki:
+    image: grafana/loki:latest
+    command: [ "-config.file=/etc/loki/local-config.yaml" ]
+    volumes:
+      - ./backends/loki/loki.yaml:/etc/loki/local-config.yaml
+      - loki_data:/loki
+    ports:
+      - "3100:3100"
+    networks:
+      - observability-net
+
+  # Prometheus - Metrics database
+  prometheus:
+    image: prom/prometheus:latest
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.console.libraries=/etc/prometheus/console_libraries
+      - --web.console.templates=/etc/prometheus/consoles
+      - --storage.tsdb.retention.time=200h
+      - --web.enable-lifecycle
+    volumes:
+      - ./backends/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - observability-net
+
+  # Grafana - Visualization dashboard
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./backends/grafana/provisioning:/etc/grafana/provisioning
+      - ./backends/grafana/dashboards:/var/lib/grafana/dashboards
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    networks:
+      - observability-net
+
+  # OpenTelemetry Collector
   otel-collector:
     image: otel/opentelemetry-collector-contrib:latest
     command: ["--config=/etc/otel-collector-config.yaml"]
     volumes:
       - ./backends/otel-collector/otel-collector-config.yaml:/etc/otel-collector-config.yaml
-      - ./backends/otel-collector/logs:/tmp  # Volume pour les logs
     ports:
-      - "4317:4317"   # OTLP gRPC
-      - "4318:4318"   # OTLP HTTP
-      - "8889:8889"   # Prometheus metrics
+      - "8888:8888"   # Prometheus metrics
+      - "8889:8889"   # Prometheus exporter metrics
+      - "13133:13133" # health_check extension
+      - "4315:4317"   # OTLP gRPC receiver (different port to avoid conflict)
+      - "4316:4318"   # OTLP HTTP receiver
     depends_on:
-      - lgtm
-
-  lgtm:
-    image: grafana/otel-lgtm:latest
-    ports:
-      - "3000:3000"   # Grafana UI
-      - "9090:9090"   # Prometheus/Mimir
-      - "3100:3100"   # Loki
-      - "3200:3200"   # Tempo
-    environment:
-      ENABLE_LOGS_ALL: "true"
-      GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin
-
+      - tempo
+      - loki
+      - prometheus
+    networks:
+      - observability-net
 
 volumes:
   keycloak_data:
+  tempo_data:
+  loki_data:
+  prometheus_data:
+  grafana_data:
 
 networks:
-  default:
-    name: observability-net
+  observability-net:
+    driver: bridge

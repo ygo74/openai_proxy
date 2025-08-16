@@ -1,7 +1,10 @@
 """Configuration settings for the FastAPI OpenAI RAG application."""
 import os
+import logging
 from typing import Optional
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 
 class AuthSettings(BaseModel):
@@ -60,8 +63,15 @@ class ObservabilitySettings(BaseModel):
     @classmethod
     def from_env(cls) -> "ObservabilitySettings":
         """Create ObservabilitySettings instance from environment variables."""
-        return cls(
-            enabled=os.getenv("OBSERVABILITY_ENABLED", "false").lower() == "true",
+        # Debug environment variables
+        observability_enabled_raw = os.getenv("OBSERVABILITY_ENABLED", "false")
+        observability_enabled = observability_enabled_raw.lower() == "true"
+
+        logger.info(f"Environment OBSERVABILITY_ENABLED raw value: '{observability_enabled_raw}'")
+        logger.info(f"Environment OBSERVABILITY_ENABLED parsed: {observability_enabled}")
+
+        settings = cls(
+            enabled=observability_enabled,
             service_name=os.getenv("OTEL_SERVICE_NAME", "fastapi-openai-rag"),
             service_version=os.getenv("OTEL_SERVICE_VERSION", "1.0.0"),
             otlp_endpoint=os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317"),
@@ -74,6 +84,9 @@ class ObservabilitySettings(BaseModel):
             logging_enabled=os.getenv("OTEL_LOGGING_ENABLED", "true").lower() == "true",
             log_level=os.getenv("OTEL_LOG_LEVEL", "INFO"),
         )
+
+        logger.info(f"Created ObservabilitySettings: enabled={settings.enabled}, service_name={settings.service_name}")
+        return settings
 
 
 class Settings(BaseModel):

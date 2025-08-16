@@ -18,34 +18,36 @@ processors:
         from_attribute: service.name
 
 exporters:
-  # Export to Grafana LGTM stack via OTLP
-  otlp/grafana:
-    endpoint: http://lgtm:4317
+  # Export traces to Tempo
+  otlp/tempo:
+    endpoint: tempo:4317
     tls:
       insecure: true
 
-  # Prometheus exporter for metrics - configuration corrigée
+  # Export metrics to Prometheus
   prometheus:
     endpoint: "0.0.0.0:8889"
-    namespace: "fastapi"
-    const_labels:
-      service: "fastapi-openai-rag"
+    namespace: ""
     send_timestamps: true
     metric_expiration: 180m
-    enable_open_metrics: true
 
-  # Debug exporter (console output)
+  # Export logs to Loki
+  loki:
+    endpoint: http://loki:3100/loki/api/v1/push
+
+  # Debug exporter
   debug:
     verbosity: detailed
     sampling_initial: 5
     sampling_thereafter: 200
 
 service:
+  extensions: [health_check]
   pipelines:
     traces:
       receivers: [otlp]
       processors: [batch, resource]
-      exporters: [otlp/grafana, debug]
+      exporters: [otlp/tempo, debug]
 
     metrics:
       receivers: [otlp]
@@ -55,4 +57,8 @@ service:
     logs:
       receivers: [otlp]
       processors: [batch, resource]
-      exporters: [debug]
+      exporters: [loki, debug]
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133

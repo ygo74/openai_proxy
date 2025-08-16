@@ -4,3 +4,4 @@ venv
 config.json
 *.db
 .env
+.env.*

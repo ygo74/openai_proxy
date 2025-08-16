@@ -12,8 +12,19 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "rate(fastapi_http_requests_total[1m])",
+          "expr": "rate(http_requests_total[1m])",
           "legendFormat": "RPS"
+        }
+      ]
+    },
+    {
+      "type": "graph",
+      "title": "Latence moyenne (ms)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "rate(http_request_duration_seconds[1m]) / rate(fastapi_http_request_duration_seconds_count[1m]) * 1000",
+          "legendFormat": "avg latency (ms)"
         }
       ]
     },
@@ -23,7 +34,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "rate(fastapi_http_requests_total[5m])",
+          "expr": "rate(http_requests_total[5m])",
           "legendFormat": "{{method}} {{endpoint}} - {{status_code}}"
         }
       ]
@@ -34,7 +45,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "sum(rate(fastapi_http_requests_total[5m])) by (status_class)",
+          "expr": "sum(rate(http_requests_total[5m])) by (status_class)",
           "legendFormat": "{{status_class}}"
         }
       ]
@@ -45,19 +56,34 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "sum(rate(fastapi_http_requests_total{status_class=\"5xx\"}[5m])) / sum(rate(fastapi_http_requests_total[5m]))",
+          "expr": "sum(rate(http_requests_total{status_class=\"5xx\"}[5m])) / sum(rate(http_requests_total[5m]))",
           "legendFormat": "error rate"
         }
       ]
     },
     {
       "type": "graph",
-      "title": "Latence moyenne (si disponible)",
+      "title": "Requêtes en cours",
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "rate(fastapi_http_request_duration_seconds_sum[1m]) / rate(fastapi_http_request_duration_seconds_count[1m]) * 1000",
-          "legendFormat": "avg latency (ms)"
+          "expr": "http_requests_in_progress",
+          "legendFormat": "requests in progress"
+        }
+      ]
+    },
+    {
+      "type": "graph",
+      "title": "Latence P95 et P99",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds[5m])) * 1000",
+          "legendFormat": "P95 latency (ms)"
+        },
+        {
+          "expr": "histogram_quantile(0.99, rate(http_request_duration_seconds[5m])) * 1000",
+          "legendFormat": "P99 latency (ms)"
         }
       ]
     },

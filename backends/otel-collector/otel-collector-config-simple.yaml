@@ -10,27 +10,29 @@ processors:
   batch:
 
 exporters:
-  # Debug exporter pour voir les traces/métriques/logs dans la console
+  # Export tout vers LGTM via OTLP
+  otlp:
+    endpoint: http://lgtm:4317
+    tls:
+      insecure: true
+
+  # Debug pour voir ce qui passe
   debug:
     verbosity: detailed
-
-  # Prometheus pour les métriques
-  prometheus:
-    endpoint: "0.0.0.0:8889"
 
 service:
   pipelines:
     traces:
       receivers: [otlp]
       processors: [batch]
-      exporters: [debug]
+      exporters: [otlp, debug]
 
     metrics:
       receivers: [otlp]
       processors: [batch]
-      exporters: [prometheus, debug]
+      exporters: [otlp, debug]
 
     logs:
       receivers: [otlp]
       processors: [batch]
-      exporters: [debug]
+      exporters: [otlp, debug]

@@ -43,8 +43,15 @@ class TelemetryService:
 
     def initialize(self) -> None:
         """Initialize OpenTelemetry components."""
+        # Add detailed logging for debugging
+        logger.info(f"ObservabilitySettings.enabled = {self.settings.enabled}")
+        logger.info(f"ObservabilitySettings.service_name = {self.settings.service_name}")
+        logger.info(f"ObservabilitySettings.otlp_endpoint = {self.settings.otlp_endpoint}")
+        logger.info(f"ObservabilitySettings.tracing_enabled = {self.settings.tracing_enabled}")
+        logger.info(f"ObservabilitySettings.metrics_enabled = {self.settings.metrics_enabled}")
+
         if not self.settings.enabled:
-            logger.info("Observability is disabled")
+            logger.warning("Observability is disabled - check OBSERVABILITY_ENABLED environment variable")
             return
 
         if self._initialized:
@@ -121,6 +128,9 @@ class TelemetryService:
                             headers[key] = value
                     exporter_kwargs["headers"] = headers
 
+                # Test connectivity before creating exporter
+                self._test_otlp_connectivity(self.settings.otlp_endpoint)
+
                 span_exporter = OTLPSpanExporter(**exporter_kwargs)
                 logger.info(f"Using OTLP span exporter with endpoint: {self.settings.otlp_endpoint}")
                 return span_exporter
@@ -183,6 +193,9 @@ class TelemetryService:
                             headers[key] = value
                     exporter_kwargs["headers"] = headers
 
+                # Test connectivity before creating exporter
+                self._test_otlp_connectivity(endpoint)
+
                 metric_exporter = OTLPMetricExporter(**exporter_kwargs)
                 logger.info(f"Using OTLP metric exporter with endpoint: {endpoint}")
                 return metric_exporter
@@ -195,6 +208,53 @@ class TelemetryService:
         metric_exporter = ConsoleMetricExporter()
         logger.info("Using console metric exporter (OTLP failed or not configured)")
         return metric_exporter
+
+    def _test_otlp_connectivity(self, endpoint: str) -> None:
+        """Test OTLP endpoint connectivity.
+
+        Args:
+            endpoint: OTLP endpoint to test
+
+        Raises:
+            Exception: If connectivity test fails
+        """
+        import socket
+        import urllib.parse
+
+        try:
+            parsed = urllib.parse.urlparse(endpoint)
+            host = parsed.hostname or "localhost"
+
+            # Fix port detection for OTLP endpoints
+            if parsed.port:
+                port = parsed.port
+            elif "4317" in endpoint:
+                port = 4317  # gRPC
+            elif "4318" in endpoint:
+                port = 4318  # HTTP
+            else:
+                port = 4317  # Default to gRPC
+
+            logger.debug(f"Testing connectivity to {host}:{port}")
+
+            # Test TCP connectivity
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(5)  # Increase timeout for Docker containers
+            result = sock.connect_ex((host, port))
+            sock.close()
+
+            if result != 0:
+                raise ConnectionError(f"Cannot connect to {host}:{port}")
+
+            logger.debug(f"OTLP endpoint {endpoint} is reachable")
+
+        except Exception as e:
+            logger.warning(f"OTLP connectivity test failed for {endpoint}: {e}")
+            # Don't raise in development mode, just warn
+            if "dev" in self.settings.service_name.lower():
+                logger.warning("Continuing without OTLP connectivity in development mode")
+            else:
+                raise
 
     def _setup_logging(self) -> None:
         """Setup logging instrumentation."""
