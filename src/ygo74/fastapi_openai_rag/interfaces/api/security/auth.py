@@ -6,37 +6,76 @@ from typing import Optional
 import hashlib
 import logging
 import requests
+import os
+import time
+from cachetools import TTLCache
 from .autenticated_user import AuthenticatedUser
 from ....infrastructure.db.session import get_db
 from ....application.services.user_service import UserService
 from ....infrastructure.db.unit_of_work import SQLUnitOfWork
 from ....config.settings import settings
+from ....infrastructure.llm.retry_handler import KeycloakRetryHandler
 
 logger = logging.getLogger(__name__)
 
 api_key_header = APIKeyHeader(name="Authorization", auto_error=False)
 bearer_scheme = HTTPBearer(auto_error=False)
 
-def get_keycloak_public_key() -> Optional[str]:
-    """Retrieve Keycloak's public key for JWT verification"""
-    try:
-        # Get realm configuration
-        realm_url = f"{settings.auth.keycloak_url}/realms/{settings.auth.keycloak_realm}"
-        response = requests.get(realm_url)
-        response.raise_for_status()
-        realm_info = response.json()
+# --- Keycloak public key cache (cachetools TTL) --------------------------------
+_KEYCLOAK_JWKS_CACHE_TTL_SECONDS: int = int(os.getenv("KEYCLOAK_JWKS_CACHE_TTL", "3600"))
+_keycloak_pubkey_cache: TTLCache[str, str] = TTLCache(maxsize=16, ttl=_KEYCLOAK_JWKS_CACHE_TTL_SECONDS)
 
-        # Get public key from realm info
-        public_key = realm_info.get("public_key")
-        if public_key:
-            # Format the key for jose library
-            return f"-----BEGIN PUBLIC KEY-----\n{public_key}\n-----END PUBLIC KEY-----"
-        else:
+# Create a reusable retry handler instance (sync for requests)
+_keycloak_retry_handler = KeycloakRetryHandler()
+
+@_keycloak_retry_handler.create_sync_retry_decorator()
+def _fetch_keycloak_realm_config(realm_url: str) -> dict:
+    """Fetch Keycloak realm configuration with retry.
+
+    Args:
+        realm_url: Realm discovery endpoint URL
+
+    Returns:
+        dict: Realm configuration JSON
+    """
+    resp = requests.get(realm_url, timeout=5)
+    resp.raise_for_status()
+    return resp.json()
+
+def get_keycloak_public_key(kid: Optional[str] = None) -> Optional[str]:
+    """Retrieve Keycloak's public key for JWT verification with TTL cache.
+
+    Args:
+        kid: Optional JWT key id (reserved for future JWKS usage)
+
+    Returns:
+        PEM-formatted public key or None if retrieval fails
+    """
+    cache_key = f"{settings.auth.keycloak_url.rstrip('/')}/realms/{settings.auth.keycloak_realm}"
+    try:
+        cached = _keycloak_pubkey_cache.get(cache_key)
+        if cached:
+            return cached
+
+        realm_info = _fetch_keycloak_realm_config(cache_key)
+
+        public_key: Optional[str] = realm_info.get("public_key")
+        if not public_key:
             logger.error("No public key found in Keycloak realm configuration")
-            return None
+            return _keycloak_pubkey_cache.get(cache_key)
+
+        pem: str = f"-----BEGIN PUBLIC KEY-----\n{public_key}\n-----END PUBLIC KEY-----"
+        _keycloak_pubkey_cache[cache_key] = pem
+        logger.debug("Fetched and cached Keycloak public key from realm endpoint")
+        return pem
+
     except Exception as e:
         logger.error(f"Failed to retrieve Keycloak public key: {e}")
-        return None
+        stale = _keycloak_pubkey_cache.get(cache_key)
+        if stale:
+            logger.warning("Using stale cached Keycloak public key due to fetch error")
+        return stale
+
 
 async def _authenticate_with_api_key(
     api_key_header_value: str,
@@ -87,15 +126,15 @@ async def _decode_jwt_token(token_str: str) -> Optional[dict]:
         Decoded payload dict if successful, None otherwise
     """
     try:
-        # First, try to decode without verification to check the algorithm
         unverified_header = jwt.get_unverified_header(token_str)
         algorithm = unverified_header.get("alg", "RS256")
-        logger.debug(f"JWT token algorithm: {algorithm}")
+        kid: Optional[str] = unverified_header.get("kid")
+        logger.debug(f"JWT token algorithm: {algorithm}, kid: {kid}")
 
         # Try Keycloak JWT validation (RS256) first
         if algorithm == "RS256":
             try:
-                public_key = get_keycloak_public_key()
+                public_key = get_keycloak_public_key(kid=kid)
                 if public_key:
                     # Build verification options
                     options = {"verify_aud": False}
@@ -119,7 +158,7 @@ async def _decode_jwt_token(token_str: str) -> Optional[dict]:
                         decode_params["issuer"] = settings.auth.oauth_issuer
 
                     payload = jwt.decode(**decode_params)
-                    logger.debug(f"Keycloak JWT payload decoded successfully")
+                    logger.debug("Keycloak JWT payload decoded successfully")
                     return payload
             except Exception as keycloak_error:
                 logger.debug(f"Keycloak JWT validation failed: {keycloak_error}")
@@ -272,6 +311,24 @@ async def auth_jwt_or_api_key(
     logger.debug(f"API Key Header: {api_key_header_value}")
     logger.debug(f"Bearer Token: {bearer_token}")
 
+    user_info = None
+
+    # 1️⃣ Try API Key authentication
+    if api_key_header_value:
+        user_info = await _authenticate_with_api_key(api_key_header_value, user_service)
+
+    # 2️⃣ Try JWT Bearer token authentication
+    if not user_info and bearer_token:
+        user_info = await _authenticate_with_bearer_token(bearer_token.credentials, user_service)
+
+    if not user_info:
+        logger.warning("No valid authentication method found")
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    # 🔹 Injecte dans request.scope pour usage middleware
+    request.scope["authenticated_user"] = user_info
+    logger.info(f"User authenticated successfully: {user_info.username} ({user_info.type})")
+    return user_info
     user_info = None
 
     # 1️⃣ Try API Key authentication

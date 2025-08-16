@@ -35,6 +35,7 @@ opentelemetry-instrumentation-sqlalchemy = "^0.57b0"
 opentelemetry-instrumentation-logging = "^0.57b0"
 opentelemetry-exporter-otlp-proto-grpc = "^1.36.0"
 opentelemetry-exporter-otlp-proto-http = "^1.36.0"
+cachetools = "^5.3.3"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.5"
