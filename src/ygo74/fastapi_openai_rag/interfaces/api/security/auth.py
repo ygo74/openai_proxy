@@ -2,12 +2,11 @@ from fastapi import Depends, HTTPException, Security, Request
 from fastapi.security import APIKeyHeader, HTTPBearer
 from sqlalchemy.orm import Session
 from jose import jwt, JWTError, ExpiredSignatureError
-from typing import Optional
+from typing import Optional, Any, Dict, List
 import hashlib
 import logging
 import requests
 import os
-import time
 from cachetools import TTLCache
 from .autenticated_user import AuthenticatedUser
 from ....infrastructure.db.session import get_db
@@ -29,7 +28,7 @@ _keycloak_pubkey_cache: TTLCache[str, str] = TTLCache(maxsize=16, ttl=_KEYCLOAK_
 _keycloak_retry_handler = KeycloakRetryHandler()
 
 @_keycloak_retry_handler.create_sync_retry_decorator()
-def _fetch_keycloak_realm_config(realm_url: str) -> dict:
+def _fetch_keycloak_realm_config(realm_url: str) -> Dict[str, Any]:
     """Fetch Keycloak realm configuration with retry.
 
     Args:
@@ -115,7 +114,7 @@ async def _authenticate_with_api_key(
         logger.error(f"Error finding user by API key: {e}")
         return None
 
-async def _decode_jwt_token(token_str: str) -> Optional[dict]:
+async def _decode_jwt_token(token_str: str) -> Optional[Dict[str, Any]]:
     """
     Decode JWT token using appropriate algorithm and key.
 
@@ -142,7 +141,7 @@ async def _decode_jwt_token(token_str: str) -> Optional[dict]:
                         options["verify_aud"] = False
 
                     # Build decode parameters
-                    decode_params = {
+                    decode_params: Dict[str, Any] = {
                         "token": token_str,
                         "key": public_key,
                         "algorithms": ["RS256"],
@@ -190,11 +189,12 @@ async def _decode_jwt_token(token_str: str) -> Optional[dict]:
         return None
 
 async def _authenticate_with_jwt_payload(
-    payload: dict,
+    payload: Dict[str, Any],
     user_service: UserService
 ) -> Optional[AuthenticatedUser]:
     """
     Create AuthenticatedUser from JWT payload.
+    Creates or updates user in database and synchronizes groups from Keycloak.
 
     Args:
         payload: Decoded JWT payload
@@ -215,36 +215,62 @@ async def _authenticate_with_jwt_payload(
 
     logger.debug(f"JWT contains username: {username}")
 
-    # Try to find user in database first
+    # Extract groups from different possible JWT claims
+    keycloak_groups: List[str] = (payload.get("groups") or
+                                 payload.get("realm_access", {}).get("roles", []) or
+                                 payload.get("resource_access", {}).get("fastapi-client", {}).get("roles", []) or
+                                 [])
+
+    # Extract additional user info from JWT
+    email = payload.get("email")
+    first_name = payload.get("given_name")
+    last_name = payload.get("family_name")
+
     try:
-        user = user_service.get_user_by_username(username)
+        # Try to find user in database first (without raising exception)
+        user = user_service.try_get_user_by_username(username)
+
         if user:
-            logger.info(f"JWT authentication successful, found user in DB: {user.username}")
+            logger.debug(f"Found existing user in DB: {user.username}")
+            # Update user's groups from Keycloak
+            updated_user = user_service.sync_user_groups_from_keycloak(
+                user_id=user.id,
+                keycloak_groups=keycloak_groups
+            )
+            logger.info(f"JWT authentication successful, updated groups for user: {updated_user.username}")
             return AuthenticatedUser(
-                id=user.id,
-                username=user.username,
+                id=updated_user.id,
+                username=updated_user.username,
                 type="jwt",
-                groups=user.groups
+                groups=updated_user.groups
             )
         else:
-            logger.debug("User from JWT not found in database")
+            logger.debug("User from JWT not found in database, creating new user")
+            # Create new user from JWT claims
+            new_user = user_service.create_user_from_keycloak(
+                username=username,
+                email=email,
+                first_name=first_name,
+                last_name=last_name,
+                keycloak_groups=keycloak_groups
+            )
+            logger.info(f"JWT authentication successful, created new user: {new_user.username}")
+            return AuthenticatedUser(
+                id=new_user.id,
+                username=new_user.username,
+                type="jwt",
+                groups=new_user.groups
+            )
     except Exception as e:
-        logger.debug(f"Error finding user from JWT in DB: {e}")
-
-    # Fallback to JWT claims if user not found in DB
-    logger.info(f"JWT authentication successful, using JWT claims for user: {username}")
-    # Extract groups from different possible JWT claims
-    groups = (payload.get("groups") or
-             payload.get("realm_access", {}).get("roles", []) or
-             payload.get("resource_access", {}).get("fastapi-client", {}).get("roles", []) or
-             [])
-
-    return AuthenticatedUser(
-        id=payload.get("sub", f"jwt-{username}"),
-        username=username,
-        type="jwt",
-        groups=groups
-    )
+        logger.error(f"Error creating/updating user from JWT: {e}")
+        # Fallback to JWT claims if database operations fail
+        logger.warning(f"Falling back to JWT claims for user: {username}")
+        return AuthenticatedUser(
+            id=payload.get("sub", f"jwt-{username}"),
+            username=username,
+            type="jwt",
+            groups=keycloak_groups
+        )
 
 async def _authenticate_with_bearer_token(
     bearer_token: str,
@@ -311,24 +337,6 @@ async def auth_jwt_or_api_key(
     logger.debug(f"API Key Header: {api_key_header_value}")
     logger.debug(f"Bearer Token: {bearer_token}")
 
-    user_info = None
-
-    # 1️⃣ Try API Key authentication
-    if api_key_header_value:
-        user_info = await _authenticate_with_api_key(api_key_header_value, user_service)
-
-    # 2️⃣ Try JWT Bearer token authentication
-    if not user_info and bearer_token:
-        user_info = await _authenticate_with_bearer_token(bearer_token.credentials, user_service)
-
-    if not user_info:
-        logger.warning("No valid authentication method found")
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-    # 🔹 Injecte dans request.scope pour usage middleware
-    request.scope["authenticated_user"] = user_info
-    logger.info(f"User authenticated successfully: {user_info.username} ({user_info.type})")
-    return user_info
     user_info = None
 
     # 1️⃣ Try API Key authentication

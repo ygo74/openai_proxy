@@ -1,11 +1,13 @@
 """User repository for database operations."""
 from datetime import datetime
+import json
 from typing import Optional, List
 from sqlalchemy.orm import Session, selectinload
-from sqlalchemy import select
+from sqlalchemy import select, and_
 from ....domain.models.user import User, ApiKey
 from ....domain.repositories.user_repository import IUserRepository
 from ..models.user_orm import UserORM, ApiKeyORM
+from ..models.group_orm import GroupORM
 from ..mappers.user_mapper import UserMapper
 from ygo74.fastapi_openai_rag.infrastructure.db.repositories.base_repository import SQLBaseRepository
 
@@ -197,3 +199,33 @@ class UserRepository(SQLBaseRepository[User, UserORM], IUserRepository):
         user_orms = result.scalars().all()
 
         return [UserMapper.to_domain(user_orm) for user_orm in user_orms]
+
+    def add_user_to_group(self, user_id: int, group_name: str) -> None:
+        """
+        Add user to a group by updating the JSON groups field.
+
+        Args:
+            user_id: User's database ID
+            group_name: Name of the group to add
+        """
+        user_orm = self.session.get(UserORM, user_id)
+        if user_orm:
+            current_groups = json.loads(user_orm.groups) if user_orm.groups else []
+            if group_name not in current_groups:
+                current_groups.append(group_name)
+                user_orm.groups = json.dumps(current_groups)
+
+    def remove_user_from_group(self, user_id: int, group_name: str) -> None:
+        """
+        Remove user from a group by updating the JSON groups field.
+
+        Args:
+            user_id: User's database ID
+            group_name: Name of the group to remove
+        """
+        user_orm = self.session.get(UserORM, user_id)
+        if user_orm:
+            current_groups = json.loads(user_orm.groups) if user_orm.groups else []
+            if group_name in current_groups:
+                current_groups.remove(group_name)
+                user_orm.groups = json.dumps(current_groups)

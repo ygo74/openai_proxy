@@ -171,6 +171,22 @@ class UserService:
                 raise EntityNotFoundError("User", username)
             return user
 
+    def try_get_user_by_username(self, username: str) -> Optional[User]:
+        """Try to get user by username without raising exceptions.
+
+        Args:
+            username (str): Username
+
+        Returns:
+            Optional[User]: User entity if found, None otherwise
+        """
+        logger.info(f"Trying to fetch user by username: {username}")
+        with self._uow as uow:
+            repository: IUserRepository = self._repository_factory(uow.session)
+            user: Optional[User] = repository.get_by_username(username)
+            logger.debug(f"User '{username}' {'found' if user else 'not found'}")
+            return user
+
     def get_user_by_api_key_hash(self, key_hash: str) -> Optional[User]:
         """Get user by API key hash.
 
@@ -295,3 +311,92 @@ class UserService:
 
             repository.remove(user_id)
             logger.info(f"User {user_id} deleted successfully")
+
+    def create_user_from_keycloak(
+        self,
+        username: str,
+        email: Optional[str] = None,
+        first_name: Optional[str] = None,
+        last_name: Optional[str] = None,
+        keycloak_groups: Optional[List[str]] = None
+    ) -> User:
+        """
+        Create a new user from Keycloak authentication data.
+
+        Args:
+            username: User's username from Keycloak
+            email: User's email from Keycloak
+            first_name: User's first name from Keycloak
+            last_name: User's last name from Keycloak
+            keycloak_groups: List of group names from Keycloak
+
+        Returns:
+            Created User domain model
+
+        Raises:
+            ValueError: If user creation fails
+        """
+        if keycloak_groups is None:
+            keycloak_groups = []
+
+        logger.info(f"Creating user from Keycloak: {username}")
+
+        # Create user with groups (simplified version without group repository dependencies)
+        new_user = User(
+            id=str(uuid.uuid4()),
+            username=username,
+            email=email,
+            is_active=True,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+            groups=keycloak_groups,
+            api_keys=[]
+        )
+
+        with self._uow as uow:
+            repository: IUserRepository = self._repository_factory(uow.session)
+            created_user = repository.add(new_user)
+            logger.info(f"User created from Keycloak: {created_user.username}")
+            return created_user
+
+    def sync_user_groups_from_keycloak(
+        self,
+        user_id: str,
+        keycloak_groups: List[str]
+    ) -> User:
+        """
+        Synchronize user's groups with Keycloak groups.
+
+        Args:
+            user_id: User's database ID
+            keycloak_groups: List of group names from Keycloak
+
+        Returns:
+            Updated User domain model
+
+        Raises:
+            ValueError: If user not found or sync fails
+        """
+        logger.info(f"Syncing groups for user {user_id} from Keycloak")
+
+        with self._uow as uow:
+            repository: IUserRepository = self._repository_factory(uow.session)
+            user = repository.get_by_id(user_id)
+            if not user:
+                raise ValueError(f"User with ID {user_id} not found")
+
+            # Update user's groups directly
+            updated_user = User(
+                id=user.id,
+                username=user.username,
+                email=user.email,
+                is_active=user.is_active,
+                created_at=user.created_at,
+                updated_at=datetime.now(timezone.utc),
+                groups=keycloak_groups,
+                api_keys=user.api_keys
+            )
+
+            result = repository.update(updated_user)
+            logger.info(f"Groups synced for user {user_id}")
+            return result

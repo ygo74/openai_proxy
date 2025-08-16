@@ -27,10 +27,10 @@ class SQLGroupRepository(SQLBaseRepository[Group, GroupORM]):
         Returns:
             Optional[Group]: Group if found, None otherwise
         """
-        orm_model = self._session.query(GroupORM).filter(
-            GroupORM.name == name
-        ).first()
-        return self._mapper.to_domain(orm_model) if orm_model else None
+        group_orm = self.session.query(GroupORM).filter(GroupORM.name == name).first()
+        if group_orm:
+            return GroupMapper.to_domain(group_orm)
+        return None
 
     def get_by_model_id(self, model_id: int) -> List[Group]:
         """Get all groups associated with a model.
@@ -46,3 +46,20 @@ class SQLGroupRepository(SQLBaseRepository[Group, GroupORM]):
         )
         orm_models = self._session.execute(stmt).scalars().all()
         return self._mapper.to_domain_list(orm_models)
+
+    def add_if_not_exists(self, group: Group) -> Group:
+        """
+        Add a new group if it doesn't already exist.
+
+        Args:
+            group: Group domain model to create
+
+        Returns:
+            Created or existing Group domain model
+        """
+        existing_group = self.get_by_name(group.name)
+        if existing_group:
+            return existing_group
+
+        group_orm = GroupMapper.to_orm(group)
+        return GroupMapper.to_domain(self.add(group_orm))
