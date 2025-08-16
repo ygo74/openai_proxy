@@ -1,6 +1,6 @@
 """Main API router module."""
 from fastapi import APIRouter
-from .endpoints import models, groups, admin, chat_completions, users, debug_auth, health
+from .endpoints import models, groups, admin, chat_completions, users, debug_auth, health, metrics
 
 # Create main API router
 api_router = APIRouter(prefix="/v1")
@@ -34,3 +34,10 @@ api_router.include_router(health.router, tags=["health"])
 
 # Debug endpoints (development only)
 api_router.include_router(debug_auth.router, prefix="/debug", tags=["debug-auth"])
+
+# Include metrics router for observability
+api_router.include_router(
+    metrics.router,
+    prefix="",
+    tags=["metrics"]
+)

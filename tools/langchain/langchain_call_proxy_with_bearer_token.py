@@ -64,7 +64,7 @@ def get_access_token(username: str, password: str) -> Optional[Dict[str, Any]]:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", help="Model's name as defined in Azure Deployment model", default="gpt-4o")
-    parser.add_argument("--question", help="Question to ask the model", required=True)
+    parser.add_argument("--question", help="Question to ask the model", required=False, default="Who are you and what is your cutoff date?")
     args = parser.parse_args()
 
     print(f"Script will use the model : {args.model}")

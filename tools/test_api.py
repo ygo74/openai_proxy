@@ -8,7 +8,7 @@ import sys
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-BASE_URL = "http://localhost:8000/api/v1"
+BASE_URL = "http://localhost:8000/v1"
 
 def test_api_key(api_key: str):
     """Test API endpoints with the provided API key.

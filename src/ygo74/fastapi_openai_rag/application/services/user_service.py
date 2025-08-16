@@ -171,6 +171,22 @@ class UserService:
                 raise EntityNotFoundError("User", username)
             return user
 
+    def get_user_by_api_key_hash(self, key_hash: str) -> Optional[User]:
+        """Get user by API key hash.
+
+        Args:
+            key_hash (str): Hashed API key to search for
+
+        Returns:
+            Optional[User]: User entity if found with valid API key, None otherwise
+        """
+        logger.info(f"Fetching user by API key hash")
+        with self._uow as uow:
+            repository: IUserRepository = self._repository_factory(uow.session)
+            user: Optional[User] = repository.find_by_api_key_hash(key_hash)
+            logger.debug(f"User with API key hash {'found' if user else 'not found'}")
+            return user
+
     def create_api_key(self, user_id: str, name: Optional[str] = None,
                       expires_at: Optional[datetime] = None) -> Tuple[str, ApiKey]:
         """Create a new API key for a user.

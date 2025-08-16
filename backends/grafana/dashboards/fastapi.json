@@ -1,0 +1,80 @@
+{
+  "id": null,
+  "title": "FastAPI - Observabilité OpenTelemetry",
+  "tags": ["fastapi", "opentelemetry", "observability"],
+  "timezone": "browser",
+  "schemaVersion": 37,
+  "version": 1,
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Requêtes/minute",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "rate(fastapi_http_requests_total[1m])",
+          "legendFormat": "RPS"
+        }
+      ]
+    },
+    {
+      "type": "graph",
+      "title": "Requêtes par endpoint",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "rate(fastapi_http_requests_total[5m])",
+          "legendFormat": "{{method}} {{endpoint}} - {{status_code}}"
+        }
+      ]
+    },
+    {
+      "type": "graph",
+      "title": "Distribution des status codes",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum(rate(fastapi_http_requests_total[5m])) by (status_class)",
+          "legendFormat": "{{status_class}}"
+        }
+      ]
+    },
+    {
+      "type": "graph",
+      "title": "Taux d'erreurs",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum(rate(fastapi_http_requests_total{status_class=\"5xx\"}[5m])) / sum(rate(fastapi_http_requests_total[5m]))",
+          "legendFormat": "error rate"
+        }
+      ]
+    },
+    {
+      "type": "graph",
+      "title": "Latence moyenne (si disponible)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "rate(fastapi_http_request_duration_seconds_sum[1m]) / rate(fastapi_http_request_duration_seconds_count[1m]) * 1000",
+          "legendFormat": "avg latency (ms)"
+        }
+      ]
+    },
+    {
+      "type": "logs",
+      "title": "Logs corrélés aux traces",
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [
+        {
+          "expr": "{service_name=\"fastapi-openai-rag\"}"
+        }
+      ]
+    },
+    {
+      "type": "trace",
+      "title": "Traces récentes",
+      "datasource": {"type": "tempo", "uid": "tempo"}
+    }
+  ]
+}

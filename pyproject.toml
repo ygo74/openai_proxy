@@ -27,6 +27,14 @@ python-dotenv = "^1.0.1"
 redis = "^5.0.4"
 tenacity = "^8.2.0"
 python-jose = {version = "^3.5.0", extras = ["cryptography"]}
+opentelemetry-api = "^1.36.0"
+opentelemetry-sdk = "^1.36.0"
+opentelemetry-instrumentation-fastapi = "^0.57b0"
+opentelemetry-instrumentation-requests = "^0.57b0"
+opentelemetry-instrumentation-sqlalchemy = "^0.57b0"
+opentelemetry-instrumentation-logging = "^0.57b0"
+opentelemetry-exporter-otlp-proto-grpc = "^1.36.0"
+opentelemetry-exporter-otlp-proto-http = "^1.36.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.5"

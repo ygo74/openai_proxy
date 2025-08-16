@@ -7,8 +7,9 @@ from jose import jwt, JWTError, ExpiredSignatureError
 import logging
 
 from ..decorators import endpoint_handler
-from ..security.auth import JWT_SECRET, JWT_ALGO, auth_jwt_or_api_key
+from ..security.auth import auth_jwt_or_api_key
 from ..security.autenticated_user import AuthenticatedUser
+from ....config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -56,12 +57,21 @@ async def generate_debug_token(
         "groups": token_request.groups,
         "iat": now.timestamp(),
         "exp": expires_at.timestamp(),
-        "iss": "fastapi-openai-rag-debug",
-        "aud": "fastapi-openai-rag"
     }
 
-    # Generate token
-    token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGO)
+    # Add issuer and audience from settings if configured
+    if settings.auth.oauth_issuer:
+        payload["iss"] = settings.auth.oauth_issuer
+    else:
+        payload["iss"] = "fastapi-openai-rag-debug"
+
+    if settings.auth.oauth_audience:
+        payload["aud"] = settings.auth.oauth_audience
+    else:
+        payload["aud"] = "fastapi-openai-rag"
+
+    # Generate token using configured secret and algorithm
+    token = jwt.encode(payload, settings.auth.jwt_secret, algorithm=settings.auth.jwt_algorithm)
 
     logger.info(f"Generated debug token for user: {token_request.username}")
     logger.debug(f"Token payload: {payload}")
@@ -160,7 +170,20 @@ async def decode_token(token: str) -> Dict[str, Any]:
         Dict[str, Any]: Decoded token payload
     """
     try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
+        # Build decode parameters
+        decode_params = {
+            "token": token,
+            "key": settings.auth.jwt_secret,
+            "algorithms": [settings.auth.jwt_algorithm]
+        }
+
+        # Add audience and issuer validation if configured
+        if settings.auth.oauth_audience:
+            decode_params["audience"] = settings.auth.oauth_audience
+        if settings.auth.oauth_issuer:
+            decode_params["issuer"] = settings.auth.oauth_issuer
+
+        payload = jwt.decode(**decode_params)
         logger.info(f"Successfully decoded token for user: {payload.get('username')}")
         return {
             "valid": True,

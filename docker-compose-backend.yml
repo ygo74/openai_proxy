@@ -20,5 +20,35 @@ services:
     volumes:
       - keycloak_data:/opt/keycloak/data
 
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./backends/otel-collector/otel-collector-config.yaml:/etc/otel-collector-config.yaml
+      - ./backends/otel-collector/logs:/tmp  # Volume pour les logs
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "8889:8889"   # Prometheus metrics
+    depends_on:
+      - lgtm
+
+  lgtm:
+    image: grafana/otel-lgtm:latest
+    ports:
+      - "3000:3000"   # Grafana UI
+      - "9090:9090"   # Prometheus/Mimir
+      - "3100:3100"   # Loki
+      - "3200:3200"   # Tempo
+    environment:
+      ENABLE_LOGS_ALL: "true"
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+
+
 volumes:
   keycloak_data:
+
+networks:
+  default:
+    name: observability-net

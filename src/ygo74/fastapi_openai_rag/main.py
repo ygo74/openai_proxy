@@ -12,6 +12,10 @@ from .application.services.config_service import config_service
 from .config.logging_config import setup_logging
 from .interfaces.api.middlewares.audit import AuditMiddleware
 from .interfaces.api.middlewares.audit import PrintForwarder
+from .infrastructure.observability.telemetry_service import initialize_telemetry, get_telemetry_service
+from .infrastructure.observability.metrics_service import initialize_metrics_service
+from .interfaces.api.middlewares.metrics_middleware import MetricsMiddleware
+from .config.settings import settings
 from datetime import datetime
 
 # Setup logging before anything else
@@ -25,6 +29,18 @@ async def lifespan(app: FastAPI):
     """Application lifespan events."""
     # Startup
     try:
+        # Initialize observability first
+        telemetry_service = initialize_telemetry(settings.observability)
+        logger.info("Observability initialized successfully")
+
+        # Initialize custom metrics service
+        metrics_service = initialize_metrics_service(settings.observability.service_name)
+        logger.info("Custom metrics service initialized successfully")
+
+        # Instrument FastAPI app
+        if telemetry_service:
+            telemetry_service.instrument_fastapi(app)
+
         # Load configuration at startup
         config_service.reload_config()
         logger.info("Application configuration loaded successfully")
@@ -42,6 +58,9 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown - clean up resources here if needed
+    telemetry_service = get_telemetry_service()
+    if telemetry_service:
+        telemetry_service.shutdown()
     logger.info("Application shutdown")
 
 # Initialize FastAPI app with lifespan
@@ -53,6 +72,7 @@ app = FastAPI(
 )
 
 # Add middlewares
+app.add_middleware(MetricsMiddleware)
 app.add_middleware(
     AuditMiddleware,
     forwarders=[
