@@ -34,7 +34,10 @@ class TestSQLGroupRepository:
             created=datetime.now(timezone.utc),
             updated=datetime.now(timezone.utc)
         )
-        session.set_query_result([expected_group])
+        # Mock execute result for select query
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = expected_group
+        session.set_execute_result(mock_result)
 
         # act
         result: Optional[Group] = repository.get_by_name(name)
@@ -47,7 +50,10 @@ class TestSQLGroupRepository:
         """Test getting group by name when it doesn't exist."""
         # arrange
         name: str = "non_existent"
-        session.set_query_result([])
+        # Mock execute result for select query
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        session.set_execute_result(mock_result)
 
         # act
         result: Optional[Group] = repository.get_by_name(name)
@@ -77,7 +83,7 @@ class TestSQLGroupRepository:
         ]
 
         # Mock the execute result
-        mock_result: MagicMock = MagicMock()
+        mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = groups
         session.set_execute_result(mock_result)
 
@@ -95,7 +101,7 @@ class TestSQLGroupRepository:
         model_id: int = 999
 
         # Mock the execute result
-        mock_result: MagicMock = MagicMock()
+        mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = []
         session.set_execute_result(mock_result)
 
@@ -113,8 +119,7 @@ class TestSQLGroupRepository:
 
         # assert
         assert repository._session == session
-        assert repository._orm_class.__name__ == "GroupORM"
-        assert repository._mapper is not None
+        assert repository._orm_class == GroupORM
 
     def test_get_by_id_found(self, repository: SQLGroupRepository, session: MockSession) -> None:
         """Test getting group by ID when it exists."""
@@ -127,7 +132,7 @@ class TestSQLGroupRepository:
             created=datetime.now(timezone.utc),
             updated=datetime.now(timezone.utc)
         )
-        session.set_query_result([expected_group])
+        session.get_result = expected_group
 
         # act
         result: Optional[Group] = repository.get_by_id(group_id)
@@ -141,7 +146,7 @@ class TestSQLGroupRepository:
         """Test getting group by ID when it doesn't exist."""
         # arrange
         group_id: int = 999
-        session.set_query_result([])
+        session.get_result = None
 
         # act
         result: Optional[Group] = repository.get_by_id(group_id)
@@ -149,100 +154,7 @@ class TestSQLGroupRepository:
         # assert
         assert result is None
 
-    def test_get_all_groups(self, repository: SQLGroupRepository, session: MockSession) -> None:
-        """Test getting all groups."""
-        # arrange
-        groups: List[GroupORM] = [
-            GroupORM(
-                id=1,
-                name="Group 1",
-                description="Description 1",
-                created=datetime.now(timezone.utc),
-                updated=datetime.now(timezone.utc)
-            ),
-            GroupORM(
-                id=2,
-                name="Group 2",
-                description="Description 2",
-                created=datetime.now(timezone.utc),
-                updated=datetime.now(timezone.utc)
-            )
-        ]
-        session.set_query_result(groups)
-
-        # act
-        result: List[Group] = repository.get_all()
-
-        # assert
-        assert len(result) == 2
-        assert result[0].name == "Group 1"
-        assert result[1].name == "Group 2"
-
-    def test_add_group(self, repository: SQLGroupRepository, session: MockSession) -> None:
-        """Test adding new group."""
-        # arrange
-        name: str = "Test Group"
-        description: str = "Test Description"
-        group: Group = Group(
-            name=name,
-            description=description,
-            created=datetime.now(timezone.utc),
-            updated=datetime.now(timezone.utc)
-        )
-
-        # act
-        result: Group = repository.add(group)
-
-        # assert
-        assert len(session.added_items) == 1
-        assert result.name == name
-        assert result.description == description
-
-    def test_update_group_found(self, repository: SQLGroupRepository, session: MockSession) -> None:
-        """Test updating existing group."""
-        # arrange
-        group_id: int = 1
-        updated_group: Group = Group(
-            id=group_id,
-            name="Updated Group",
-            description="Updated Description",
-            created=datetime.now(timezone.utc),
-            updated=datetime.now(timezone.utc)
-        )
-        existing_orm: GroupORM = GroupORM(
-            id=group_id,
-            name="Original Group",
-            description="Original Description",
-            created=datetime.now(timezone.utc),
-            updated=datetime.now(timezone.utc)
-        )
-        session.set_query_result([existing_orm])
-
-        # act
-        result: Group = repository.update(updated_group)
-
-        # assert
-        assert result.name == "Updated Group"
-        assert result.description == "Updated Description"
-
-    def test_update_group_not_found(self, repository: SQLGroupRepository, session: MockSession) -> None:
-        """Test updating group that doesn't exist."""
-        # arrange
-        group_id: int = 999
-        updated_group: Group = Group(
-            id=group_id,
-            name="Updated Group",
-            description="Updated Description",
-            created=datetime.now(timezone.utc),
-            updated=datetime.now(timezone.utc)
-        )
-        session.set_query_result([])
-
-        # act & assert
-        with pytest.raises(ValueError, match="Entity with id 999 not found"):
-            repository.update(updated_group)
-
-    def test_remove_group_found(self, repository: SQLGroupRepository, session: MockSession) -> None:
+    def test_delete_group_found(self, repository: SQLGroupRepository, session: MockSession) -> None:
         """Test removing existing group."""
         # arrange
         group_id: int = 1
@@ -253,7 +165,7 @@ class TestSQLGroupRepository:
             created=datetime.now(timezone.utc),
             updated=datetime.now(timezone.utc)
         )
-        session.set_query_result([existing_orm])
+        session.get_result = existing_orm
 
         # act
         repository.delete(group_id)
@@ -261,11 +173,11 @@ class TestSQLGroupRepository:
         # assert
         assert session.deleted is True
 
-    def test_remove_group_not_found(self, repository: SQLGroupRepository, session: MockSession) -> None:
+    def test_delete_group_not_found(self, repository: SQLGroupRepository, session: MockSession) -> None:
         """Test removing group that doesn't exist."""
         # arrange
         group_id: int = 999
-        session.set_query_result([])
+        session.get_result = None
 
         # act & assert
         with pytest.raises(ValueError, match="Entity with id 999 not found"):

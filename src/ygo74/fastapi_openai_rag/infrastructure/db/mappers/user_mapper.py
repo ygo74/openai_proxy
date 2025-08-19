@@ -3,8 +3,9 @@ import json
 from typing import List, Optional
 from ....domain.models.user import User, ApiKey
 from ..models.user_orm import UserORM, ApiKeyORM
+from .base import BaseMapper
 
-class UserMapper:
+class UserMapper(BaseMapper[User, UserORM]):
     """Mapper for User domain/ORM conversion."""
 
     @staticmethod
@@ -23,18 +24,7 @@ class UserMapper:
         # Convert API keys - ensure they are loaded
         api_keys = []
         if orm.api_keys:  # Check if api_keys relation is loaded
-            api_keys = [
-                ApiKey(
-                    id=ak.id,
-                    key_hash=ak.key_hash,
-                    name=ak.name,
-                    user_id=ak.user_id,
-                    created_at=ak.created_at,
-                    expires_at=ak.expires_at,
-                    is_active=ak.is_active,
-                    last_used_at=ak.last_used_at
-                ) for ak in orm.api_keys
-            ]
+            api_keys = [ApiKeyMapper.to_domain(ak) for ak in orm.api_keys]
 
         return User(
             id=orm.id,
@@ -71,22 +61,11 @@ class UserMapper:
 
         # Convert API keys to ORM
         if domain.api_keys:
-            user_orm.api_keys = [
-                ApiKeyORM(
-                    id=ak.id,
-                    key_hash=ak.key_hash,
-                    name=ak.name,
-                    user_id=ak.user_id,
-                    created_at=ak.created_at,
-                    expires_at=ak.expires_at,
-                    is_active=ak.is_active,
-                    last_used_at=ak.last_used_at
-                ) for ak in domain.api_keys
-            ]
+            user_orm.api_keys = [ApiKeyMapper.to_orm(ak) for ak in domain.api_keys]
 
         return user_orm
 
-class ApiKeyMapper:
+class ApiKeyMapper(BaseMapper[ApiKey, ApiKeyORM]):
     """Mapper for ApiKey domain/ORM conversion."""
 
     @staticmethod

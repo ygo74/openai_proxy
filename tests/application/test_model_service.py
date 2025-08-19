@@ -375,7 +375,7 @@ class TestModelService:
             created=datetime.now(timezone.utc),
             updated=datetime.now(timezone.utc)
         )
-        mock_repository.get_by_technical_name.return_value = expected_model
+        mock_repository.get_by_technical_name.return_value = [expected_model]
 
         # act
         result: Optional[LlmModel] = service.get_model_by_technical_name(technical_name)

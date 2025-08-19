@@ -12,6 +12,7 @@ from ...domain.exceptions.entity_not_found_exception import EntityNotFoundError
 from ...domain.exceptions.entity_already_exists import EntityAlreadyExistsError
 from ...domain.exceptions.validation_error import ValidationError
 import logging
+from .group_service import GroupService
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ class UserService:
         """
         self._uow = uow
         self._repository_factory = repository_factory or (lambda session: UserRepository(session))
+        self._group_service = GroupService(uow, repository_factory)
         logger.debug("UserService initialized with Unit of Work")
 
     def add_or_update_user(self, user_id: Optional[str] = None,
@@ -341,7 +343,11 @@ class UserService:
 
         logger.info(f"Creating user from Keycloak: {username}")
 
-        # Create user with groups (simplified version without group repository dependencies)
+        # Ensure all Keycloak groups exist in the groups table
+        if keycloak_groups:
+            self._group_service.ensure_groups_exist(keycloak_groups)
+
+        # Create user with groups
         new_user = User(
             id=str(uuid.uuid4()),
             username=username,
@@ -378,6 +384,10 @@ class UserService:
             ValueError: If user not found or sync fails
         """
         logger.info(f"Syncing groups for user {user_id} from Keycloak")
+
+        # Ensure all Keycloak groups exist in the groups table
+        if keycloak_groups:
+            self._group_service.ensure_groups_exist(keycloak_groups)
 
         with self._uow as uow:
             repository: IUserRepository = self._repository_factory(uow.session)

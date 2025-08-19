@@ -1,52 +1,47 @@
-"""Base mapper interface for domain-ORM conversion."""
+"""Base mapper for domain/ORM conversion."""
+from abc import ABC, abstractmethod
 from typing import TypeVar, Generic, List
 
 DomainType = TypeVar('DomainType')
 ORMType = TypeVar('ORMType')
 
-class BaseMapper(Generic[DomainType, ORMType]):
-    """Base mapper interface for converting between domain and ORM models."""
+class BaseMapper(Generic[DomainType, ORMType], ABC):
+    """Base mapper for converting between domain and ORM models."""
 
-    def to_orm(self, entity: DomainType) -> ORMType:
-        """Convert domain entity to ORM entity.
-
-        Args:
-            entity (DomainType): Domain entity instance
-
-        Returns:
-            ORMType: ORM entity instance
-        """
-        raise NotImplementedError
-
-    def to_domain(self, orm_entity: ORMType) -> DomainType:
+    @staticmethod
+    @abstractmethod
+    def to_domain(orm_entity: ORMType) -> DomainType:
         """Convert ORM entity to domain entity.
 
         Args:
-            orm_entity (ORMType): ORM entity instance
+            orm_entity: ORM entity
 
         Returns:
-            DomainType: Domain entity instance
+            Domain entity
         """
-        raise NotImplementedError
+        pass
 
-    def to_orm_list(self, entities: List[DomainType]) -> List[ORMType]:
-        """Convert list of domain entities to ORM entities.
+    @staticmethod
+    @abstractmethod
+    def to_orm(entity: DomainType) -> ORMType:
+        """Convert domain entity to ORM entity.
 
         Args:
-            entities (List[DomainType]): List of domain entity instances
+            entity: Domain entity
 
         Returns:
-            List[ORMType]: List of ORM entity instances
+            ORM entity
         """
-        return [self.to_orm(entity) for entity in entities]
+        pass
 
-    def to_domain_list(self, orm_entities: List[ORMType]) -> List[DomainType]:
-        """Convert list of ORM entities to domain entities.
+    @classmethod
+    def to_domain_list(cls, orm_entities: List[ORMType]) -> List[DomainType]:
+        """Convert list of ORM entities to list of domain entities.
 
         Args:
-            orm_entities (List[ORMType]): List of ORM entity instances
+            orm_entities: List of ORM entities
 
         Returns:
-            List[DomainType]: List of domain entity instances
+            List of domain entities
         """
-        return [self.to_domain(orm_entity) for orm_entity in orm_entities]
+        return [cls.to_domain(orm_entity) for orm_entity in orm_entities]

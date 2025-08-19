@@ -1,12 +1,15 @@
 """Mapper for Group domain and ORM models."""
-from .base import BaseMapper
+from typing import List
+from datetime import datetime
 from ....domain.models.group import Group
 from ..models.group_orm import GroupORM
+from .base import BaseMapper
 
 class GroupMapper(BaseMapper[Group, GroupORM]):
     """Mapper for converting between Group domain and ORM models."""
 
-    def to_orm(self, entity: Group) -> GroupORM:
+    @staticmethod
+    def to_orm(entity: Group) -> GroupORM:
         """Convert Group domain entity to ORM entity.
 
         Args:
@@ -15,15 +18,17 @@ class GroupMapper(BaseMapper[Group, GroupORM]):
         Returns:
             GroupORM: ORM entity instance
         """
+        now = datetime.utcnow()
         return GroupORM(
-            id=entity.id,
+            id=entity.id if hasattr(entity, 'id') and entity.id else None,
             name=entity.name,
             description=entity.description,
-            created=entity.created,
-            updated=entity.updated
+            created=entity.created if hasattr(entity, 'created') and entity.created else now,
+            updated=entity.updated if hasattr(entity, 'updated') and entity.updated else now
         )
 
-    def to_domain(self, orm_entity: GroupORM) -> Group:
+    @staticmethod
+    def to_domain(orm_entity: GroupORM) -> Group:
         """Convert ORM entity to Group domain entity.
 
         Args:
@@ -39,3 +44,15 @@ class GroupMapper(BaseMapper[Group, GroupORM]):
             created=orm_entity.created,
             updated=orm_entity.updated
         )
+
+    @staticmethod
+    def to_domain_list(orm_entities: List[GroupORM]) -> List[Group]:
+        """Convert list of ORM entities to list of domain entities.
+
+        Args:
+            orm_entities (List[GroupORM]): List of ORM entities
+
+        Returns:
+            List[Group]: List of domain entities
+        """
+        return [GroupMapper.to_domain(orm_entity) for orm_entity in orm_entities]

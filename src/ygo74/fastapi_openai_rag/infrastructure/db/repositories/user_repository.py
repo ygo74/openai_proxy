@@ -7,9 +7,8 @@ from sqlalchemy import select, and_
 from ....domain.models.user import User, ApiKey
 from ....domain.repositories.user_repository import IUserRepository
 from ..models.user_orm import UserORM, ApiKeyORM
-from ..models.group_orm import GroupORM
 from ..mappers.user_mapper import UserMapper
-from ygo74.fastapi_openai_rag.infrastructure.db.repositories.base_repository import SQLBaseRepository
+from .base_repository import SQLBaseRepository
 
 
 class UserRepository(SQLBaseRepository[User, UserORM], IUserRepository):
@@ -21,13 +20,13 @@ class UserRepository(SQLBaseRepository[User, UserORM], IUserRepository):
         Args:
             session (Session): Database session
         """
-        self.session = session
+        super().__init__(session, UserORM, UserMapper)
 
-    def get_by_id(self, entity_id: str) -> Optional[User]:
+    def get_by_id(self, id: int) -> Optional[User]:
         """Get user by ID.
 
         Args:
-            entity_id (str): User ID
+            id (int): User ID
 
         Returns:
             Optional[User]: User if found, None otherwise
@@ -35,16 +34,16 @@ class UserRepository(SQLBaseRepository[User, UserORM], IUserRepository):
         stmt = (
             select(UserORM)
             .options(selectinload(UserORM.api_keys))
-            .where(UserORM.id == entity_id)
+            .where(UserORM.id == id)
         )
 
-        result = self.session.execute(stmt)
+        result = self._session.execute(stmt)
         user_orm = result.scalar_one_or_none()
 
         if not user_orm:
             return None
 
-        return UserMapper.to_domain(user_orm)
+        return self._mapper.to_domain(user_orm)
 
     def get_all(self) -> List[User]:
         """Get all users.
@@ -57,10 +56,10 @@ class UserRepository(SQLBaseRepository[User, UserORM], IUserRepository):
             .options(selectinload(UserORM.api_keys))  #  Ensure API keys are loaded
         )
 
-        result = self.session.execute(stmt)
+        result = self._session.execute(stmt)
         user_orms = result.scalars().all()
 
-        return [UserMapper.to_domain(user_orm) for user_orm in user_orms]
+        return [self._mapper.to_domain(user_orm) for user_orm in user_orms]
 
     def add(self, entity: User) -> User:
         """Add user to database.
@@ -72,9 +71,9 @@ class UserRepository(SQLBaseRepository[User, UserORM], IUserRepository):
             User: Added user
         """
         user_orm = UserMapper.to_orm(entity)
-        self.session.add(user_orm)
-        self.session.flush()
-        self.session.refresh(user_orm)
+        self._session.add(user_orm)
+        self._session.flush()
+        self._session.refresh(user_orm)
 
         return UserMapper.to_domain(user_orm)
 
@@ -88,11 +87,11 @@ class UserRepository(SQLBaseRepository[User, UserORM], IUserRepository):
             User: Updated user
         """
         user_orm = UserMapper.to_orm(entity)
-        self.session.merge(user_orm)
-        self.session.flush()
+        self._session.merge(user_orm)
+        self._session.flush()
 
         # Refresh to get updated data
-        updated_orm = self.session.get(UserORM, entity.id)
+        updated_orm = self._session.get(UserORM, entity.id)
         return UserMapper.to_domain(updated_orm)
 
     def remove(self, entity_id: str) -> None:
@@ -101,10 +100,10 @@ class UserRepository(SQLBaseRepository[User, UserORM], IUserRepository):
         Args:
             entity_id (str): User ID to remove
         """
-        user_orm = self.session.get(UserORM, entity_id)
+        user_orm = self._session.get(UserORM, entity_id)
         if user_orm:
-            self.session.delete(user_orm)
-            self.session.flush()
+            self._session.delete(user_orm)
+            self._session.flush()
 
     def get_by_username(self, username: str) -> Optional[User]:
         """Get user by username.
@@ -121,13 +120,13 @@ class UserRepository(SQLBaseRepository[User, UserORM], IUserRepository):
             .where(UserORM.username == username, UserORM.is_active == True)
         )
 
-        result = self.session.execute(stmt)
+        result = self._session.execute(stmt)
         user_orm = result.scalar_one_or_none()
 
         if not user_orm:
             return None
 
-        return UserMapper.to_domain(user_orm)
+        return self._mapper.to_domain(user_orm)
 
     def get_by_email(self, email: str) -> Optional[User]:
         """Get user by email.
@@ -144,13 +143,13 @@ class UserRepository(SQLBaseRepository[User, UserORM], IUserRepository):
             .where(UserORM.email == email, UserORM.is_active == True)
         )
 
-        result = self.session.execute(stmt)
+        result = self._session.execute(stmt)
         user_orm = result.scalar_one_or_none()
 
         if not user_orm:
             return None
 
-        return UserMapper.to_domain(user_orm)
+        return self._mapper.to_domain(user_orm)
 
     def find_by_api_key_hash(self, key_hash: str) -> Optional[User]:
         """Find user by API key hash.
@@ -171,7 +170,7 @@ class UserRepository(SQLBaseRepository[User, UserORM], IUserRepository):
             )
         )
 
-        result = self.session.execute(stmt)
+        result = self._session.execute(stmt)
         api_key_orm = result.scalar_one_or_none()
 
         if not api_key_orm or not api_key_orm.user.is_active:
@@ -179,9 +178,9 @@ class UserRepository(SQLBaseRepository[User, UserORM], IUserRepository):
 
         # Update last_used_at
         api_key_orm.last_used_at = datetime.utcnow()
-        self.session.flush()
+        self._session.flush()
 
-        return UserMapper.to_domain(api_key_orm.user)
+        return self._mapper.to_domain(api_key_orm.user)
 
     def get_active_users(self) -> List[User]:
         """Get all active users.
@@ -195,10 +194,10 @@ class UserRepository(SQLBaseRepository[User, UserORM], IUserRepository):
             .where(UserORM.is_active == True)
         )
 
-        result = self.session.execute(stmt)
+        result = self._session.execute(stmt)
         user_orms = result.scalars().all()
 
-        return [UserMapper.to_domain(user_orm) for user_orm in user_orms]
+        return [self._mapper.to_domain(user_orm) for user_orm in user_orms]
 
     def add_user_to_group(self, user_id: int, group_name: str) -> None:
         """
@@ -208,7 +207,7 @@ class UserRepository(SQLBaseRepository[User, UserORM], IUserRepository):
             user_id: User's database ID
             group_name: Name of the group to add
         """
-        user_orm = self.session.get(UserORM, user_id)
+        user_orm = self._session.get(UserORM, user_id)
         if user_orm:
             current_groups = json.loads(user_orm.groups) if user_orm.groups else []
             if group_name not in current_groups:
@@ -223,9 +222,10 @@ class UserRepository(SQLBaseRepository[User, UserORM], IUserRepository):
             user_id: User's database ID
             group_name: Name of the group to remove
         """
-        user_orm = self.session.get(UserORM, user_id)
+        user_orm = self._session.get(UserORM, user_id)
         if user_orm:
             current_groups = json.loads(user_orm.groups) if user_orm.groups else []
             if group_name in current_groups:
                 current_groups.remove(group_name)
+                user_orm.groups = json.dumps(current_groups)
                 user_orm.groups = json.dumps(current_groups)
