@@ -1,5 +1,5 @@
 """User repository for database operations."""
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 from typing import Optional, List
 from sqlalchemy.orm import Session, selectinload
@@ -166,7 +166,7 @@ class UserRepository(SQLBaseRepository[User, UserORM], IUserRepository):
             .where(
                 ApiKeyORM.key_hash == key_hash,
                 ApiKeyORM.is_active == True,
-                ApiKeyORM.expires_at.is_(None) | (ApiKeyORM.expires_at > datetime.utcnow())
+                ApiKeyORM.expires_at.is_(None) | (ApiKeyORM.expires_at > datetime.now(timezone.utc))
             )
         )
 
@@ -177,7 +177,7 @@ class UserRepository(SQLBaseRepository[User, UserORM], IUserRepository):
             return None
 
         # Update last_used_at
-        api_key_orm.last_used_at = datetime.utcnow()
+        api_key_orm.last_used_at = datetime.now(timezone.utc)
         self._session.flush()
 
         return self._mapper.to_domain(api_key_orm.user)

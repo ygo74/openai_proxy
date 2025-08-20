@@ -19,6 +19,7 @@ class SQLGroupRepository(SQLBaseRepository[Group, GroupORM], IGroupRepository):
         Args:
             session (Session): Database session
         """
+        # Passer la classe GroupMapper directement, pas une instance
         super().__init__(session, GroupORM, GroupMapper)
 
     def get_by_name(self, name: str) -> Optional[Group]:

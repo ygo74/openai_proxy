@@ -1,16 +1,14 @@
-"""Base mapper for domain/ORM conversion."""
-from abc import ABC, abstractmethod
+"""Base mapper class for domain/ORM conversion."""
 from typing import TypeVar, Generic, List
 
-DomainType = TypeVar('DomainType')
-ORMType = TypeVar('ORMType')
+DomainT = TypeVar('DomainT')
+ORMT = TypeVar('ORMT')
 
-class BaseMapper(Generic[DomainType, ORMType], ABC):
-    """Base mapper for converting between domain and ORM models."""
+class BaseMapper(Generic[DomainT, ORMT]):
+    """Base mapper class for domain/ORM conversion."""
 
-    @staticmethod
-    @abstractmethod
-    def to_domain(orm_entity: ORMType) -> DomainType:
+    @classmethod
+    def to_domain(cls, orm_entity: ORMT) -> DomainT:
         """Convert ORM entity to domain entity.
 
         Args:
@@ -19,23 +17,22 @@ class BaseMapper(Generic[DomainType, ORMType], ABC):
         Returns:
             Domain entity
         """
-        pass
+        raise NotImplementedError("Subclasses must implement to_domain")
 
-    @staticmethod
-    @abstractmethod
-    def to_orm(entity: DomainType) -> ORMType:
+    @classmethod
+    def to_orm(cls, domain_entity: DomainT) -> ORMT:
         """Convert domain entity to ORM entity.
 
         Args:
-            entity: Domain entity
+            domain_entity: Domain entity
 
         Returns:
             ORM entity
         """
-        pass
+        raise NotImplementedError("Subclasses must implement to_orm")
 
     @classmethod
-    def to_domain_list(cls, orm_entities: List[ORMType]) -> List[DomainType]:
+    def to_domain_list(cls, orm_entities: List[ORMT]) -> List[DomainT]:
         """Convert list of ORM entities to list of domain entities.
 
         Args:

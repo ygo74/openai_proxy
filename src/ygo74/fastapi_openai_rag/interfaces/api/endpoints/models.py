@@ -1,9 +1,10 @@
 """Model endpoints module."""
 from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, status as http_status
+from fastapi import APIRouter, Depends, HTTPException, status as http_status, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 import logging
+from datetime import datetime
 
 from ....infrastructure.db.session import get_db
 from ....infrastructure.db.unit_of_work import SQLUnitOfWork
@@ -11,7 +12,7 @@ from ....application.services.model_service import ModelService
 from ....domain.models.llm_model import LlmModel, LlmModelStatus
 from ....domain.models.configuration import AppConfig
 from ....domain.models.llm import LLMProvider
-from ..decorators import endpoint_handler
+from ..decorators import endpoint_handler, require_oauth_role
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +24,12 @@ class ModelResponse(BaseModel):
     url: str
     name: str
     technical_name: str
-    provider: LLMProvider  # Utiliser l'enum directement
+    provider: LLMProvider
     status: LlmModelStatus
     capabilities: Dict[str, Any] = {}
+    groups: List[str]
+    created: datetime  # Ajout du champ manquant
+    updated: datetime  # Ajout du champ manquant
 
 class ModelCreate(BaseModel):
     """Model creation schema."""
@@ -46,6 +50,26 @@ class ModelUpdate(BaseModel):
 class UpdateModelStatusRequest(BaseModel):
     """Request schema for updating model status."""
     status: LlmModelStatus
+
+
+def map_model_to_response(model: LlmModel) -> ModelResponse:
+    """Map LlmModel to ModelResponse."""
+    return ModelResponse(
+        id=model.id,
+        url=model.url,
+        name=model.name,
+        technical_name=model.technical_name,
+        provider=model.provider,
+        status=model.status,
+        capabilities=model.capabilities,
+        groups=[group.name for group in model.groups] if model.groups else [],
+        created=model.created,
+        updated=model.updated
+    )
+
+def map_model_list_to_response(models: List[LlmModel]) -> List[ModelResponse]:
+    """Map list of LlmModel to list of ModelResponse."""
+    return [map_model_to_response(model) for model in models]
 
 
 def get_model_service(db: Session = Depends(get_db)) -> ModelService:
@@ -82,15 +106,7 @@ async def get_models(
     # Apply pagination
     paginated_models = models[skip:skip + limit]
 
-    return [ModelResponse(
-        id=m.id if m.id is not None else -1,
-        url=m.url,
-        name=m.name,
-        technical_name=m.technical_name,
-        provider=m.provider,  # Maintenant compatible
-        status=m.status,
-        capabilities=m.capabilities
-    ) for m in paginated_models]
+    return map_model_list_to_response(paginated_models)
 
 
 @router.get("/statistics")
@@ -124,16 +140,7 @@ async def search_models_by_name(
     # Simple name filtering
     filtered_models = [m for m in models if name.lower() in m.name.lower()]
 
-    return [ModelResponse(
-        id=m.id,
-        url=m.url,
-        name=m.name,
-        technical_name=m.technical_name,
-        provider=m.provider,  # Ajouter le provider
-        status=m.status,
-        capabilities=m.capabilities
-    ) for m in filtered_models]
-
+    return map_model_list_to_response(filtered_models)
 
 @router.post("/", response_model=ModelResponse, status_code=http_status.HTTP_201_CREATED)
 @endpoint_handler("create_model")
@@ -150,16 +157,7 @@ async def create_model(
         provider=model.provider,  # Ajouter le provider
         capabilities=model.capabilities
     )
-    return ModelResponse(
-        id=created_model.id,
-        url=created_model.url,
-        name=created_model.name,
-        technical_name=created_model.technical_name,
-        provider=created_model.provider,  # Ajouter le provider
-        status=created_model.status,
-        capabilities=created_model.capabilities
-    )
-
+    return map_model_to_response(created_model)
 
 @router.get("/{model_id}", response_model=ModelResponse)
 @endpoint_handler("get_model")
@@ -168,18 +166,9 @@ async def get_model(
     service: ModelService = Depends(get_model_service)
 ) -> ModelResponse:
     """Get a specific model by ID."""
-    model: LlmModel | None = service.get_model_by_id(model_id)
 
-    if model:
-        return ModelResponse(
-            id=model.id,
-            url=model.url,
-            name=model.name,
-            technical_name=model.technical_name,
-            provider=model.provider,  # Ajouter le provider
-            status=model.status,
-            capabilities=model.capabilities
-        )
+    model: LlmModel | None = service.get_model_by_id(model_id)
+    return map_model_to_response(model)
 
 
 @router.put("/{model_id}", response_model=ModelResponse)
@@ -199,16 +188,7 @@ async def update_model(
         capabilities=model.capabilities
     )
 
-    return ModelResponse(
-        id=updated_model.id,
-        url=updated_model.url,
-        name=updated_model.name,
-        technical_name=updated_model.technical_name,
-        provider=updated_model.provider,  # Ajouter le provider
-        status=updated_model.status,
-        capabilities=updated_model.capabilities
-    )
-
+    return map_model_to_response(updated_model)
 
 @router.delete("/{model_id}")
 @endpoint_handler("delete_model")
@@ -230,16 +210,7 @@ async def update_model_status(
 ) -> ModelResponse:
     """Update the status of a model."""
     updated_model: LlmModel = service.update_model_status(model_id, request.status)
-    return ModelResponse(
-        id=updated_model.id,
-        url=updated_model.url,
-        name=updated_model.name,
-        technical_name=updated_model.technical_name,
-        provider=updated_model.provider,  # Ajouter le provider
-        status=updated_model.status,
-        capabilities=updated_model.capabilities,
-    )
-
+    return map_model_to_response(updated_model)
 
 @router.post("/refresh")
 @endpoint_handler("refresh_models")
@@ -250,3 +221,67 @@ async def refresh_models(
     config = AppConfig.load_from_json()
     await service.fetch_available_models(config.model_configs)
     return {"message": "Models refreshed successfully"}
+
+@router.post("/{model_id}/groups/{group_id}", response_model=ModelResponse)
+async def add_group_to_model(
+    model_id: int,
+    group_id: int,
+    service: ModelService = Depends(get_model_service)
+):
+    """Add a group to a model.
+
+    Args:
+        model_id: Model ID
+        group_id: Group ID
+        service: ModelService instance
+
+    Returns:
+        Updated model
+
+    Raises:
+        HTTPException: If model or group not found
+    """
+    updated_model = service.add_model_to_group(model_id, group_id)
+    return map_model_to_response(updated_model)
+
+@router.delete("/{model_id}/groups/{group_id}", response_model=ModelResponse)
+async def remove_group_from_model(
+    model_id: int,
+    group_id: int,
+    service: ModelService = Depends(get_model_service)
+):
+    """Remove a group from a model.
+
+    Args:
+        model_id: Model ID
+        group_id: Group ID
+        service: ModelService instance
+
+    Returns:
+        Updated model
+
+    Raises:
+        HTTPException: If model not found or group not associated with model
+    """
+    updated_model = service.remove_model_from_group(model_id, group_id)
+    return map_model_to_response(updated_model)
+
+@router.get("/{model_id}/groups", response_model=List[str])
+async def get_groups_for_model(
+    model_id: int,
+    service: ModelService = Depends(get_model_service)
+):
+    """Get all groups associated with a model.
+
+    Args:
+        model_id: Model ID
+        service: ModelService instance
+
+    Returns:
+        List of groups associated with the model
+
+    Raises:
+        HTTPException: If model not found
+    """
+    groups = service.get_groups_for_model(model_id)
+    return [group.name for group in groups] if groups else []
