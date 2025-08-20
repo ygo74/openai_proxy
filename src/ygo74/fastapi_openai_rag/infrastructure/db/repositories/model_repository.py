@@ -19,6 +19,35 @@ class SQLModelRepository(SQLBaseRepository[LlmModel, ModelORM], IModelRepository
         """
         super().__init__(session, ModelORM, ModelMapper)
 
+    def get_by_id(self, id: int) -> Optional[LlmModel]:
+        """Get model by ID.
+
+        This method overrides the base implementation to ensure groups are loaded.
+
+        Args:
+            id (int): Model ID
+
+        Returns:
+            Optional[LlmModel]: Model if found, None otherwise
+        """
+        stmt = select(ModelORM).options(selectinload(ModelORM.groups)).where(ModelORM.id == id)
+        result = self._session.execute(stmt)
+        orm_model = result.scalar_one_or_none()
+        return self._mapper.to_domain(orm_model) if orm_model else None
+
+    def get_all(self) -> List[LlmModel]:
+        """Get all models.
+
+        This method overrides the base implementation to ensure groups are loaded.
+
+        Returns:
+            List[LlmModel]: All models
+        """
+        stmt = select(ModelORM).options(selectinload(ModelORM.groups))
+        result = self._session.execute(stmt)
+        orm_models = result.scalars().all()
+        return [self._mapper.to_domain(orm_model) for orm_model in orm_models]
+
     def get_by_name(self, name: str) -> List[LlmModel]:
         """Get models by name.
 
@@ -29,7 +58,7 @@ class SQLModelRepository(SQLBaseRepository[LlmModel, ModelORM], IModelRepository
             List[LlmModel]: List of models with the given name
         """
         # Use SQLAlchemy 2.0 style query instead of 1.x style
-        stmt = select(ModelORM).where(ModelORM.name == name)
+        stmt = select(ModelORM).options(selectinload(ModelORM.groups)).where(ModelORM.name == name)
         result = self._session.execute(stmt)
         orm_models = result.scalars().all()
         return [self._mapper.to_domain(orm_model) for orm_model in orm_models]
@@ -43,7 +72,7 @@ class SQLModelRepository(SQLBaseRepository[LlmModel, ModelORM], IModelRepository
         Returns:
             List[LlmModel]: List of models with the given technical name
         """
-        stmt = select(ModelORM).where(ModelORM.technical_name == technical_name)
+        stmt = select(ModelORM).options(selectinload(ModelORM.groups)).where(ModelORM.technical_name == technical_name)
         result = self._session.execute(stmt)
         orm_models = result.scalars().all()
 
@@ -59,7 +88,7 @@ class SQLModelRepository(SQLBaseRepository[LlmModel, ModelORM], IModelRepository
         Returns:
             Optional[LlmModel]: The model if found, None otherwise
         """
-        stmt = select(ModelORM).where(
+        stmt = select(ModelORM).options(selectinload(ModelORM.groups)).where(
             ModelORM.name == name,
             ModelORM.technical_name == technical_name
         )
@@ -95,7 +124,7 @@ class SQLModelRepository(SQLBaseRepository[LlmModel, ModelORM], IModelRepository
         Returns:
             List[LlmModel]: List of approved models with the given name
         """
-        stmt = select(ModelORM).where(
+        stmt = select(ModelORM).options(selectinload(ModelORM.groups)).where(
             ModelORM.name == name,
             ModelORM.status == LlmModelStatus.APPROVED
         )

@@ -428,11 +428,7 @@ class ModelService:
                 raise EntityNotFoundError("Model", str(model_id))
 
             # Verify group exists
-            try:
-                group = group_service.get_group_by_id(group_id)
-            except EntityNotFoundError:
-                logger.error(f"Group {group_id} not found")
-                raise EntityNotFoundError("Group", str(group_id))
+            group = group_service.get_group_by_id(group_id)
 
             # Check if the group is already associated with the model
             model_groups = [g for g in model.groups if g.id == group_id]
