@@ -5,3 +5,4 @@ config.json
 *.db
 .env
 .env.*
+*egg-info

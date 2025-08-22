@@ -83,6 +83,23 @@
               "port": 5678
             },
             "justMyCode": false
-          }
+          },
+          {
+            "name": "RAG Client CLI Debug",
+            "type": "python",
+            "request": "launch",
+            "module": "ygo74.fastapi_openai_rag_client",
+            "args": [
+                "--help"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}/client",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/client/src",
+                "LOG_LEVEL": "DEBUG"
+            },
+            "justMyCode": false,
+            "stopOnEntry": false
+        }
     ]
 }

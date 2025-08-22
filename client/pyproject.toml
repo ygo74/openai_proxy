@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rag-client"
+version = "0.1.0"
+description = "Command-line client for FastAPI OpenAI RAG proxy"
+authors = [
+    { name = "ygo74", email = "yannickgobert@yahoo.fr" }
+]
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "knack>=0.10.0",
+    "requests>=2.25.0",
+    "keyring>=23.0.0",
+    "cachetools>=4.2.0",
+]
+
+[project.scripts]
+rag-client = "ygo74.fastapi_openai_rag_client.__main__:main"
