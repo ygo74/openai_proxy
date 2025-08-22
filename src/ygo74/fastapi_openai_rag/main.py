@@ -97,6 +97,7 @@ app.add_exception_handler(EntityNotFoundError, ExceptionHandlers.entity_not_foun
 app.add_exception_handler(EntityAlreadyExistsError, ExceptionHandlers.entity_already_exists_handler)
 app.add_exception_handler(ValidationError, ExceptionHandlers.validation_error_handler)
 app.add_exception_handler(Exception, ExceptionHandlers.generic_exception_handler)
+app.add_exception_handler(PermissionError, ExceptionHandlers.permission_error_handler)
 
 @app.get("/health")
 async def health_check():

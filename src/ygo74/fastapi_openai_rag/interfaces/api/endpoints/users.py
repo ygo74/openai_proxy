@@ -64,6 +64,31 @@ def get_user_service(db: Session = Depends(get_db)) -> UserService:
     uow = SQLUnitOfWork(session_factory)
     return UserService(uow)
 
+
+def map_user_to_response(user: User) -> UserResponse:
+    """Map User domain model to UserResponse schema."""
+    return UserResponse(
+        id=user.id,
+        username=user.username,
+        email=user.email,
+        is_active=user.is_active,
+        created_at=user.created_at,
+        updated_at=user.updated_at,
+        groups=user.groups,
+        api_keys=[map_api_key_to_response(ak) for ak in user.api_keys]
+    )
+
+def map_api_key_to_response(api_key: ApiKey) -> ApiKeyResponse:
+    """Map ApiKey domain model to ApiKeyResponse schema."""
+    return ApiKeyResponse(
+        id=api_key.id,
+        name=api_key.name,
+        created_at=api_key.created_at,
+        expires_at=api_key.expires_at,
+        is_active=api_key.is_active,
+        last_used_at=api_key.last_used_at
+    )
+
 @router.get("/", response_model=List[UserResponse])
 @endpoint_handler("get_users")
 async def get_users(
@@ -81,23 +106,7 @@ async def get_users(
     # Apply pagination
     paginated_users = users[skip:skip + limit]
 
-    return [UserResponse(
-        id=u.id,
-        username=u.username,
-        email=u.email,
-        is_active=u.is_active,
-        created_at=u.created_at,
-        updated_at=u.updated_at,
-        groups=u.groups,
-        api_keys=[ApiKeyResponse(
-            id=ak.id,
-            name=ak.name,
-            created_at=ak.created_at,
-            expires_at=ak.expires_at,
-            is_active=ak.is_active,
-            last_used_at=ak.last_used_at
-        ) for ak in u.api_keys]
-    ) for u in paginated_users]
+    return [map_user_to_response(u) for u in paginated_users]
 
 @router.post("/", response_model=UserResponse, status_code=201)
 @endpoint_handler("create_user")
@@ -106,22 +115,14 @@ async def create_user(
     service: UserService = Depends(get_user_service)
 ) -> UserResponse:
     """Create a new user."""
-    status_result, created_user = service.add_or_update_user(
+    _, created_user = service.add_or_update_user(
         username=user.username,
         email=user.email,
         groups=user.groups
     )
 
-    return UserResponse(
-        id=created_user.id,
-        username=created_user.username,
-        email=created_user.email,
-        is_active=created_user.is_active,
-        created_at=created_user.created_at,
-        updated_at=created_user.updated_at,
-        groups=created_user.groups,
-        api_keys=[]
-    )
+    return map_user_to_response(created_user)
+
 
 @router.get("/statistics")
 @endpoint_handler("get_user_statistics")
@@ -154,23 +155,7 @@ async def get_user(
     """Get a specific user by ID."""
     user: User = service.get_user_by_id(user_id)
 
-    return UserResponse(
-        id=user.id,
-        username=user.username,
-        email=user.email,
-        is_active=user.is_active,
-        created_at=user.created_at,
-        updated_at=user.updated_at,
-        groups=user.groups,
-        api_keys=[ApiKeyResponse(
-            id=ak.id,
-            name=ak.name,
-            created_at=ak.created_at,
-            expires_at=ak.expires_at,
-            is_active=ak.is_active,
-            last_used_at=ak.last_used_at
-        ) for ak in user.api_keys]
-    )
+    return map_user_to_response(user)
 
 @router.put("/{user_id}", response_model=UserResponse)
 @endpoint_handler("update_user")
@@ -180,30 +165,14 @@ async def update_user(
     service: UserService = Depends(get_user_service)
 ) -> UserResponse:
     """Update a user."""
-    status_result, updated_user = service.add_or_update_user(
+    _, updated_user = service.add_or_update_user(
         user_id=user_id,
         username=user.username,
         email=user.email,
         groups=user.groups
     )
 
-    return UserResponse(
-        id=updated_user.id,
-        username=updated_user.username,
-        email=updated_user.email,
-        is_active=updated_user.is_active,
-        created_at=updated_user.created_at,
-        updated_at=updated_user.updated_at,
-        groups=updated_user.groups,
-        api_keys=[ApiKeyResponse(
-            id=ak.id,
-            name=ak.name,
-            created_at=ak.created_at,
-            expires_at=ak.expires_at,
-            is_active=ak.is_active,
-            last_used_at=ak.last_used_at
-        ) for ak in updated_user.api_keys]
-    )
+    return map_user_to_response(updated_user)
 
 @router.delete("/{user_id}")
 @endpoint_handler("delete_user")
@@ -224,23 +193,7 @@ async def deactivate_user(
     """Deactivate a user."""
     deactivated_user: User = service.deactivate_user(user_id)
 
-    return UserResponse(
-        id=deactivated_user.id,
-        username=deactivated_user.username,
-        email=deactivated_user.email,
-        is_active=deactivated_user.is_active,
-        created_at=deactivated_user.created_at,
-        updated_at=deactivated_user.updated_at,
-        groups=deactivated_user.groups,
-        api_keys=[ApiKeyResponse(
-            id=ak.id,
-            name=ak.name,
-            created_at=ak.created_at,
-            expires_at=ak.expires_at,
-            is_active=ak.is_active,
-            last_used_at=ak.last_used_at
-        ) for ak in deactivated_user.api_keys]
-    )
+    return map_user_to_response(deactivated_user)
 
 @router.get("/username/{username}", response_model=UserResponse)
 @endpoint_handler("get_user_by_username")
@@ -251,23 +204,7 @@ async def get_user_by_username(
     """Get a user by username."""
     user: User = service.get_user_by_username(username)
 
-    return UserResponse(
-        id=user.id,
-        username=user.username,
-        email=user.email,
-        is_active=user.is_active,
-        created_at=user.created_at,
-        updated_at=user.updated_at,
-        groups=user.groups,
-        api_keys=[ApiKeyResponse(
-            id=ak.id,
-            name=ak.name,
-            created_at=ak.created_at,
-            expires_at=ak.expires_at,
-            is_active=ak.is_active,
-            last_used_at=ak.last_used_at
-        ) for ak in user.api_keys]
-    )
+    return map_user_to_response(user)
 
 @router.post("/{user_id}/api-keys", response_model=ApiKeyCreateResponse, status_code=201)
 @endpoint_handler("create_api_key")
@@ -285,12 +222,5 @@ async def create_api_key(
 
     return ApiKeyCreateResponse(
         api_key=plain_key,
-        key_info=ApiKeyResponse(
-            id=api_key.id,
-            name=api_key.name,
-            created_at=api_key.created_at,
-            expires_at=api_key.expires_at,
-            is_active=api_key.is_active,
-            last_used_at=api_key.last_used_at
-        )
+        key_info=map_api_key_to_response(api_key)
     )

@@ -131,7 +131,7 @@ class UserService:
             logger.debug(f"Found {len(users)} active users")
             return users
 
-    def get_user_by_id(self, user_id: str) -> Optional[User]:
+    def get_user_by_id(self, user_id: str) -> User:
         """Get user by ID.
 
         Args:
@@ -152,7 +152,7 @@ class UserService:
                 raise EntityNotFoundError("User", str(user_id))
             return user
 
-    def get_user_by_username(self, username: str) -> Optional[User]:
+    def get_user_by_username(self, username: str) -> User:
         """Get user by username.
 
         Args:

@@ -1,4 +1,4 @@
-from fastapi import Depends, HTTPException, Security, Request
+from fastapi import Depends, HTTPException, Security, Request, status as http_status
 from fastapi.security import APIKeyHeader, HTTPBearer
 from sqlalchemy.orm import Session
 from jose import jwt, JWTError, ExpiredSignatureError
@@ -355,3 +355,22 @@ async def auth_jwt_or_api_key(
     request.scope["authenticated_user"] = user_info
     logger.info(f"User authenticated successfully: {user_info.username} ({user_info.type})")
     return user_info
+
+def require_admin_role(user: AuthenticatedUser = Depends(auth_jwt_or_api_key)):
+    """Dependency to check if user has admin role.
+
+    Args:
+        user: The authenticated user
+
+    Returns:
+        The authenticated user if they have admin role
+
+    Raises:
+        HTTPException: If user doesn't have admin role
+    """
+    if "admin" not in user.groups:
+        raise HTTPException(
+            status_code=http_status.HTTP_403_FORBIDDEN,
+            detail="Admin role required for this operation"
+        )
+    return user

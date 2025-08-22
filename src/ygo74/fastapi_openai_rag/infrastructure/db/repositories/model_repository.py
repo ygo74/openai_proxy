@@ -103,13 +103,14 @@ class SQLModelRepository(SQLBaseRepository[LlmModel, ModelORM], IModelRepository
             group_id (int): Group ID
 
         Returns:
-            List[LlmModel]: List of models in the group
+            List[LlmModel]: List of distinct models in the group
         """
         stmt = (
             select(ModelORM)
             .options(selectinload(ModelORM.groups))
             .join(ModelORM.groups)
             .where(ModelORM.groups.any(id=group_id))
+            .distinct()  # Add distinct to avoid duplicate models
         )
         result = self._session.execute(stmt)
         model_orms = result.scalars().all()
