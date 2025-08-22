@@ -90,7 +90,8 @@
             "request": "launch",
             "module": "ygo74.fastapi_openai_rag_client",
             "args": [
-                "--help"
+                "group",
+                "list"
             ],
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}/client",

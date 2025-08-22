@@ -9,6 +9,7 @@ from .auth import AuthContext
 
 logger = logging.getLogger(__name__)
 
+
 class ApiException(Exception):
     """Exception raised for API errors."""
 
@@ -117,7 +118,7 @@ class ApiClient:
         Returns:
             List of group objects
         """
-        return self._make_request("GET", "/v1/groups", params={"skip": skip, "limit": limit})
+        return self._make_request("GET", "/v1/admin/groups", params={"skip": skip, "limit": limit})
 
     def get_group(self, group_id: int) -> Dict[str, Any]:
         """Get group by ID.
@@ -128,7 +129,7 @@ class ApiClient:
         Returns:
             Group object
         """
-        return self._make_request("GET", f"/v1/groups/{group_id}")
+        return self._make_request("GET", f"/v1/admin/groups/{group_id}")
 
     def create_group(self, name: str, description: Optional[str] = None) -> Dict[str, Any]:
         """Create new group.
@@ -144,7 +145,7 @@ class ApiClient:
             "name": name,
             "description": description
         }
-        return self._make_request("POST", "/v1/groups", json_data=data)
+        return self._make_request("POST", "/v1/admin/groups", json_data=data)
 
     def update_group(
         self,
@@ -168,7 +169,7 @@ class ApiClient:
         if description is not None:
             data["description"] = description
 
-        return self._make_request("PUT", f"/v1/groups/{group_id}", json_data=data)
+        return self._make_request("PUT", f"/v1/admin/groups/{group_id}", json_data=data)
 
     def delete_group(self, group_id: int) -> Dict[str, Any]:
         """Delete group.
@@ -179,7 +180,7 @@ class ApiClient:
         Returns:
             Deletion status
         """
-        return self._make_request("DELETE", f"/v1/groups/{group_id}")
+        return self._make_request("DELETE", f"/v1/admin/groups/{group_id}")
 
     # Model API methods
     def list_models(

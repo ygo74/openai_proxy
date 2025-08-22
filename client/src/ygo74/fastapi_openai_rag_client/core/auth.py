@@ -9,6 +9,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 import keyring
 
+
 logger = logging.getLogger(__name__)
 
 # Constants for token cache and config

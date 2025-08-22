@@ -55,11 +55,10 @@ helps['version'] = """
     short-summary: display the CLI version.
 """
 
-
 class RagProxyCommandsLoader(CLICommandsLoader):
     """Command loader for the FastAPI OpenAI RAG CLI."""
 
-    def __init__(self, cli_ctx=None ):
+    def __init__(self, cli_ctx=None):
         """Initialize the command loader with auth and client contexts."""
         super().__init__(cli_ctx)
         self.auth_ctx = None
@@ -71,22 +70,27 @@ class RagProxyCommandsLoader(CLICommandsLoader):
             self.auth_ctx = AuthContext(self.cli_ctx)
             self.api_client = ApiClient(self.auth_ctx)
 
+            # Store in CLI context data for commands to access
+            if not hasattr(self.cli_ctx, 'data'):
+                self.cli_ctx.data = {}
+            self.cli_ctx.data['auth_ctx'] = self.auth_ctx
+            self.cli_ctx.data['api_client'] = self.api_client
+
     def load_command_table(self, args):
         """Load all command tables from command groups."""
         self._init_client_and_auth()  # Initialize client and auth
 
         # Register command groups
-        with CommandGroup(self, '', 'ygo74.fastapi_openai_rag_client.__main__#{}') as g:
-            g.command('version', 'show_version')  # Use function reference instead of string
+        with CommandGroup(self, '', '') as g:
+            g.command('version', show_version)  # Use function reference instead of string
 
-        if self.cli_ctx and self.api_client:
-            # Only load module commands if we have initialized client and auth
-            try:
-                GroupCommandsLoader(self.api_client).load_command_table(self)
-                ModelCommandsLoader(self.api_client).load_command_table(self)
-                UserCommandsLoader(self.api_client).load_command_table(self)
-            except Exception as e:
-                logger.error(f"Error loading command modules: {str(e)}")
+        # Only load module commands if we have initialized client and auth
+        try:
+            GroupCommandsLoader().load_command_table(self)
+            ModelCommandsLoader().load_command_table(self)
+            UserCommandsLoader().load_command_table(self)
+        except Exception as e:
+            logger.error(f"Error loading command modules: {str(e)}")
 
         return super().load_command_table(args)
 
@@ -96,22 +100,19 @@ class RagProxyCommandsLoader(CLICommandsLoader):
 
         # This method is called for each command registered
         # Load sub-command arguments from each command module
-        if self.cli_ctx and self.api_client:
-            try:
-                GroupCommandsLoader(self.api_client).load_arguments(self, command)
-                ModelCommandsLoader(self.api_client).load_arguments(self, command)
-                UserCommandsLoader(self.api_client).load_arguments(self, command)
-            except Exception as e:
-                logger.error(f"Error loading command arguments: {str(e)}")
+        try:
+            GroupCommandsLoader().load_arguments(self, command)
+            ModelCommandsLoader().load_arguments(self, command)
+            UserCommandsLoader().load_arguments(self, command)
+        except Exception as e:
+            logger.error(f"Error loading command arguments: {str(e)}")
 
         super().load_arguments(command)
-
 
 def show_version(cmd):
     """Show the CLI version."""
     from . import __version__ as cli_version
     return {'version': cli_version}
-
 
 def main():
     """Run the CLI."""
@@ -125,7 +126,6 @@ def main():
 
     exit_code = rag_cli.invoke(sys.argv[1:])
     sys.exit(exit_code)
-
 
 if __name__ == '__main__':
     main()
