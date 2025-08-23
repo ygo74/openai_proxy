@@ -10,6 +10,9 @@ from ....infrastructure.db.unit_of_work import SQLUnitOfWork
 from ....application.services.group_service import GroupService
 from ....domain.models.group import Group
 from ..decorators import endpoint_handler
+from ..security.auth import auth_jwt_or_api_key, require_admin_role
+from ..security.autenticated_user import AuthenticatedUser
+
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +47,8 @@ def get_group_service(db: Session = Depends(get_db)) -> GroupService:
 async def get_groups(
     skip: int = 0,
     limit: int = 100,
-    service: GroupService = Depends(get_group_service)
+    service: GroupService = Depends(get_group_service),
+    authenticated_user: AuthenticatedUser = Depends(require_admin_role)
 ) -> List[GroupResponse]:
     """Get list of groups."""
     groups: List[Group] = service.get_all_groups()
@@ -63,7 +67,8 @@ async def get_groups(
 @endpoint_handler("create_group")
 async def create_group(
     group: GroupCreate,
-    service: GroupService = Depends(get_group_service)
+    service: GroupService = Depends(get_group_service),
+    authenticated_user: AuthenticatedUser = Depends(require_admin_role)
 ) -> GroupResponse:
     """Create a new group."""
     status_result, created_group = service.add_or_update_group(
@@ -80,7 +85,8 @@ async def create_group(
 @router.get("/statistics")
 @endpoint_handler("get_group_statistics")
 async def get_group_statistics(
-    service: GroupService = Depends(get_group_service)
+    service: GroupService = Depends(get_group_service),
+    authenticated_user: AuthenticatedUser = Depends(require_admin_role)
 ) -> Dict[str, Any]:
     """Get group statistics."""
     groups: List[Group] = service.get_all_groups()
@@ -97,7 +103,8 @@ async def get_group_statistics(
 @endpoint_handler("get_group")
 async def get_group(
     group_id: int,
-    service: GroupService = Depends(get_group_service)
+    service: GroupService = Depends(get_group_service),
+    authenticated_user: AuthenticatedUser = Depends(require_admin_role)
 ) -> GroupResponse:
     """Get a specific group by ID."""
     group: Group = service.get_group_by_id(group_id)
@@ -113,10 +120,11 @@ async def get_group(
 async def update_group(
     group_id: int,
     group: GroupUpdate,
-    service: GroupService = Depends(get_group_service)
+    service: GroupService = Depends(get_group_service),
+    authenticated_user: AuthenticatedUser = Depends(require_admin_role)
 ) -> GroupResponse:
     """Update a group."""
-    status_result, updated_group = service.add_or_update_group(
+    _, updated_group = service.add_or_update_group(
         group_id=group_id,
         name=group.name,
         description=group.description
@@ -132,7 +140,8 @@ async def update_group(
 @endpoint_handler("delete_group")
 async def delete_group(
     group_id: int,
-    service: GroupService = Depends(get_group_service)
+    service: GroupService = Depends(get_group_service),
+    authenticated_user: AuthenticatedUser = Depends(require_admin_role)
 ):
     """Delete a group."""
     service.delete_group(group_id)
@@ -143,7 +152,8 @@ async def delete_group(
 @endpoint_handler("get_group_by_name")
 async def get_group_by_name(
     name: str,
-    service: GroupService = Depends(get_group_service)
+    service: GroupService = Depends(get_group_service),
+    authenticated_user: AuthenticatedUser = Depends(require_admin_role)
 ) -> GroupResponse:
     """Get a group by name."""
     group: Group = service.get_group_by_name(name)
@@ -158,7 +168,8 @@ async def get_group_by_name(
 @endpoint_handler("search_groups")
 async def search_groups_by_name(
     name: str,
-    service: GroupService = Depends(get_group_service)
+    service: GroupService = Depends(get_group_service),
+    authenticated_user: AuthenticatedUser = Depends(require_admin_role)
 ) -> List[GroupResponse]:
     """Search groups by name (partial match)."""
     groups: List[Group] = service.get_all_groups()

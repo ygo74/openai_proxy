@@ -89,13 +89,15 @@ class ConfigService:
 
 
 
-    def get_config(self) -> Optional[AppConfig]:
+    def get_config(self) -> AppConfig:
         """Get the current application configuration.
 
         Returns:
-            Optional[AppConfig]: Current configuration or None if not loaded
+            AppConfig: Current configuration
         """
         self.reload_config()  # Check for updates
+        if not self._config:
+            raise ValueError("Configuration not loaded")
         return self._config
 
     def init_database(self) -> None:
@@ -108,7 +110,10 @@ class ConfigService:
         logger.info("Initializing application...")
 
         # Load configuration
-        config: AppConfig = self._config
+        config: AppConfig | None = self._config
+        if not config:
+            raise ValueError("Configuration must be loaded before initializing the database")
+
         logger.info(f"Loaded configuration with database type: {config.db_type}")
 
         # Initialize database connection

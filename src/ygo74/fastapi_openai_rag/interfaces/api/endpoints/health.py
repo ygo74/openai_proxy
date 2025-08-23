@@ -1,15 +1,19 @@
 """Health check endpoints."""
+from datetime import datetime, timezone
+import time
 from typing import Dict, Any, List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 import logging
-from datetime import datetime
-import time
 
 from ....infrastructure.db.session import get_db
 from ....application.services.config_service import config_service
 from ..decorators import endpoint_handler
+from ..security.auth import auth_jwt_or_api_key
+from ..security.autenticated_user import AuthenticatedUser
+from ....domain.models.configuration import AppConfig
+
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +25,28 @@ class HealthStatus:
     UNHEALTHY = "unhealthy"
     DEGRADED = "degraded"
 
+@router.get("/whoami")
+@endpoint_handler("whoami")
+async def whoami(
+    user: AuthenticatedUser = Depends(auth_jwt_or_api_key)
+) -> Dict[str, Any]:
+    """Get current user information from token.
+
+    Args:
+        user (AuthenticatedUser): Authenticated user
+
+    Returns:
+        Dict[str, Any]: Current user information
+    """
+    return {
+        "authenticated": True,
+        "user_id": user.id,
+        "username": user.username,
+        "auth_type": user.type,
+        "groups": user.groups
+    }
+
+
 @router.get("/health")
 @endpoint_handler("health_check")
 async def health_check() -> Dict[str, Any]:
@@ -31,7 +57,7 @@ async def health_check() -> Dict[str, Any]:
     """
     return {
         "status": HealthStatus.HEALTHY,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "version": "1.0.0",
         "service": "fastapi-openai-rag"
     }
@@ -75,7 +101,7 @@ async def detailed_health_check(
 
     return {
         "status": overall_status,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "version": "1.0.0",
         "service": "fastapi-openai-rag",
         "response_time_ms": response_time,
@@ -110,7 +136,7 @@ async def readiness_check(
 
     return {
         "status": HealthStatus.HEALTHY,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "message": "Service is ready"
     }
 
@@ -124,7 +150,7 @@ async def liveness_check() -> Dict[str, Any]:
     """
     return {
         "status": HealthStatus.HEALTHY,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "message": "Service is alive"
     }
 
@@ -178,12 +204,11 @@ def check_configuration() -> Dict[str, Any]:
     """
     try:
         # Check if configuration is loaded
-        if hasattr(config_service, '_config') and config_service._config:
-            # Check for essential configuration
-            config = config_service._config
+        config: AppConfig = config_service.get_config()
+        if config:
 
             # Verify database configuration
-            if not config.get('database'):
+            if config.db_type.strip() == "":
                 return {
                     "name": "configuration",
                     "status": HealthStatus.UNHEALTHY,

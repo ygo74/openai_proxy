@@ -168,7 +168,7 @@ class GroupService:
             logger.debug(f"Found {len(groups)} groups")
             return groups
 
-    def get_group_by_name(self, name: str) -> Optional[Group]:
+    def get_group_by_name(self, name: str) -> Group:
         """Get group by name.
 
         Args:
@@ -180,7 +180,7 @@ class GroupService:
         logger.info(f"Fetching group by name: {name}")
         with self._uow as uow:
             repository: IGroupRepository = self._repository_factory(uow.session)
-            group = repository.get_by_name(name)
+            group: Group | None = repository.get_by_name(name)
             if not group:
                 raise EntityNotFoundError("Group", str(name))
 

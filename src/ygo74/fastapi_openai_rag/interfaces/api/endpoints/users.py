@@ -11,6 +11,8 @@ from ....infrastructure.db.unit_of_work import SQLUnitOfWork
 from ....application.services.user_service import UserService
 from ....domain.models.user import User, ApiKey
 from ..decorators import endpoint_handler
+from ..security.auth import require_admin_role
+from ..security.autenticated_user import AuthenticatedUser
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +97,8 @@ async def get_users(
     skip: int = 0,
     limit: int = 100,
     active_only: bool = True,
-    service: UserService = Depends(get_user_service)
+    service: UserService = Depends(get_user_service),
+    authenticated_user: AuthenticatedUser = Depends(require_admin_role)
 ) -> List[UserResponse]:
     """Get list of users."""
     if active_only:
@@ -112,7 +115,8 @@ async def get_users(
 @endpoint_handler("create_user")
 async def create_user(
     user: UserCreate,
-    service: UserService = Depends(get_user_service)
+    service: UserService = Depends(get_user_service),
+    authenticated_user: AuthenticatedUser = Depends(require_admin_role)
 ) -> UserResponse:
     """Create a new user."""
     _, created_user = service.add_or_update_user(
@@ -127,7 +131,8 @@ async def create_user(
 @router.get("/statistics")
 @endpoint_handler("get_user_statistics")
 async def get_user_statistics(
-    service: UserService = Depends(get_user_service)
+    service: UserService = Depends(get_user_service),
+    authenticated_user: AuthenticatedUser = Depends(require_admin_role)
 ) -> Dict[str, Any]:
     """Get user statistics."""
     all_users: List[User] = service.get_all_users()
@@ -150,7 +155,8 @@ async def get_user_statistics(
 @endpoint_handler("get_user")
 async def get_user(
     user_id: str,
-    service: UserService = Depends(get_user_service)
+    service: UserService = Depends(get_user_service),
+    authenticated_user: AuthenticatedUser = Depends(require_admin_role)
 ) -> UserResponse:
     """Get a specific user by ID."""
     user: User = service.get_user_by_id(user_id)
@@ -162,7 +168,8 @@ async def get_user(
 async def update_user(
     user_id: str,
     user: UserUpdate,
-    service: UserService = Depends(get_user_service)
+    service: UserService = Depends(get_user_service),
+    authenticated_user: AuthenticatedUser = Depends(require_admin_role)
 ) -> UserResponse:
     """Update a user."""
     _, updated_user = service.add_or_update_user(
@@ -178,7 +185,8 @@ async def update_user(
 @endpoint_handler("delete_user")
 async def delete_user(
     user_id: str,
-    service: UserService = Depends(get_user_service)
+    service: UserService = Depends(get_user_service),
+    authenticated_user: AuthenticatedUser = Depends(require_admin_role)
 ):
     """Delete a user."""
     service.delete_user(user_id)
@@ -188,7 +196,8 @@ async def delete_user(
 @endpoint_handler("deactivate_user")
 async def deactivate_user(
     user_id: str,
-    service: UserService = Depends(get_user_service)
+    service: UserService = Depends(get_user_service),
+    authenticated_user: AuthenticatedUser = Depends(require_admin_role)
 ) -> UserResponse:
     """Deactivate a user."""
     deactivated_user: User = service.deactivate_user(user_id)
@@ -199,7 +208,8 @@ async def deactivate_user(
 @endpoint_handler("get_user_by_username")
 async def get_user_by_username(
     username: str,
-    service: UserService = Depends(get_user_service)
+    service: UserService = Depends(get_user_service),
+    authenticated_user: AuthenticatedUser = Depends(require_admin_role)
 ) -> UserResponse:
     """Get a user by username."""
     user: User = service.get_user_by_username(username)
@@ -211,7 +221,8 @@ async def get_user_by_username(
 async def create_api_key(
     user_id: str,
     api_key_data: ApiKeyCreate,
-    service: UserService = Depends(get_user_service)
+    service: UserService = Depends(get_user_service),
+    authenticated_user: AuthenticatedUser = Depends(require_admin_role)
 ) -> ApiKeyCreateResponse:
     """Create a new API key for a user."""
     plain_key, api_key = service.create_api_key(

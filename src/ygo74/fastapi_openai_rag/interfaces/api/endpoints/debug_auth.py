@@ -1,7 +1,7 @@
 """Debug authentication endpoints for development."""
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone, timedelta
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from jose import jwt, JWTError, ExpiredSignatureError
 import logging
@@ -51,7 +51,7 @@ async def generate_debug_token(
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(minutes=token_request.expires_minutes)
 
-    payload = {
+    payload: Dict[str, Any] = {
         "sub": token_request.sub or f"debug-{token_request.username}",
         "username": token_request.username,
         "groups": token_request.groups,
@@ -107,27 +107,6 @@ async def verify_token(
         "message": "Token is valid"
     }
 
-@router.get("/whoami")
-@endpoint_handler("whoami")
-async def whoami(
-    user: AuthenticatedUser = Depends(auth_jwt_or_api_key)
-) -> Dict[str, Any]:
-    """Get current user information from token.
-
-    Args:
-        user (AuthenticatedUser): Authenticated user
-
-    Returns:
-        Dict[str, Any]: Current user information
-    """
-    return {
-        "authenticated": True,
-        "user_id": user.id,
-        "username": user.username,
-        "auth_type": user.type,
-        "groups": user.groups
-    }
-
 @router.get("/admin-test")
 @endpoint_handler("admin_test")
 async def admin_test(
@@ -171,7 +150,7 @@ async def decode_token(token: str) -> Dict[str, Any]:
     """
     try:
         # Build decode parameters
-        decode_params = {
+        decode_params: Dict[str, Any] = {
             "token": token,
             "key": settings.auth.jwt_secret,
             "algorithms": [settings.auth.jwt_algorithm]
