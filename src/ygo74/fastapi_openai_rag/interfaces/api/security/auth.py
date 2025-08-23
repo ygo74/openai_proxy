@@ -8,7 +8,7 @@ import logging
 import requests
 import os
 from cachetools import TTLCache
-from .autenticated_user import AuthenticatedUser
+from ....domain.models.autenticated_user import AuthenticatedUser
 from ....infrastructure.db.session import get_db
 from ....application.services.user_service import UserService
 from ....infrastructure.db.unit_of_work import SQLUnitOfWork

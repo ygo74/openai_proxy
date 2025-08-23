@@ -11,7 +11,7 @@ from ....infrastructure.db.session import get_db
 from ....application.services.config_service import config_service
 from ..decorators import endpoint_handler
 from ..security.auth import auth_jwt_or_api_key
-from ..security.autenticated_user import AuthenticatedUser
+from ....domain.models.autenticated_user import AuthenticatedUser
 from ....domain.models.configuration import AppConfig
 
 

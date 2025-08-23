@@ -8,7 +8,7 @@ import logging
 
 from ..decorators import endpoint_handler
 from ..security.auth import auth_jwt_or_api_key
-from ..security.autenticated_user import AuthenticatedUser
+from ....domain.models.autenticated_user import AuthenticatedUser
 from ....config.settings import settings
 
 logger = logging.getLogger(__name__)

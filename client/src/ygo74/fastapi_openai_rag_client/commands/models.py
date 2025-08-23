@@ -2,18 +2,13 @@
 import logging
 from typing import Optional, Dict, Any, List
 from knack.cli import CLI
-from knack.commands import CommandGroup, CLICommandsLoader
+from knack.commands import CommandGroup, CLICommandsLoader, CLICommand
 from knack.arguments import ArgumentsContext
 
-from ..core.client import ApiClient
+from ..core.utils import get_api_client
 
 
 logger = logging.getLogger(__name__)
-
-def init_api_client(cli: CLI | None):
-    global api_client
-    if cli is not None and 'api_client' in cli.data:
-        api_client = cli.data['api_client']
 
 
 class ModelCommandsLoader:
@@ -21,8 +16,6 @@ class ModelCommandsLoader:
 
     def load_command_table(self, command_loader: CLICommandsLoader):
         """Load model commands into command table."""
-
-        init_api_client(command_loader.cli_ctx)
 
         with CommandGroup(command_loader, 'model', operations_tmpl='ygo74.fastapi_openai_rag_client.commands.models#{}') as g:
             g.command('list', "list_models")
@@ -38,8 +31,6 @@ class ModelCommandsLoader:
 
     def load_arguments(self, command_loader: CLICommandsLoader, command):
         """Load command arguments."""
-
-        init_api_client(command_loader.cli_ctx)
 
         with ArgumentsContext(command_loader, 'model list') as arg_context:
             arg_context.argument('skip', type=int, help='Number of records to skip')
@@ -79,16 +70,19 @@ class ModelCommandsLoader:
             arg_context.argument('model_id', type=int, help='Model ID')
             arg_context.argument('group_id', type=int, help='Group ID')
 
-def list_models(skip=0, limit=100, status_filter=None):
+def list_models(cmd: CLICommand, skip: int = 0, limit: int = 100, status_filter=None) -> List[Dict[str, Any]]:
     """List all models."""
+    api_client = get_api_client(cmd)
     return api_client.list_models(skip=skip, limit=limit, status_filter=status_filter)
 
-def get_model(model_id):
+def get_model(cmd: CLICommand, model_id: int) -> Dict[str, Any]:
     """Get model by ID."""
+    api_client = get_api_client(cmd)
     return api_client.get_model(model_id=model_id)
 
-def create_model(url, name, technical_name, provider, capabilities=None):
+def create_model(cmd: CLICommand, url: str, name: str, technical_name: str, provider:str, capabilities: Optional[str]=None):
     """Create a new model."""
+    api_client = get_api_client(cmd)
     import json
     capabilities_dict = {}
     if capabilities:
@@ -105,8 +99,9 @@ def create_model(url, name, technical_name, provider, capabilities=None):
         capabilities=capabilities_dict
     )
 
-def update_model(model_id, url=None, name=None, technical_name=None, provider=None, capabilities=None):
+def update_model(cmd: CLICommand, model_id: int, url: Optional[str] = None, name: Optional[str] = None, technical_name: Optional[str] = None, provider: Optional[str] = None, capabilities: Optional[str] = None) -> Dict[str, Any]:
     """Update an existing model."""
+    api_client = get_api_client(cmd)
     import json
     capabilities_dict = None
     if capabilities:
@@ -124,18 +119,22 @@ def update_model(model_id, url=None, name=None, technical_name=None, provider=No
         capabilities=capabilities_dict
     )
 
-def delete_model(model_id):
+def delete_model(cmd: CLICommand, model_id: int) -> Dict[str, Any]:
     """Delete a model."""
+    api_client = get_api_client(cmd)
     return api_client.delete_model(model_id=model_id)
 
-def update_model_status(model_id, status):
+def update_model_status(cmd: CLICommand, model_id: int, status: str) -> Dict[str, Any]:
     """Update model status."""
+    api_client = get_api_client(cmd)
     return api_client.update_model_status(model_id=model_id, status=status)
 
-def add_model_to_group(model_id, group_id):
+def add_model_to_group(cmd: CLICommand, model_id: int, group_id: int) -> Dict[str, Any]:
     """Add model to group."""
+    api_client = get_api_client(cmd)
     return api_client.add_model_to_group(model_id=model_id, group_id=group_id)
 
-def remove_model_from_group(model_id, group_id):
+def remove_model_from_group(cmd: CLICommand, model_id: int, group_id: int) -> Dict[str, Any]:
     """Remove model from group."""
+    api_client = get_api_client(cmd)
     return api_client.remove_model_from_group(model_id=model_id, group_id=group_id)

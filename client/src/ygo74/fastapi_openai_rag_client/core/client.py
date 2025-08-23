@@ -203,7 +203,7 @@ class ApiClient:
         if status_filter:
             params["status_filter"] = status_filter
 
-        return self._make_request("GET", "/v1/models", params=params)
+        return self._make_request("GET", "/v1/admin/models", params=params)
 
     def get_model(self, model_id: int) -> Dict[str, Any]:
         """Get model by ID.
@@ -214,7 +214,7 @@ class ApiClient:
         Returns:
             Model object
         """
-        return self._make_request("GET", f"/v1/models/{model_id}")
+        return self._make_request("GET", f"/v1/admin/models/{model_id}")
 
     def create_model(
         self,
@@ -243,7 +243,7 @@ class ApiClient:
             "provider": provider,
             "capabilities": capabilities or {}
         }
-        return self._make_request("POST", "/v1/models", json_data=data)
+        return self._make_request("POST", "/v1/admin/models", json_data=data)
 
     def update_model(
         self,
@@ -279,7 +279,7 @@ class ApiClient:
         if capabilities is not None:
             data["capabilities"] = capabilities
 
-        return self._make_request("PUT", f"/v1/models/{model_id}", json_data=data)
+        return self._make_request("PUT", f"/v1/admin/models/{model_id}", json_data=data)
 
     def delete_model(self, model_id: int) -> Dict[str, Any]:
         """Delete model.
@@ -290,7 +290,7 @@ class ApiClient:
         Returns:
             Deletion status
         """
-        return self._make_request("DELETE", f"/v1/models/{model_id}")
+        return self._make_request("DELETE", f"/v1/admin/models/{model_id}")
 
     def update_model_status(self, model_id: int, status: str) -> Dict[str, Any]:
         """Update model status.
@@ -303,7 +303,7 @@ class ApiClient:
             Updated model object
         """
         data = {"status": status}
-        return self._make_request("PATCH", f"/v1/models/{model_id}/status", json_data=data)
+        return self._make_request("PATCH", f"/v1/admin/models/{model_id}/status", json_data=data)
 
     def add_model_to_group(self, model_id: int, group_id: int) -> Dict[str, Any]:
         """Add model to group.
@@ -315,7 +315,7 @@ class ApiClient:
         Returns:
             Association status
         """
-        return self._make_request("POST", f"/v1/models/{model_id}/groups/{group_id}")
+        return self._make_request("POST", f"/v1/admin/models/{model_id}/groups/{group_id}")
 
     def remove_model_from_group(self, model_id: int, group_id: int) -> Dict[str, Any]:
         """Remove model from group.
@@ -327,7 +327,7 @@ class ApiClient:
         Returns:
             Disassociation status
         """
-        return self._make_request("DELETE", f"/v1/models/{model_id}/groups/{group_id}")
+        return self._make_request("DELETE", f"/v1/admin/models/{model_id}/groups/{group_id}")
 
     # User API methods
     def list_users(
@@ -347,7 +347,7 @@ class ApiClient:
             List of user objects
         """
         params = {"skip": skip, "limit": limit, "active_only": active_only}
-        return self._make_request("GET", "/v1/users", params=params)
+        return self._make_request("GET", "/v1/admin/users", params=params)
 
     def get_user(self, user_id: str) -> Dict[str, Any]:
         """Get user by ID.
@@ -358,7 +358,7 @@ class ApiClient:
         Returns:
             User object
         """
-        return self._make_request("GET", f"/v1/users/{user_id}")
+        return self._make_request("GET", f"/v1/admin/users/{user_id}")
 
     def get_user_by_username(self, username: str) -> Dict[str, Any]:
         """Get user by username.
@@ -369,7 +369,7 @@ class ApiClient:
         Returns:
             User object
         """
-        return self._make_request("GET", f"/v1/users/username/{username}")
+        return self._make_request("GET", f"/v1/admin/users/username/{username}")
 
     def create_user(
         self,
@@ -392,7 +392,7 @@ class ApiClient:
             "email": email,
             "groups": groups
         }
-        return self._make_request("POST", "/v1/users", json_data=data)
+        return self._make_request("POST", "/v1/admin/users", json_data=data)
 
     def update_user(
         self,
@@ -420,7 +420,7 @@ class ApiClient:
         if groups is not None:
             data["groups"] = groups
 
-        return self._make_request("PUT", f"/v1/users/{user_id}", json_data=data)
+        return self._make_request("PUT", f"/v1/admin/users/{user_id}", json_data=data)
 
     def delete_user(self, user_id: str) -> Dict[str, Any]:
         """Delete user.
@@ -431,7 +431,7 @@ class ApiClient:
         Returns:
             Deletion status
         """
-        return self._make_request("DELETE", f"/v1/users/{user_id}")
+        return self._make_request("DELETE", f"/v1/admin/users/{user_id}")
 
     def deactivate_user(self, user_id: str) -> Dict[str, Any]:
         """Deactivate user.
@@ -442,7 +442,7 @@ class ApiClient:
         Returns:
             Updated user object
         """
-        return self._make_request("POST", f"/v1/users/{user_id}/deactivate")
+        return self._make_request("POST", f"/v1/admin/users/{user_id}/deactivate")
 
     def create_api_key(
         self,
@@ -466,4 +466,4 @@ class ApiClient:
         if expires_at is not None:
             data["expires_at"] = expires_at
 
-        return self._make_request("POST", f"/v1/users/{user_id}/api-keys", json_data=data)
+        return self._make_request("POST", f"/v1/admin/users/{user_id}/api-keys", json_data=data)

@@ -5,7 +5,7 @@ import logging
 from knack.commands import CLICommandsLoader, CommandGroup
 from knack.help_files import helps
 from knack.cli import CLI
-
+from typing import Optional, Dict, Any
 from .core.auth import AuthContext
 from .core.client import ApiClient
 from .commands.groups import GroupCommandsLoader
@@ -81,8 +81,9 @@ class RagProxyCommandsLoader(CLICommandsLoader):
         self._init_client_and_auth()  # Initialize client and auth
 
         # Register command groups
-        with CommandGroup(self, '', '') as g:
-            g.command('version', show_version)  # Use function reference instead of string
+        with CommandGroup(self, '', 'ygo74.fastapi_openai_rag_client.__main__#{}') as g:
+            g.command('version', 'show_version')  # Use function reference instead of string
+            g.command('whoami', 'whoami')
 
         # Only load module commands if we have initialized client and auth
         try:
@@ -109,10 +110,18 @@ class RagProxyCommandsLoader(CLICommandsLoader):
 
         super().load_arguments(command)
 
-def show_version(cmd):
+def show_version() -> Dict[str, str]:
     """Show the CLI version."""
     from . import __version__ as cli_version
     return {'version': cli_version}
+
+def whoami(cmd) -> Dict[str, Any]:
+    """Get the current authenticated user."""
+    api_client = cmd.cli_ctx.data.get('api_client')
+    if not api_client:
+        return {'error': 'Not authenticated'}
+
+    return api_client._make_request("GET", "/v1/whoami")
 
 def main():
     """Run the CLI."""

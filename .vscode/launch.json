@@ -21,8 +21,10 @@
             "env": {
                 "PYTHONPATH": "${workspaceFolder}/src",
                 "ENV": "development",
-                "LOG_LEVEL": "DEBUG"
+                "LOG_LEVEL": "DEBUG",
+                "DEVELOPMENT_MODE": "true"
             },
+            "python": "${workspaceFolder}/venv/fastapi/Scripts/python.exe",
             "justMyCode": false,
             "stopOnEntry": false
         },
@@ -46,6 +48,7 @@
                 "PYTHONPATH": "${workspaceFolder}/src",
                 "ENV": "production"
             },
+            "python": "${workspaceFolder}/venv/fastapi/Scripts/python.exe",
             "justMyCode": true,
             "stopOnEntry": false
         },
@@ -69,8 +72,10 @@
             "env": {
                 "PYTHONPATH": "${workspaceFolder}/src",
                 "ENV": "development",
-                "LOG_LEVEL": "DEBUG"
+                "LOG_LEVEL": "DEBUG",
+                "DEVELOPMENT_MODE": "true"
             },
+            "python": "${workspaceFolder}/venv/fastapi/Scripts/python.exe",
             "justMyCode": false,
             "stopOnEntry": false
         },
@@ -90,7 +95,7 @@
             "request": "launch",
             "module": "ygo74.fastapi_openai_rag_client",
             "args": [
-                "group",
+                "user",
                 "list"
             ],
             "console": "integratedTerminal",
@@ -99,6 +104,7 @@
                 "PYTHONPATH": "${workspaceFolder}/client/src",
                 "LOG_LEVEL": "DEBUG"
             },
+            "python": "${workspaceFolder}/venv/fastapi_client/Scripts/python.exe",
             "justMyCode": false,
             "stopOnEntry": false
         }

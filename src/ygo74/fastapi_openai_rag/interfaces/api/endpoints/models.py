@@ -15,7 +15,7 @@ from ....domain.models.configuration import AppConfig
 from ....domain.models.llm import LLMProvider
 from ..decorators import endpoint_handler
 from ..security.auth import auth_jwt_or_api_key, require_admin_role
-from ..security.autenticated_user import AuthenticatedUser
+from ....domain.models.autenticated_user import AuthenticatedUser
 
 logger = logging.getLogger(__name__)
 

@@ -2,6 +2,7 @@
 from typing import TypeVar, Generic, List, Optional, Type, Any
 from sqlalchemy.orm import Session
 from ....domain.repositories.base import BaseRepository
+import inspect
 
 DomainType = TypeVar('DomainType')
 ORMType = TypeVar('ORMType')
@@ -86,12 +87,42 @@ class SQLBaseRepository(Generic[DomainType, ORMType], BaseRepository[DomainType]
 
         # Update entity by creating a new ORM entity and merging it
         updated_orm = self._mapper.to_orm(entity)
+
+        # Manually handle collections to ensure empty lists are properly synchronized
+        self._sync_collections(orm_entity, updated_orm)
+
+        # Now merge the updated ORM entity
         self._session.merge(updated_orm)
         self._session.flush()
 
         # Refresh to get updated data
         refreshed_orm = self._session.get(self._orm_class, entity_id)
         return self._mapper.to_domain(refreshed_orm)
+
+    def _sync_collections(self, existing_orm: ORMType, updated_orm: ORMType) -> None:
+        """Synchronize collections between existing and updated ORM entities.
+
+        This ensures empty collections in the updated entity will clear
+        corresponding collections in the database.
+
+        Args:
+            existing_orm: Existing ORM entity from database
+            updated_orm: Updated ORM entity with new values
+        """
+        # Get all relationship attributes from the ORM class
+        for attr_name, attr_value in inspect.getmembers(self._orm_class):
+            # Skip private attributes and non-relationship properties
+            if attr_name.startswith('_') or not hasattr(existing_orm, attr_name):
+                continue
+
+            # Check if this is a relationship attribute (has a collection)
+            existing_value = getattr(existing_orm, attr_name)
+            updated_value = getattr(updated_orm, attr_name)
+
+            # If it's a list/collection attribute and the new value is empty
+            if isinstance(existing_value, list) and updated_value == []:
+                # Clear the existing collection explicitly
+                existing_value.clear()
 
     def delete(self, id: int) -> None:
         """Remove entity from session without committing.

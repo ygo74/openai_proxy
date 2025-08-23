@@ -12,7 +12,7 @@ from ....application.services.user_service import UserService
 from ....domain.models.user import User, ApiKey
 from ..decorators import endpoint_handler
 from ..security.auth import require_admin_role
-from ..security.autenticated_user import AuthenticatedUser
+from ....domain.models.autenticated_user import AuthenticatedUser
 
 logger = logging.getLogger(__name__)
 

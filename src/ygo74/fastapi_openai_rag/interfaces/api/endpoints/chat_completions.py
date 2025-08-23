@@ -12,7 +12,7 @@ from ....application.services.chat_completion_service import ChatCompletionServi
 from ....domain.models.chat_completion import ChatCompletionRequest, ChatCompletionResponse
 from ....domain.models.completion import CompletionRequest, CompletionResponse
 from ..decorators import endpoint_handler
-from ..security.autenticated_user import AuthenticatedUser
+from ....domain.models.autenticated_user import AuthenticatedUser
 from ..security.auth import auth_jwt_or_api_key
 from .models import map_model_list_to_response, ModelResponse
 

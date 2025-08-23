@@ -4,7 +4,7 @@ from typing import Callable, Any, List, Optional
 import logging
 from fastapi import HTTPException, Request, status
 
-from .security.autenticated_user import AuthenticatedUser
+from ...domain.models.autenticated_user import AuthenticatedUser
 
 logger = logging.getLogger(__name__)
 

@@ -205,8 +205,8 @@ if __name__ == "__main__":
         # For chat models
         chat_model = create_proxy_chat_model(
             proxy_url="http://localhost:8000",
-            # api_key="sk-16AwYoZqNoVKjfMz-Mr8TeuaXk3O6JeLwPdQSAQiF0s",
-            api_key="sk-Uhw0UnymWqxlBcI13rv3644-ZwvXXmq_WjrTFvni62A",
+            api_key="sk-16AwYoZqNoVKjfMz-Mr8TeuaXk3O6JeLwPdQSAQiF0s",
+            # api_key="sk-Uhw0UnymWqxlBcI13rv3644-ZwvXXmq_WjrTFvni62A",
             model="gpt-4o"
         )
         print("✅ Chat model created successfully")
@@ -214,8 +214,8 @@ if __name__ == "__main__":
         # For completion models
         llm = create_proxy_llm(
             proxy_url="http://localhost:8000",
-            # api_key="sk-16AwYoZqNoVKjfMz-Mr8TeuaXk3O6JeLwPdQSAQiF0s",
-            api_key="sk-Uhw0UnymWqxlBcI13rv3644-ZwvXXmq_WjrTFvni62A",
+            api_key="sk-16AwYoZqNoVKjfMz-Mr8TeuaXk3O6JeLwPdQSAQiF0s",
+            # api_key="sk-Uhw0UnymWqxlBcI13rv3644-ZwvXXmq_WjrTFvni62A",
             model="gpt-4o"
         )
         print("✅ LLM created successfully")
