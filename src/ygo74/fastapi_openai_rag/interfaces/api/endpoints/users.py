@@ -91,7 +91,7 @@ def map_api_key_to_response(api_key: ApiKey) -> ApiKeyResponse:
         last_used_at=api_key.last_used_at
     )
 
-@router.get("/", response_model=List[UserResponse])
+@router.get("", response_model=List[UserResponse])
 @endpoint_handler("get_users")
 async def get_users(
     skip: int = 0,
@@ -111,7 +111,7 @@ async def get_users(
 
     return [map_user_to_response(u) for u in paginated_users]
 
-@router.post("/", response_model=UserResponse, status_code=201)
+@router.post("", response_model=UserResponse, status_code=201)
 @endpoint_handler("create_user")
 async def create_user(
     user: UserCreate,

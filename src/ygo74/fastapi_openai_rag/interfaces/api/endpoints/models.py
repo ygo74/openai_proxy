@@ -88,7 +88,7 @@ def get_chat_completion_service(db: Session = Depends(get_db)) -> ChatCompletion
     uow = SQLUnitOfWork(session_factory)
     return ChatCompletionService(uow)
 
-@router.get("/", response_model=List[ModelResponse])
+@router.get("", response_model=List[ModelResponse])
 @endpoint_handler("get_models")
 async def get_models(
     status_filter: Optional[str] = None,
@@ -200,7 +200,7 @@ async def search_models_by_name(
 
     return map_model_list_to_response(filtered_models)
 
-@router.post("/", response_model=ModelResponse, status_code=http_status.HTTP_201_CREATED)
+@router.post("", response_model=ModelResponse, status_code=http_status.HTTP_201_CREATED)
 @endpoint_handler("create_model")
 async def create_model(
     model: ModelCreate,

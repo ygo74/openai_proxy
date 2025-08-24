@@ -68,7 +68,8 @@ app = FastAPI(
     title="LLM Proxy API",
     description="A FastAPI proxy for various LLM providers with authentication and rate limiting",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    redirect_slashes=True
 )
 
 # Add middlewares
