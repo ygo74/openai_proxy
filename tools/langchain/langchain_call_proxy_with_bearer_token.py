@@ -1,13 +1,16 @@
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
 import logging
 import argparse
 from typing import Dict, Any, Optional
 import requests
 import json
+from pydantic import BaseModel
+
 
 # Setup logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 system_prompt= """
@@ -60,31 +63,94 @@ def get_access_token(username: str, password: str) -> Optional[Dict[str, Any]]:
         logger.error(f"❌ Error getting token: {e}")
         raise
 
+@tool
+def get_weather(location: str) -> str:
+    """Get weather at a location."""
+    print("=" * 60)
+    print(f"Getting weather for location: {location}")
+    return f"It's sunny at {location}."
+
+
+class OutputSchema(BaseModel):
+    """Schema for response."""
+
+    answer: str
+    justification: str
+
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", help="Model's name as defined in Azure Deployment model", default="gpt-4o")
     parser.add_argument("--question", help="Question to ask the model", required=False, default="Who are you and what is your cutoff date?")
+    parser.add_argument("--stream", help="Use streaming mode instead of normal invoke", action="store_true")
     args = parser.parse_args()
 
-    print(f"Script will use the model : {args.model}")
+    print(f"Script will use the model: {args.model}")
     print(f"Script will answer to the question: {args.question}")
+    print(f"Streaming mode: {'enabled' if args.stream else 'disabled'}")
 
 
     # Get access token
     token_data = get_access_token("admin_user", "admin123")
+    if token_data is None:
+        print("Failed to get access token. Exiting.")
+        return
+
     access_token = token_data["access_token"]
 
     # Initialize model
     print("Initialize llm")
+
+    # Pour plus de transparence, activons le débogage HTTP de Langchain
+    import os
+    import httpx
+    import json
+
+    # Activer le débogage Langchain - Update to use V2 tracing
+    os.environ["LANGCHAIN_VERBOSE"] = "true"
+    # Remove deprecated handler
+    # os.environ["LANGCHAIN_HANDLER"] = "langchain"
+    # Set the V2 tracing environment variable
+    os.environ["LANGCHAIN_TRACING_V2"] = "true"
+
+    # Créer un client HTTP standard avec le token d'authentification
+    debug_client = httpx.Client(
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=httpx.Timeout(timeout=None)
+    )
+
+    # Fonction de rappel pour enregistrer les requêtes et réponses
+    def log_request(request):
+        print(f"\n[DEBUG] Sending request to: {request.method} {request.url}")
+        print(f"[DEBUG] Headers: {request.headers}")
+        if request.content:
+            try:
+                body = request.content.decode('utf-8')
+                body_json = json.loads(body)
+                print(f"[DEBUG] Request body: {json.dumps(body_json, indent=2)[:1000]}")
+            except:
+                print(f"[DEBUG] Request body: (could not decode)")
+
+    # Ajouter des hooks d'événements au client
+    debug_client.event_hooks["request"] = [log_request]
+
     llm = ChatOpenAI(
         base_url="http://localhost:8000/v1",
-        api_key=access_token,
+        api_key=access_token,  # Non utilisé car on a déjà le bearer token dans les en-têtes
         model=args.model,
         temperature=0,
-        max_tokens=None,
-        timeout=None,
-        max_retries=2
+        max_retries=2,
+        streaming=True if args.stream else False,
+        http_client=debug_client,  # Utiliser notre client HTTP personnalisé
+        verbose=True  # Activer la verbosité pour plus d'information
+    )
+
+    print(f"Configured LLM with streaming={args.stream}")
+
+    structured_llm = llm.bind_tools(
+        [get_weather],
+        # response_format=OutputSchema,
+        strict=True,
     )
 
 
@@ -98,15 +164,22 @@ def main():
         ]
     )
 
-    chain = prompt | llm
+    chain = prompt | structured_llm
 
     print("Invoke llm")
-    result = chain.invoke(
-        {
-            "input": args.question,
-        }
-    )
-    print(result)
+    messages = {
+        "input": args.question,
+    }
+
+    if args.stream:
+        print("Using streaming mode")
+        for chunk in chain.stream(messages):
+            print(chunk.text(), end="")
+        print("")  # Add a newline at the end
+    else:
+        print("Using normal invoke mode")
+        result = chain.invoke(messages)
+        print(result)
 
 if __name__ == "__main__":
     main()

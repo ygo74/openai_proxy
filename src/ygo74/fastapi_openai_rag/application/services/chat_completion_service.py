@@ -134,14 +134,13 @@ class ChatCompletionService:
             user_groups (Optional[List[str]]): User's group memberships for authorization check
 
         Yields:
-            ChatCompletionStreamResponse: Streaming chunks of the response
+            ChatCompletionResponse: Streaming chunks of the response
 
         Raises:
             EntityNotFoundError: If model not found
             ValidationError: If model not approved or validation fails
             PermissionError: If user is not authorized to access the model
             RuntimeError: If provider client not configured
-            NotImplementedError: If streaming not supported for this model
         """
         logger.info(f"Creating streaming chat completion with model {request.model}")
 
@@ -154,8 +153,27 @@ class ChatCompletionService:
         # Update request with provider info
         request_with_provider = self._prepare_chat_request(request, model)
 
-        # For now, streaming is not implemented
-        raise NotImplementedError("Streaming chat completions not yet implemented")
+        # Ensure we're requesting a stream
+        request_with_provider.stream = True
+
+        # Start timing
+        start_time = time.time()
+
+        try:
+            # Ne pas utiliser await ici car chat_completion_stream retourne déjà un générateur asynchrone
+            # et non une coroutine à attendre
+            async for chunk in client.chat_completion_stream(request_with_provider):
+                # Add timing information
+                chunk.latency_ms = (time.time() - start_time) * 1000
+                chunk.timestamp = datetime.now(timezone.utc)
+
+                yield chunk
+
+            logger.info(f"Streaming chat completion finished in {(time.time() - start_time) * 1000:.2f}ms")
+
+        except Exception as e:
+            logger.error(f"Error in streaming chat completion: {str(e)}")
+            raise
 
     async def _get_and_validate_model(self, model_name: str, user_groups: Optional[List[str]] = None) -> LlmModel:
         """Get and validate model from database, checking user authorization.

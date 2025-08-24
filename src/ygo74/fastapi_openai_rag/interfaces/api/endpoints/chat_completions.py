@@ -1,11 +1,12 @@
 """OpenAI-compatible chat completions endpoints."""
-from typing import List
+from typing import List, Dict, Any, Union
 from fastapi import APIRouter, Depends
-from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 import logging
 import json
+from datetime import datetime
 
+from ..utils.override_stream_response import OverrideStreamResponse
 from ....infrastructure.db.session import get_db
 from ....infrastructure.db.unit_of_work import SQLUnitOfWork
 from ....application.services.chat_completion_service import ChatCompletionService
@@ -15,10 +16,24 @@ from ..decorators import endpoint_handler
 from ....domain.models.autenticated_user import AuthenticatedUser
 from ..security.auth import auth_jwt_or_api_key
 from .models import map_model_list_to_response, ModelResponse
+from ..utils.override_stream_response import OverrideStreamResponse
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 router = APIRouter()
+
+# src/ygo74/fastapi_openai_rag/interfaces/api/endpoints/chat_completions.py
+
+class DateTimeEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        elif hasattr(obj, 'model_dump'):  # For Pydantic models (like ChatCompletionStreamResponse)
+            return obj.model_dump()
+        elif hasattr(obj, 'dict'):  # Fallback for older Pydantic versions
+            return obj.dict()
+        return super().default(obj)
 
 def get_chat_completion_service(db: Session = Depends(get_db)) -> ChatCompletionService:
     """Create ChatCompletionService instance with Unit of Work.
@@ -65,7 +80,7 @@ async def create_chat_completion(
     request: ChatCompletionRequest,
     service: ChatCompletionService = Depends(get_chat_completion_service),
     user: AuthenticatedUser = Depends(auth_jwt_or_api_key)
-) -> ChatCompletionResponse:
+) -> Any:  # Return type is either ChatCompletionResponse or OverrideStreamResponse
     """Create a chat completion.
 
     Compatible with OpenAI's /v1/chat/completions endpoint.
@@ -85,17 +100,47 @@ async def create_chat_completion(
     if request.stream:
         # Return streaming response
         async def generate_stream():
-            async for chunk in service.create_chat_completion_stream(request, user_groups=user_groups):
-                yield f"data: {json.dumps(chunk.model_dump())}\n\n"
-            yield "data: [DONE]\n\n"
+            logger.debug("Starting SSE streaming generation")
+            try:
+                async for chunk in service.create_chat_completion_stream(request, user_groups=user_groups):
+                    # Serialize the chunk with proper content type and format
+                    if hasattr(chunk, 'model_dump_json'):
+                        # For newer Pydantic (v2+)
+                        json_str = chunk.model_dump_json()
+                    elif hasattr(chunk, 'json'):
+                        # For older Pydantic versions
+                        json_str = chunk.json()
+                    else:
+                        # Fallback to manual serialization
+                        json_str = json.dumps(chunk, cls=DateTimeEncoder)
 
-        return StreamingResponse(
+                    # Log what we're sending
+                    logger.debug(f"Streaming chunk: data: {json_str[:50]}...")
+
+                    # Proper SSE format requires "data: " prefix and double newline
+                    # Ensure exact formatting as expected by OpenAI clients
+                    formatted_data = f"data: {json_str}\r\n\r\n"
+                    yield formatted_data
+
+                logger.debug("Sending [DONE] marker for SSE")
+                # Signal the end of the stream with [DONE]
+                yield "data: [DONE]\r\n\r\n"
+
+            except Exception as e:
+                logger.error(f"Error in stream generation: {str(e)}", exc_info=True)
+                # If an error occurs, send it as part of the stream
+                error_json = json.dumps({"error": {"message": str(e), "type": "stream_error"}})
+                yield f"data: {error_json}\r\n\r\n"
+                yield "data: [DONE]\r\n\r\n"
+
+        return OverrideStreamResponse(
             generate_stream(),
-            media_type="text/plain",
+            media_type="text/event-stream",  # Correct media type for SSE
             headers={
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
-                "Content-Type": "text/plain; charset=utf-8"
+                "X-Accel-Buffering": "no",  # Important for nginx
+                "Content-Type": "text/event-stream; charset=utf-8"
             }
         )
     else:

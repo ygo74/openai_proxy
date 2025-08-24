@@ -1,6 +1,6 @@
 """Protocols for LLM client implementations."""
-from typing import Protocol, List, Dict, Any
-from ..models.chat_completion import ChatCompletionRequest, ChatCompletionResponse
+from typing import AsyncGenerator, Protocol, List, Dict, Any
+from ..models.chat_completion import ChatCompletionRequest, ChatCompletionResponse, ChatCompletionStreamResponse
 from ..models.completion import CompletionRequest, CompletionResponse
 
 class LLMClientProtocol(Protocol):
@@ -62,3 +62,14 @@ class LLMClientProtocol(Protocol):
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit with automatic cleanup."""
         await self.close()
+
+    async def chat_completion_stream(self, request: ChatCompletionRequest) -> AsyncGenerator[ChatCompletionStreamResponse, None]:
+        """Stream chat completion via Azure OpenAI API with retry for connection establishment.
+
+        Args:
+            request (ChatCompletionRequest): Chat completion request
+
+        Yields:
+            ChatCompletionStreamResponse: Streaming response chunks
+        """
+        ...

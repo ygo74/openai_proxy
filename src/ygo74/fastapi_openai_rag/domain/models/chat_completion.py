@@ -156,7 +156,7 @@ class ChatCompletionStreamChoice(BaseModel):
     finish_reason: Optional[str] = None
 
 class ChatCompletionStreamResponse(BaseModel):
-    """Streaming chat completion response model.
+    """OpenAI-compatible streaming chat completion response.
 
     Attributes:
         id (str): Unique identifier for the completion
@@ -164,11 +164,19 @@ class ChatCompletionStreamResponse(BaseModel):
         created (int): Unix timestamp of creation
         model (str): Model used for completion
         system_fingerprint (Optional[str]): System fingerprint
-        choices (List[ChatCompletionStreamChoice]): List of streaming choices
+        choices (List[ChatCompletionChoice]): List of completion choices
+        provider (Optional[LLMProvider]): Provider that generated the response
+        raw_response (Optional[Dict[str, Any]]): Original provider response
+        latency_ms (Optional[float]): Request latency in milliseconds
+        timestamp (Optional[datetime]): Response timestamp
     """
     id: str
     object: str = "chat.completion.chunk"
     created: int
     model: str
     system_fingerprint: Optional[str] = None
-    choices: List[ChatCompletionStreamChoice]
+    choices: List[ChatCompletionChoice] = []
+    provider: Optional[LLMProvider] = None
+    raw_response: Optional[Dict[str, Any]] = None
+    latency_ms: Optional[float] = None
+    timestamp: Optional[datetime] = None
