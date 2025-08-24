@@ -69,6 +69,8 @@ class ModelMapper:
         Returns:
             ModelORM: ORM entity
         """
+        from .group_mapper import GroupMapper
+
         base_data = {
             "id": domain_model.id,
             "url": domain_model.url,
@@ -81,7 +83,17 @@ class ModelMapper:
             "capabilities": domain_model.capabilities
         }
 
-        return ModelORM(**base_data)
+        # Create ORM model instance
+        orm_model = ModelORM(**base_data)
+
+        # Map related groups if they exist
+        if domain_model.groups:
+            # We need to use existing group ORM objects or create new ones
+            # This will likely require fetching existing groups by ID
+            # For now, we just map them directly
+            orm_model.groups = [GroupMapper.to_orm(group) for group in domain_model.groups]
+
+        return orm_model
 
     @staticmethod
     def to_domain_list(orm_models: List[ModelORM]) -> List[LlmModel]:

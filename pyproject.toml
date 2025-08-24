@@ -16,16 +16,26 @@ authors = ["ygo74 <yannickgobert@yahoo.fr>"]
 packages = [{ include = "ygo74", from = "src" }]
 
 [tool.poetry.dependencies]
-python = "^3.9"
+python = "^3.11"
 fastapi = "^0.115.2"
 uvicorn = "^0.34.2"
 sqlalchemy = "^2.0.41"
 alembic = "^1.16.1"
-pydantic = "^2.7.1"
+pydantic = {extras = ["email"], version = "^2.0.0"}
 httpx = "^0.27.0"
 python-dotenv = "^1.0.1"
 redis = "^5.0.4"
 tenacity = "^8.2.0"
+python-jose = {version = "^3.5.0", extras = ["cryptography"]}
+opentelemetry-api = "^1.36.0"
+opentelemetry-sdk = "^1.36.0"
+opentelemetry-instrumentation-fastapi = "^0.57b0"
+opentelemetry-instrumentation-requests = "^0.57b0"
+opentelemetry-instrumentation-sqlalchemy = "^0.57b0"
+opentelemetry-instrumentation-logging = "^0.57b0"
+opentelemetry-exporter-otlp-proto-grpc = "^1.36.0"
+opentelemetry-exporter-otlp-proto-http = "^1.36.0"
+cachetools = "^5.3.3"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.5"
@@ -36,6 +46,7 @@ black = "^24.4.2"
 isort = "^5.13.2"
 flake8 = "^7.0.0"
 coverage = "^7.5.3"
+debugpy = "*"
 
 [tool.mypy]
 python_version = "3.9"

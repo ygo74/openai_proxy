@@ -4,6 +4,7 @@ from sqlalchemy.orm import sessionmaker, Session
 from contextlib import contextmanager
 from typing import Generator, Optional
 import logging
+from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ class SessionManager:
             raise ValueError("Database URL is required")
 
         self._engine = create_engine(database_url, echo=echo)
+        SQLAlchemyInstrumentor().instrument(engine=self._engine)
         self._session_factory = sessionmaker(
             autocommit=False,
             autoflush=False,

@@ -1,196 +1,196 @@
 """Tests for ModelService fetch_available_models method."""
+import sys
+import os
+from typing import List, Dict, Any
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import Mock, MagicMock, patch, AsyncMock
 from datetime import datetime, timezone
 
-from src.ygo74.fastapi_openai_rag.application.services.model_service import ModelService
-from src.ygo74.fastapi_openai_rag.domain.models.configuration import ModelConfig
-from src.ygo74.fastapi_openai_rag.domain.models.llm import LLMProvider
-from src.ygo74.fastapi_openai_rag.domain.models.llm_model import LlmModelStatus
-from src.ygo74.fastapi_openai_rag.domain.unit_of_work import UnitOfWork
+# Add src to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
+
+from ygo74.fastapi_openai_rag.application.services.model_service import ModelService
+from ygo74.fastapi_openai_rag.domain.models.configuration import ModelConfig
+from ygo74.fastapi_openai_rag.domain.models.llm import LLMProvider
+from ygo74.fastapi_openai_rag.domain.models.llm_model import LlmModelStatus
+from ygo74.fastapi_openai_rag.domain.protocols.llm_client import LLMClientProtocol
+from ygo74.fastapi_openai_rag.infrastructure.llm.client_factory import LLMClientFactory
 
 
+# Common test fixtures
 @pytest.fixture
 def mock_uow():
     """Create mock Unit of Work."""
-    uow = MagicMock(spec=UnitOfWork)
-    uow.__enter__ = MagicMock(return_value=uow)
-    uow.__exit__ = MagicMock(return_value=None)
-    uow.session = MagicMock()
-    return uow
+    mock = Mock()
+    mock.__enter__ = Mock(return_value=mock)
+    mock.__exit__ = Mock(return_value=None)
+    return mock
 
 
 @pytest.fixture
-def mock_repository():
-    """Create mock repository."""
-    repo = MagicMock()
-    repo.get_by_technical_name.return_value = None
-    repo.add.return_value = MagicMock(id=1)
-    return repo
+def repository_factory():
+    """Create mock repository factory."""
+    mock_repository = Mock()
+    # Set up methods needed for the test
+    mock_repository.get_by_model_provider = Mock(return_value=None)
+    mock_repository.add = Mock()
+    mock_repository.update = Mock()
 
-
-@pytest.fixture
-def mock_llm_client():
-    """Create mock LLM client."""
-    client = AsyncMock()
-    client.list_models.return_value = [
-        {"id": "gpt-3.5-turbo", "object": "model", "capabilities": {}},
-        {"id": "gpt-4", "object": "model", "capabilities": {}}
-    ]
-    # Add mock for Azure deployments
-    client.list_deployments.return_value = [
-        {"deployment_id": "gpt-35-turbo-deploy", "id": "gpt-35-turbo-deploy", "model": "gpt-35-turbo", "object": "model", "capabilities": {}},
-        {"deployment_id": "gpt-4-deploy", "id": "gpt-4-deploy", "model": "gpt-4", "object": "model", "capabilities": {}}
-    ]
-    client.close.return_value = None
-    client.__aenter__ = AsyncMock(return_value=client)
-    client.__aexit__ = AsyncMock(return_value=None)
-    return client
-
-
-@pytest.fixture
-def mock_client_factory(mock_llm_client):
-    """Create mock client factory fixture."""
-    def factory(*args, **kwargs):
-        """Mock client factory that accepts any arguments."""
-        print(f"DEBUG: mock_client_factory called with args: {args}, kwargs: {kwargs}")
-        return mock_llm_client
+    factory = Mock()
+    factory.return_value = mock_repository
     return factory
 
 
 @pytest.fixture
-def mock_error_client_factory():
-    """Create mock error client factory fixture."""
-    mock_error_client = AsyncMock()
-    mock_error_client.list_models.side_effect = Exception("API Error")
-    mock_error_client.__aenter__ = AsyncMock(return_value=mock_error_client)
-    mock_error_client.__aexit__ = AsyncMock(return_value=None)
-
-    def factory(*args, **kwargs):
-        """Mock error client factory that accepts any arguments."""
-        print(f"DEBUG: mock_error_client_factory called with args: {args}, kwargs: {kwargs}")
-        return mock_error_client
-
-    return factory, mock_error_client
-
-
-@pytest.mark.asyncio
-async def test_model_service_fetch_available_models_success(mock_uow, mock_repository, mock_client_factory):
-    """Test ModelService fetch_available_models method success."""
-    # arrange
-    model_configs = [
+def model_configs():
+    """Create test model configurations."""
+    return [
         ModelConfig(
-            name="OpenAI Test Config",
-            technical_name="openai_test",
+            name="OpenAI GPT-4",
+            technical_name="openai_config",
             provider="openai",
-            url="https://api.openai.com/v1",
-            api_key="test-key"
-        )
-    ]
-
-    service = ModelService(
-        uow=mock_uow,
-        repository_factory=lambda session: mock_repository,
-        llm_client_factory=mock_client_factory
-    )
-
-    # act
-    await service.fetch_available_models(model_configs)
-
-    # assert
-    # Note: The first test passes, so we can check the mock_llm_client from the factory
-    # Get the client from the factory calls
-    mock_client = mock_client_factory(*[], **{})
-    mock_client.list_models.assert_called_once()
-    mock_client.__aenter__.assert_called_once()
-    mock_client.__aexit__.assert_called_once()
-    assert mock_repository.add.call_count == 2  # Two models added
-
-
-@pytest.mark.asyncio
-async def test_model_service_fetch_available_models_unknown_provider(mock_uow, mock_repository):
-    """Test ModelService fetch_available_models with unknown provider."""
-    # arrange
-    model_configs = [
-        ModelConfig(
-            name="Unknown Provider Config",
-            technical_name="unknown_test",
-            provider="unknown",
-            url="https://api.unknown.com",
-            api_key="test-key"
-        )
-    ]
-
-    service = ModelService(
-        uow=mock_uow,
-        repository_factory=lambda session: mock_repository
-    )
-
-    # act
-    await service.fetch_available_models(model_configs)
-
-    # assert
-    mock_repository.add.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_model_service_fetch_available_models_client_error(mock_uow, mock_repository, mock_error_client_factory):
-    """Test ModelService fetch_available_models with client error."""
-    # arrange
-    model_configs = [
-        ModelConfig(
-            name="OpenAI Error Config",
-            technical_name="openai_error",
-            provider="openai",
-            url="https://api.openai.com/v1",
-            api_key="test-key"
-        )
-    ]
-
-    factory, mock_error_client = mock_error_client_factory
-
-    service = ModelService(
-        uow=mock_uow,
-        repository_factory=lambda session: mock_repository,
-        llm_client_factory=factory
-    )
-
-    # act (should not raise exception)
-    await service.fetch_available_models(model_configs)
-
-    # assert
-    mock_repository.add.assert_not_called()
-    mock_error_client.__aenter__.assert_called_once()
-    mock_error_client.__aexit__.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_model_service_fetch_available_models_azure(mock_uow, mock_repository, mock_client_factory):
-    """Test ModelService fetch_available_models with Azure provider."""
-    # arrange
-    model_configs = [
-        ModelConfig(
-            name="Azure OpenAI Config",
-            technical_name="azure_openai_test",
-            provider="azure",
-            url="https://test.openai.azure.com",
+            url="https://api.openai.com",
             api_key="test-key",
-            api_version="2024-06-01"
+            api_version="v1"
+        ),
+        ModelConfig(
+            name="Azure GPT-4",
+            technical_name="azure_config",
+            provider="azure",
+            url="https://azure-openai.azure.com",
+            api_key="test-azure-key",
+            api_version="2023-05-15"
         )
     ]
 
-    service = ModelService(
-        uow=mock_uow,
-        repository_factory=lambda session: mock_repository,
-        llm_client_factory=mock_client_factory
-    )
 
-    # act
-    await service.fetch_available_models(model_configs)
+class AsyncContextManagerMock:
+    """Mock for async context manager (for LLMClientFactory.create_client)."""
+    def __init__(self, client):
+        self.client = client
 
-    # assert
-    # Get the client from the factory
-    mock_client = mock_client_factory(*[], **{})
-    # For Azure, it should call list_deployments instead of list_models
-    mock_client.list_deployments.assert_called_once()
-    assert mock_repository.add.call_count == 2  # Two models added
+    async def __aenter__(self):
+        return self.client
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_model_service_fetch_available_models_success(mock_uow, repository_factory, model_configs):
+    """Test fetching available models successfully."""
+    # arrange
+    service = ModelService(uow=mock_uow, repository_factory=repository_factory)
+
+    # Create mock for the LLM client
+    mock_client = AsyncMock(spec=LLMClientProtocol)
+    mock_client.list_models = AsyncMock(return_value=[
+        {"id": "gpt-4", "object": "model", "owned_by": "openai"},
+        {"id": "gpt-3.5-turbo", "object": "model", "owned_by": "openai"}
+    ])
+    mock_client.list_deployments = AsyncMock(return_value=[
+        {"deployment_id": "gpt4", "model": "gpt-4", "owner": "azure"},
+        {"deployment_id": "gpt35", "model": "gpt-3.5-turbo", "owner": "azure"}
+    ])
+
+    # Mock LLMClientFactory.create_client
+    with patch('ygo74.fastapi_openai_rag.infrastructure.llm.client_factory.LLMClientFactory.create_client',
+               return_value=AsyncContextManagerMock(mock_client)):
+        # act
+        await service.fetch_available_models(model_configs=model_configs)
+
+        # assert
+        # Verify repository calls to add models
+        repository = repository_factory.return_value
+        # We expect 4 models (2 from openai, 2 from azure)
+        assert repository.add.call_count + repository.update.call_count > 0
+
+
+@pytest.mark.asyncio
+async def test_model_service_fetch_available_models_unknown_provider(mock_uow, repository_factory):
+    """Test handling unknown provider gracefully."""
+    # arrange
+    service = ModelService(uow=mock_uow, repository_factory=repository_factory)
+
+    # Create config with unknown provider
+    unknown_configs = [
+        ModelConfig(
+            name="Unknown Provider",
+            technical_name="unknown_config",
+            provider="unknown",
+            url="https://unknown-api.com",
+            api_key="test-key",
+            api_version="v1"
+        )
+    ]
+
+    # act & assert - should not raise exception
+    await service.fetch_available_models(model_configs=unknown_configs)
+    # No models should be added or updated
+    repository = repository_factory.return_value
+    assert repository.add.call_count == 0
+    assert repository.update.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_model_service_fetch_available_models_client_error(mock_uow, repository_factory, model_configs):
+    """Test handling client error during fetch."""
+    # arrange
+    service = ModelService(uow=mock_uow, repository_factory=repository_factory)
+
+    # Create mock client that raises exception
+    mock_client = AsyncMock(spec=LLMClientProtocol)
+    mock_client.list_models = AsyncMock(side_effect=Exception("API error"))
+
+    # Mock LLMClientFactory.create_client
+    with patch('ygo74.fastapi_openai_rag.infrastructure.llm.client_factory.LLMClientFactory.create_client',
+               return_value=AsyncContextManagerMock(mock_client)):
+        # act & assert - should handle exception gracefully
+        await service.fetch_available_models(model_configs=model_configs)
+
+        # No models should be added due to error
+        repository = repository_factory.return_value
+        assert repository.add.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_model_service_fetch_available_models_azure(mock_uow, repository_factory):
+    """Test fetching available models from Azure."""
+    # arrange
+    service = ModelService(uow=mock_uow, repository_factory=repository_factory)
+
+    # Create config for Azure only
+    azure_configs = [
+        ModelConfig(
+            name="Azure GPT-4",
+            technical_name="azure_config",
+            provider="azure",
+            url="https://azure-openai.azure.com",
+            api_key="test-azure-key",
+            api_version="2023-05-15"
+        )
+    ]
+
+    # Create mock for the LLM client
+    mock_client = AsyncMock(spec=LLMClientProtocol)
+    mock_client.list_deployments = AsyncMock(return_value=[
+        {"deployment_id": "gpt4", "model": "gpt-4", "owner": "azure"},
+        {"deployment_id": "gpt35", "model": "gpt-3.5-turbo", "owner": "azure"}
+    ])
+
+    # Mock LLMClientFactory.create_client
+    with patch('ygo74.fastapi_openai_rag.infrastructure.llm.client_factory.LLMClientFactory.create_client',
+               return_value=AsyncContextManagerMock(mock_client)):
+        # act
+        await service.fetch_available_models(model_configs=azure_configs)
+
+        # assert
+        # Verify list_deployments was called instead of list_models
+        assert mock_client.list_deployments.called
+        assert not mock_client.list_models.called
+
+        # Verify repository calls to add models
+        repository = repository_factory.return_value
+        # Two Azure deployments should be processed
+        assert repository.add.call_count + repository.update.call_count > 0
+

@@ -134,6 +134,7 @@ class ProxyLangchainFactory:
             logger.debug(f"Creating ChatOpenAI with base_url: {base_url}, model: {model_name}")
 
             return ChatOpenAI(
+                streaming=True,
                 base_url=base_url,
                 api_key=proxy_api_key,
                 model=model_name,
@@ -188,6 +189,9 @@ def create_proxy_llm(
         model_name=model
     )
 
+# Define a callback function to handle streamed tokens
+def handle_stream(token):
+    print(token, end="", flush=True)  # Print tokens as they arrive
 
 # Example usage
 if __name__ == "__main__":
@@ -205,7 +209,8 @@ if __name__ == "__main__":
         # For chat models
         chat_model = create_proxy_chat_model(
             proxy_url="http://localhost:8000",
-            api_key="your-proxy-api-key",
+            api_key="sk-16AwYoZqNoVKjfMz-Mr8TeuaXk3O6JeLwPdQSAQiF0s",
+            # api_key="sk-Uhw0UnymWqxlBcI13rv3644-ZwvXXmq_WjrTFvni62A",
             model="gpt-4o"
         )
         print("✅ Chat model created successfully")
@@ -213,7 +218,8 @@ if __name__ == "__main__":
         # For completion models
         llm = create_proxy_llm(
             proxy_url="http://localhost:8000",
-            api_key="your-proxy-api-key",
+            api_key="sk-16AwYoZqNoVKjfMz-Mr8TeuaXk3O6JeLwPdQSAQiF0s",
+            # api_key="sk-Uhw0UnymWqxlBcI13rv3644-ZwvXXmq_WjrTFvni62A",
             model="gpt-4o"
         )
         print("✅ LLM created successfully")
@@ -227,13 +233,18 @@ if __name__ == "__main__":
         print("   # For completion:")
         print("   response = llm.invoke('Tell me a joke')")
 
-        response = llm.invoke('Who are you')
-        print(f"🤖 LLM response: {response}")
+        # response = llm.invoke('Who are you')
+        # print(f"🤖 LLM response: {response}")
 
         from langchain_core.messages import HumanMessage
         messages = [HumanMessage(content='Hello!, who are you ? can you give me you cutoff date')]
-        response = chat_model.invoke(messages)
-        print(f"🤖 LLM response: {response}")
+        chunks = []
+        for chunk in chat_model.stream(messages):
+            chunks.append(chunk)
+            print(chunk.content, end="|", flush=True)
+
+        # response = chat_model.invoke(messages)
+        # print(f"🤖 LLM response: {response}")
 
 
     except Exception as e:

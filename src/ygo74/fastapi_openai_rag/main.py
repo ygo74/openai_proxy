@@ -1,6 +1,7 @@
 """Main FastAPI application module."""
 import logging
-from fastapi import FastAPI
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from .interfaces.api.router import api_router
 from .interfaces.api.exception_handlers import ExceptionHandlers
@@ -9,6 +10,13 @@ from .domain.exceptions.entity_already_exists import EntityAlreadyExistsError
 from .domain.exceptions.validation_error import ValidationError
 from .application.services.config_service import config_service
 from .config.logging_config import setup_logging
+from .interfaces.api.middlewares.audit import AuditMiddleware
+from .interfaces.api.middlewares.audit import PrintForwarder
+from .infrastructure.observability.telemetry_service import initialize_telemetry, get_telemetry_service
+from .infrastructure.observability.metrics_service import initialize_metrics_service
+from .interfaces.api.middlewares.metrics_middleware import MetricsMiddleware
+from .config.settings import settings
+from datetime import datetime
 
 # Setup logging before anything else
 setup_logging()
@@ -16,11 +24,60 @@ setup_logging()
 # Get logger after logging is configured
 logger = logging.getLogger(__name__)
 
-# Initialize FastAPI app
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan events."""
+    # Startup
+    try:
+        # Initialize observability first
+        telemetry_service = initialize_telemetry(settings.observability)
+        logger.info("Observability initialized successfully")
+
+        # Initialize custom metrics service
+        metrics_service = initialize_metrics_service(settings.observability.service_name)
+        logger.info("Custom metrics service initialized successfully")
+
+        # Instrument FastAPI app
+        if telemetry_service:
+            telemetry_service.instrument_fastapi(app)
+
+        # Load configuration at startup
+        config_service.reload_config()
+        logger.info("Application configuration loaded successfully")
+
+        # Initialize database
+        config_service.init_database()
+        logger.info("Database initialized successfully!")
+
+        # Other startup tasks...
+
+    except Exception as e:
+        logger.error(f"Failed to initialize application: {str(e)}")
+        raise
+
+    yield
+
+    # Shutdown - clean up resources here if needed
+    telemetry_service = get_telemetry_service()
+    if telemetry_service:
+        telemetry_service.shutdown()
+    logger.info("Application shutdown")
+
+# Initialize FastAPI app with lifespan
 app = FastAPI(
     title="LLM Proxy API",
     description="A FastAPI proxy for various LLM providers with authentication and rate limiting",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# Add middlewares
+app.add_middleware(MetricsMiddleware)
+app.add_middleware(
+    AuditMiddleware,
+    forwarders=[
+        PrintForwarder(),
+    ]
 )
 
 # Configure CORS
@@ -40,27 +97,26 @@ app.add_exception_handler(EntityNotFoundError, ExceptionHandlers.entity_not_foun
 app.add_exception_handler(EntityAlreadyExistsError, ExceptionHandlers.entity_already_exists_handler)
 app.add_exception_handler(ValidationError, ExceptionHandlers.validation_error_handler)
 app.add_exception_handler(Exception, ExceptionHandlers.generic_exception_handler)
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize application on startup."""
-    try:
-        # Load configuration at startup
-        config_service.reload_config()
-        logger.info("Application configuration loaded successfully")
-
-        # Initialize database
-        config_service.init_database()
-        logger.info("Database initialized successfully!")
-
-        # Other startup tasks...
-
-    except Exception as e:
-        logger.error(f"Failed to initialize application: {str(e)}")
-        raise
+app.add_exception_handler(PermissionError, ExceptionHandlers.permission_error_handler)
 
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
     logger.debug("Health check endpoint called")
-    return {"status": "healthy"}
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "service": "fastapi-openai-rag"
+    }
+
+
+# Exemple d'utilisation pour un endpoint de management :
+# from fastapi import Depends
+# @app.get("/management/some-endpoint")
+# async def management_endpoint(user=Depends(get_current_user_oauth)):
+#     ...
+
+# Exemple d'utilisation pour un endpoint chat compatible LangChain :
+# @app.post("/chat")
+# async def chat_endpoint(user=Depends(get_current_user_apikey)):
+#     ...

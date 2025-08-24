@@ -3,3 +3,7 @@ __pycache__
 venv
 config.json
 *.db
+.env
+.env.*
+*egg-info
+*langchain_call_azure_openai.py

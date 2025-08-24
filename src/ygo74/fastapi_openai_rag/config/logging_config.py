@@ -14,8 +14,7 @@ def setup_logging() -> None:
 
     # Validate log level
     numeric_level: int = getattr(logging, log_level, logging.INFO)
-    if not isinstance(numeric_level, int):
-        numeric_level = logging.INFO
+    numeric_level = logging.INFO
 
     # Configure root logger
     logging.basicConfig(

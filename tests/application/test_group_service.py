@@ -60,7 +60,7 @@ class TestGroupService:
         repository.get_all = Mock()
         repository.add = Mock()
         repository.update = Mock()
-        repository.remove = Mock()
+        repository.delete = Mock()
         repository.get_by_model_id = Mock()
         return repository
 
@@ -273,7 +273,7 @@ class TestGroupService:
 
         # assert
         mock_repository.get_by_id.assert_called_once_with(group_id)
-        mock_repository.remove.assert_called_once_with(group_id)
+        mock_repository.delete.assert_called_once_with(group_id)
 
     def test_delete_group_not_found(self, service: GroupService, mock_repository: Mock) -> None:
         """Test group deletion when group doesn't exist."""

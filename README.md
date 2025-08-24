@@ -2,11 +2,51 @@
 
 This project is a FastAPI-based proxy for OpenAI. It provides a simple interface to interact with OpenAI's API.
 
+## Features
+
+- OpenAI-compatible API endpoints (`/v1/chat/completions`, `/v1/completions`, `/v1/models`)
+- Streaming support for chat completions using Server-Sent Events (SSE)
+- Authentication via OAuth2/Keycloak and API keys
+- Authorization based on user groups and model permissions
+- Support for multiple LLM providers (OpenAI, Azure OpenAI, Anthropic)
 
 # sources
 
 transparent proxy : https://github.com/fangwentong/openai-proxy
-OpenAI schema : https://github.com/openai/openai-openapi/blob/manual_spec/openapi.yaml
+OpenAI:
+
+- schema : https://github.com/openai/openai-openapi/blob/manual_spec/openapi.yaml
+- sdk : https://github.com/openai/openai-python/blob/main/src/openai/types/chat/chat_completion_chunk.py
+
+# development
+
+## Start backends
+
+``` powershell
+docker compose -f .\docker-compose-backend.yml up -d
+
+```
+
+## start the service
+
+``` powershell
+poetry run uvicorn src.ygo74.fastapi_openai_rag.main:app --host 0.0.0.0 --port 8000 --reload --log-level debug
+
+```
+
+## Using streaming chat completions
+
+Streaming is supported for chat completions by setting the `stream` parameter to `true`:
+
+```json
+{
+  "model": "gpt-4",
+  "messages": [{"role": "user", "content": "Tell me a story"}],
+  "stream": true
+}
+```
+
+The API will return a Server-Sent Events (SSE) stream that can be consumed by clients such as the official OpenAI SDK or compatible libraries.
 
 # Azure configuration
 

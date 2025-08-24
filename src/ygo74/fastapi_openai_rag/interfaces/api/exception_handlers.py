@@ -48,6 +48,23 @@ class ExceptionHandlers:
         )
 
     @staticmethod
+    async def permission_error_handler(request: Request, exc: PermissionError) -> JSONResponse:
+        """Handle PermissionError exceptions.
+
+        Args:
+            request (Request): The FastAPI request object
+            exc (PermissionError): The exception instance
+
+        Returns:
+            JSONResponse: HTTP 403 response
+        """
+        logger.warning(f"Permission denied: {str(exc)}")
+        return JSONResponse(
+            status_code=status.HTTP_403_FORBIDDEN,
+            content={"detail": f"Permission denied: {str(exc)}"}
+        )
+
+    @staticmethod
     async def validation_error_handler(request: Request, exc: ValidationError) -> JSONResponse:
         """Handle ValidationError exceptions.
 

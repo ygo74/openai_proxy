@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, List, Optional, Type, Union
 from enum import Enum
 
 import httpx
+import requests
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -58,6 +59,9 @@ class CloudRetryHandler:
         httpx.PoolTimeout,
         httpx.ConnectError,
         httpx.NetworkError,
+        requests.exceptions.Timeout,
+        requests.exceptions.ConnectionError,
+        requests.exceptions.RequestException,
         ConnectionError,
         OSError,
     )
@@ -96,6 +100,21 @@ class CloudRetryHandler:
             stop=stop_after_attempt(self.max_attempts),
             wait=self._get_wait_strategy(),
             retry=self._should_retry_call_state,  # <-- Correction ici
+            retry_error_callback=self._retry_error_callback,
+            before_sleep=before_sleep_log(logger, logging.WARNING),
+            after=after_log(logger, logging.INFO)
+        )
+
+    def create_sync_retry_decorator(self):
+        """Create a sync retry decorator with configured strategy.
+
+        Returns:
+            Configured sync retry decorator
+        """
+        return retry(
+            stop=stop_after_attempt(self.max_attempts),
+            wait=self._get_wait_strategy(),
+            retry=self._should_retry_call_state,
             retry_error_callback=self._retry_error_callback,
             before_sleep=before_sleep_log(logger, logging.WARNING),
             after=after_log(logger, logging.INFO)
@@ -154,9 +173,14 @@ class CloudRetryHandler:
         if isinstance(exception, httpx.HTTPStatusError):
             should_retry = exception.response.status_code in self.RETRYABLE_HTTP_CODES
             if should_retry:
-                logger.warning(
-                    f"HTTP {exception.response.status_code} error, will retry: {exception}"
-                )
+                logger.warning(f"HTTP {exception.response.status_code} error, will retry: {exception}")
+            return should_retry
+
+        if isinstance(exception, requests.exceptions.HTTPError):
+            status = getattr(getattr(exception, "response", None), "status_code", None)
+            should_retry = status in self.RETRYABLE_HTTP_CODES if status is not None else False
+            if should_retry:
+                logger.warning(f"HTTP {status} error (requests), will retry: {exception}")
             return should_retry
 
         # Check other retryable exceptions
@@ -192,6 +216,19 @@ class LLMRetryHandler(CloudRetryHandler):
             max_delay=120.0,  # Longer max delay
             jitter=True,
             backoff_multiplier=2.0
+        )
+
+class KeycloakRetryHandler(CloudRetryHandler):
+    """Retry handler tuned for Keycloak availability/latency patterns."""
+    def __init__(self):
+        """Initialize Keycloak retry handler with resilient defaults."""
+        super().__init__(
+            max_attempts=5,
+            strategy=RetryStrategy.EXPONENTIAL_BACKOFF,
+            base_delay=0.5,
+            max_delay=8.0,
+            jitter=True,
+            backoff_multiplier=2.0,
         )
 
 def with_enterprise_retry(func: Callable) -> Callable:

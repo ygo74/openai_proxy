@@ -1,7 +1,7 @@
 """Chat completion service for handling OpenAI-compatible requests."""
 import time
 import uuid
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone
 from ...domain.models.chat_completion import (
     ChatCompletionRequest, ChatCompletionResponse, ChatCompletionChoice,
@@ -18,6 +18,7 @@ from ...domain.exceptions.entity_not_found_exception import EntityNotFoundError
 from ...domain.exceptions.validation_error import ValidationError
 from ...domain.protocols.llm_client import LLMClientProtocol
 from ...infrastructure.db.repositories.model_repository import SQLModelRepository
+from ...infrastructure.db.repositories.group_repository import SQLGroupRepository
 from ...infrastructure.llm.client_factory import LLMClientFactory
 from .config_service import config_service
 import logging
@@ -37,11 +38,12 @@ class ChatCompletionService:
         self._client_cache: Dict[str, LLMClientProtocol] = {}
         logger.debug("ChatCompletionService initialized")
 
-    async def create_chat_completion(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
+    async def create_chat_completion(self, request: ChatCompletionRequest, user_groups: Optional[List[str]] = None) -> ChatCompletionResponse:
         """Create a chat completion.
 
         Args:
             request (ChatCompletionRequest): Chat completion request
+            user_groups (Optional[List[str]]): User's group memberships for authorization check
 
         Returns:
             ChatCompletionResponse: Generated chat completion
@@ -49,12 +51,13 @@ class ChatCompletionService:
         Raises:
             EntityNotFoundError: If model not found
             ValidationError: If model not approved or validation fails
+            PermissionError: If user is not authorized to access the model
             RuntimeError: If provider client not configured
         """
         logger.info(f"Creating chat completion with model {request.model}")
 
-        # Validate and get model
-        model = await self._get_and_validate_model(request.model)
+        # Validate and get model, checking authorization
+        model = await self._get_and_validate_model(request.model, user_groups)
 
         # Get or create client for this model
         client = self._get_or_create_client(model)
@@ -79,11 +82,12 @@ class ChatCompletionService:
             logger.error(f"Error in chat completion: {str(e)}")
             raise
 
-    async def create_completion(self, request: CompletionRequest) -> CompletionResponse:
+    async def create_completion(self, request: CompletionRequest, user_groups: Optional[List[str]] = None) -> CompletionResponse:
         """Create a text completion.
 
         Args:
             request (CompletionRequest): Text completion request
+            user_groups (Optional[List[str]]): User's group memberships for authorization check
 
         Returns:
             CompletionResponse: Generated text completion
@@ -91,12 +95,13 @@ class ChatCompletionService:
         Raises:
             EntityNotFoundError: If model not found
             ValidationError: If model not approved or validation fails
+            PermissionError: If user is not authorized to access the model
             RuntimeError: If provider client not configured
         """
         logger.info(f"Creating text completion with model {request.model}")
 
-        # Validate and get model
-        model = await self._get_and_validate_model(request.model)
+        # Validate and get model, checking authorization
+        model = await self._get_and_validate_model(request.model, user_groups)
 
         # Get or create client for this model
         client = self._get_or_create_client(model)
@@ -121,11 +126,61 @@ class ChatCompletionService:
             logger.error(f"Error in text completion: {str(e)}")
             raise
 
-    async def _get_and_validate_model(self, model_name: str) -> LlmModel:
-        """Get and validate model from database.
+    async def create_chat_completion_stream(self, request: ChatCompletionRequest, user_groups: Optional[List[str]] = None):
+        """Create a streaming chat completion.
+
+        Args:
+            request (ChatCompletionRequest): Chat completion request
+            user_groups (Optional[List[str]]): User's group memberships for authorization check
+
+        Yields:
+            ChatCompletionResponse: Streaming chunks of the response
+
+        Raises:
+            EntityNotFoundError: If model not found
+            ValidationError: If model not approved or validation fails
+            PermissionError: If user is not authorized to access the model
+            RuntimeError: If provider client not configured
+        """
+        logger.info(f"Creating streaming chat completion with model {request.model}")
+
+        # Validate and get model, checking authorization
+        model = await self._get_and_validate_model(request.model, user_groups)
+
+        # Get or create client for this model
+        client = self._get_or_create_client(model)
+
+        # Update request with provider info
+        request_with_provider = self._prepare_chat_request(request, model)
+
+        # Ensure we're requesting a stream
+        request_with_provider.stream = True
+
+        # Start timing
+        start_time = time.time()
+
+        try:
+            # Ne pas utiliser await ici car chat_completion_stream retourne déjà un générateur asynchrone
+            # et non une coroutine à attendre
+            async for chunk in client.chat_completion_stream(request_with_provider):
+                # Add timing information
+                chunk.latency_ms = (time.time() - start_time) * 1000
+                chunk.timestamp = datetime.now(timezone.utc)
+
+                yield chunk
+
+            logger.info(f"Streaming chat completion finished in {(time.time() - start_time) * 1000:.2f}ms")
+
+        except Exception as e:
+            logger.error(f"Error in streaming chat completion: {str(e)}")
+            raise
+
+    async def _get_and_validate_model(self, model_name: str, user_groups: Optional[List[str]] = None) -> LlmModel:
+        """Get and validate model from database, checking user authorization.
 
         Args:
             model_name (str): Model name or technical name
+            user_groups (Optional[List[str]]): User's group memberships for authorization check
 
         Returns:
             LlmModel: Validated model entity
@@ -133,6 +188,7 @@ class ChatCompletionService:
         Raises:
             EntityNotFoundError: If model not found
             ValidationError: If model not approved
+            PermissionError: If user is not authorized to access the model
         """
         with self._uow as uow:
             repository: IModelRepository = SQLModelRepository(uow.session)
@@ -145,6 +201,19 @@ class ChatCompletionService:
 
             # Take the first model found
             model = models[0]
+
+            # If no user groups provided or user is admin, allow access
+            if not user_groups or "admin" in user_groups:
+                return model
+
+            # For regular users, check if they have access to this model
+            # Get all models the user has access to
+            accessible_models = self.get_models_for_user(user_groups)
+
+            # Check if requested model is in user's accessible models
+            if not any(m.id == model.id for m in accessible_models):
+                logger.warning(f"User with groups {user_groups} attempted unauthorized access to model {model_name}")
+                raise PermissionError(f"Not authorized to access model {model_name}")
 
             return model
 
@@ -211,3 +280,52 @@ class ChatCompletionService:
         request_dict = request.model_dump()
         request_dict['model'] = model.name  # Use technical name for API calls
         return CompletionRequest(**request_dict)
+
+    def get_models_for_user(self, user_groups: List[str]) -> List[LlmModel]:
+        """Get models accessible to user based on group membership.
+
+        Args:
+            user_groups: List of group names the user belongs to
+
+        Returns:
+            List of LLM models the user has access to
+        """
+        logger.debug(f"Getting models for user with groups: {user_groups}")
+
+        result_models = []
+
+        with self._uow as uow:
+            # Create repositories
+            model_repository = SQLModelRepository(uow.session)
+            group_repository = SQLGroupRepository(uow.session)
+
+            # If user is admin, return all approved models
+            if "admin" in user_groups:
+                all_models = model_repository.get_all()
+                result_models = [model for model in all_models if model.status == LlmModelStatus.APPROVED]
+                logger.debug(f"Admin user, returning all {len(result_models)} approved models")
+                return result_models
+
+            # For regular users, get models from their groups
+            accessible_models = {}  # Use a dictionary with model_id as keys instead of a set
+
+            # Get all groups user belongs to
+            for group_name in user_groups:
+                group = group_repository.get_by_name(group_name)
+                if not group:
+                    logger.warning(f"User group '{group_name}' not found in database")
+                    continue
+                logger.debug(f"Found group: {group.name} (ID: {group.id}) for user")
+                # Get models associated with this group
+                group_models = model_repository.get_by_group_id(group.id)
+
+                # Only add approved models
+                for model in group_models:
+                    if model.status == LlmModelStatus.APPROVED:
+                        # Use model ID as dictionary key to avoid duplicate models
+                        accessible_models[model.id] = model
+
+            result_models = list(accessible_models.values())
+            logger.debug(f"Regular user, returning {len(result_models)} models from user's groups")
+
+        return result_models

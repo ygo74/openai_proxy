@@ -64,7 +64,7 @@ class TestGroupsEndpoints:
         mock_group_service.get_all_groups.return_value = groups
 
         # act
-        response = client.get("/v1/groups/")
+        response = client.get("/v1/admin/groups/")
 
         # assert
         assert response.status_code == 200
@@ -93,7 +93,7 @@ class TestGroupsEndpoints:
         mock_group_service.add_or_update_group.return_value = status_result
 
         # act
-        response = client.post("/v1/groups/", json=group_data)
+        response = client.post("/v1/admin/groups/", json=group_data)
 
         # assert
         assert response.status_code == 201
@@ -116,7 +116,7 @@ class TestGroupsEndpoints:
         mock_group_service.add_or_update_group.side_effect = EntityAlreadyExistsError("Group", "name Existing Group")
 
         # act
-        response = client.post("/v1/groups/", json=group_data)
+        response = client.post("/v1/admin/groups/", json=group_data)
 
         # assert
         assert response.status_code == 409
@@ -132,7 +132,7 @@ class TestGroupsEndpoints:
         mock_group_service.add_or_update_group.side_effect = ValidationError("Name is required for new groups")
 
         # act
-        response = client.post("/v1/groups/", json=group_data)
+        response = client.post("/v1/admin/groups/", json=group_data)
 
         # assert
         assert response.status_code == 400
@@ -152,7 +152,7 @@ class TestGroupsEndpoints:
         mock_group_service.get_group_by_id.return_value = group
 
         # act
-        response = client.get(f"/v1/groups/{group_id}")
+        response = client.get(f"/v1/admin/groups/{group_id}")
 
         # assert
         assert response.status_code == 200
@@ -169,7 +169,7 @@ class TestGroupsEndpoints:
         mock_group_service.get_group_by_id.side_effect = EntityNotFoundError("Group", str(group_id))
 
         # act
-        response = client.get(f"/v1/groups/{group_id}")
+        response = client.get(f"/v1/admin/groups/{group_id}")
 
         # assert
         assert response.status_code == 404
@@ -194,7 +194,7 @@ class TestGroupsEndpoints:
         mock_group_service.add_or_update_group.return_value = status_result
 
         # act
-        response = client.put(f"/v1/groups/{group_id}", json=update_data)
+        response = client.put(f"/v1/admin/groups/{group_id}", json=update_data)
 
         # assert
         assert response.status_code == 200
@@ -218,7 +218,7 @@ class TestGroupsEndpoints:
         mock_group_service.add_or_update_group.side_effect = EntityNotFoundError("Group", str(group_id))
 
         # act
-        response = client.put(f"/v1/groups/{group_id}", json=update_data)
+        response = client.put(f"/v1/admin/groups/{group_id}", json=update_data)
 
         # assert
         assert response.status_code == 404
@@ -235,7 +235,7 @@ class TestGroupsEndpoints:
         mock_group_service.add_or_update_group.side_effect = ValidationError("Name cannot be empty")
 
         # act
-        response = client.put(f"/v1/groups/{group_id}", json=update_data)
+        response = client.put(f"/v1/admin/groups/{group_id}", json=update_data)
 
         # assert
         assert response.status_code == 400
@@ -252,7 +252,7 @@ class TestGroupsEndpoints:
         mock_group_service.add_or_update_group.side_effect = EntityAlreadyExistsError("Group", "name Existing Group Name")
 
         # act
-        response = client.put(f"/v1/groups/{group_id}", json=update_data)
+        response = client.put(f"/v1/admin/groups/{group_id}", json=update_data)
 
         # assert
         assert response.status_code == 409
@@ -265,7 +265,7 @@ class TestGroupsEndpoints:
         mock_group_service.delete_group.return_value = None
 
         # act
-        response = client.delete(f"/v1/groups/{group_id}")
+        response = client.delete(f"/v1/admin/groups/{group_id}")
 
         # assert
         assert response.status_code == 200
@@ -280,7 +280,7 @@ class TestGroupsEndpoints:
         mock_group_service.delete_group.side_effect = EntityNotFoundError("Group", str(group_id))
 
         # act
-        response = client.delete(f"/v1/groups/{group_id}")
+        response = client.delete(f"/v1/admin/groups/{group_id}")
 
         # assert
         assert response.status_code == 404
@@ -297,7 +297,7 @@ class TestGroupsEndpoints:
         mock_group_service.get_all_groups.return_value = groups
 
         # act
-        response = client.get("/v1/groups/statistics")
+        response = client.get("/v1/admin/groups/statistics")
 
         # assert
         assert response.status_code == 200
@@ -316,7 +316,7 @@ class TestGroupsEndpoints:
         mock_group_service.get_all_groups.return_value = groups
 
         # act
-        response = client.get("/v1/groups/?skip=1&limit=2")
+        response = client.get("/v1/admin/groups/?skip=1&limit=2")
 
         # assert
         assert response.status_code == 200
@@ -331,7 +331,7 @@ class TestGroupsEndpoints:
         # by checking that endpoints can be called without raising dependency errors
 
         # act & assert - Should not raise dependency injection errors
-        response = client.get("/v1/groups/")
+        response = client.get("/v1/admin/groups/")
         # The response might be an error due to missing database, but dependency injection should work
         assert response.status_code in [200, 500]  # Either success or internal server error, but not dependency error
 
@@ -349,7 +349,7 @@ class TestGroupsEndpoints:
         mock_group_service.get_group_by_name.return_value = group
 
         # act
-        response = client.get(f"/v1/groups/name/{name}")
+        response = client.get(f"/v1/admin/groups/name/{name}")
 
         # assert
         assert response.status_code == 200
@@ -365,7 +365,7 @@ class TestGroupsEndpoints:
         mock_group_service.get_group_by_name.side_effect = EntityNotFoundError("Group", name)
 
         # act
-        response = client.get(f"/v1/groups/name/{name}")
+        response = client.get(f"/v1/admin/groups/name/{name}")
 
         # assert
         assert response.status_code == 404

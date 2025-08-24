@@ -11,7 +11,7 @@ from typing import Dict, Any, Optional, AsyncGenerator, List, Union
 from datetime import datetime, timezone
 
 from ...domain.models.chat_completion import (
-    ChatCompletionRequest, ChatCompletionResponse, ChatCompletionChoice,
+    ChatCompletionRequest, ChatCompletionResponse, ChatCompletionChoice,ChatCompletionStreamChoice,
     ChatCompletionStreamResponse, ChatMessage
 )
 from ...domain.models.completion import (
@@ -291,21 +291,6 @@ class AzureOpenAIProxyClient:
             logger.error(f"Unexpected error in Azure chat completion: {str(e)}")
             raise
 
-    async def stream_chat_completion(self, request: ChatCompletionRequest) -> AsyncGenerator[ChatCompletionStreamResponse, None]:
-        """Stream chat completion via Azure OpenAI API with retry for connection establishment.
-
-        Args:
-            request (ChatCompletionRequest): Chat completion request
-
-        Yields:
-            ChatCompletionStreamResponse: Streaming response chunks
-        """
-        # Apply retry only to the connection establishment, not the entire stream
-        stream_response = await self._establish_stream_connection(request)
-
-        async for chunk in stream_response:
-            yield chunk
-
     @with_enterprise_retry
     async def _establish_stream_connection(self, request: ChatCompletionRequest):
         """Establish streaming connection with retry capability.
@@ -314,7 +299,7 @@ class AzureOpenAIProxyClient:
             request (ChatCompletionRequest): Chat completion request
 
         Returns:
-            Async generator for streaming response
+            httpx.AsyncClient.stream: HTTP streaming response
         """
         url = self._build_url("chat/completions", request.model)
         headers = self._get_headers()
@@ -323,28 +308,69 @@ class AzureOpenAIProxyClient:
         payload["stream"] = True
 
         logger.debug(f"Starting Azure streaming chat completion to {url}")
+        logger.debug(f"Stream request payload: {payload}")
+        logger.debug(f"Stream request headers: {headers}")
 
-        async with self._client.stream(
+        return self._client.stream(
             "POST",
             url=url,
             headers=headers,
             json=payload,
             timeout=120.0
-        ) as response:
-            response.raise_for_status()
+        )
 
-            async for line in response.aiter_lines():
-                if line.startswith("data: "):
-                    data = line[6:]
+    async def chat_completion_stream(self, request: ChatCompletionRequest):
+        """Stream chat completion via Azure OpenAI API.
 
-                    if data.strip() == "[DONE]":
+        Args:
+            request (ChatCompletionRequest): Chat completion request
+
+        Yields:
+            ChatCompletionStreamResponse: Streaming response chunks
+        """
+        try:
+            # Get streaming connection with retry
+            stream_ctx = await self._establish_stream_connection(request)
+
+            # Process the stream without retry
+            async with stream_ctx as res:
+                res.raise_for_status()
+
+                # Les en-têtes sont gérés au niveau de OverrideStreamResponse et pas ici
+                # car nous ne retournons pas directement la réponse HTTP, mais des objets ChatCompletionStreamResponse
+
+                async for line in res.aiter_lines():
+                    # Skip empty lines
+                    if not line.strip():
+                        continue
+
+                    # Strip "data: " prefix if present (for SSE format)
+                    line = line.strip()
+                    if line.startswith('data: '):
+                        line = line[6:]  # Remove 'data: ' prefix
+
+                    # Check for the [DONE] message that indicates end of stream
+                    if line == '[DONE]':
                         break
 
                     try:
-                        chunk_data = json.loads(data)
-                        yield self._parse_stream_chunk(chunk_data)
+                        # Parse the JSON data into a dictionary
+                        chunk_data = json.loads(line)
+
+                        # Convert to ChatCompletionStreamResponse
+                        stream_response = self._parse_stream_chunk(chunk_data)
+
+                        # Yield the parsed response object
+                        yield stream_response
+
                     except json.JSONDecodeError:
+                        logger.warning(f"Failed to parse streaming response chunk: {line}")
                         continue
+
+        except httpx.HTTPStatusError as e:
+            error_details = self._parse_azure_error(e)
+            logger.error(f"Azure HTTP error in streaming chat completion: {error_details}")
+            raise httpx.HTTPError(f"Azure OpenAI API error: {error_details}")
 
     @with_enterprise_retry
     async def list_models(self) -> List[Dict[str, Any]]:
@@ -650,12 +676,49 @@ class AzureOpenAIProxyClient:
         Returns:
             ChatCompletionStreamResponse: Streaming response
         """
+        # Extract choices data from the chunk
+        choices: List[ChatCompletionStreamChoice] = []
+        for choice_data in chunk_data.get("choices", []):
+            # Extract the delta content from the choice
+            delta = choice_data.get("delta", {})
+
+            # Log the actual content for debugging
+            logger.debug(f"Stream chunk delta content: {delta}")
+
+            # Assigner une valeur par défaut pour le rôle si elle est None
+            role = delta.get("role")
+            if role is None:
+                # Dans les chunks de streaming Azure, le rôle est souvent défini uniquement
+                # dans le premier chunk et est généralement "assistant" pour les chunks suivants
+                role = "assistant"
+
+            # Create a message object from the delta
+            message = ChatMessage(
+                role=role,  # Utilisez la valeur par défaut si nécessaire
+                content=delta.get("content", ""),  # Ensure content is never None
+                function_call=delta.get("function_call"),
+                tool_calls=delta.get("tool_calls")
+            )
+
+            choice = ChatCompletionStreamChoice(
+                index=choice_data.get("index", 0),
+                delta=message,
+                finish_reason=choice_data.get("finish_reason")
+            )
+            choices.append(choice)
+
+        # Create the response with all required fields
         return ChatCompletionStreamResponse(
-            id=chunk_data.get("id", ""),
+            id=chunk_data.get("id", str(uuid.uuid4())),
             object=chunk_data.get("object", "chat.completion.chunk"),
             created=chunk_data.get("created", int(time.time())),
-            model=chunk_data.get("model", ""),
-            choices=[]
+            model=chunk_data.get("model", "unknown"),
+            system_fingerprint=chunk_data.get("system_fingerprint"),
+            choices=choices,
+            provider=self.provider,
+            raw_response=chunk_data,
+            latency_ms=None,  # Ces valeurs seront définies plus tard dans le service
+            timestamp=datetime.now(timezone.utc)
         )
 
     def _parse_azure_error(self, error: httpx.HTTPStatusError) -> str:

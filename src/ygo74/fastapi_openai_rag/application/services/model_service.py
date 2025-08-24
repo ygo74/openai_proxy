@@ -3,6 +3,7 @@ from typing import List, Optional, Tuple, Dict, Any, Callable
 from datetime import datetime, timezone
 from ...domain.models.llm_model import LlmModel, LlmModelStatus
 from ...domain.models.llm import LLMProvider
+from ...domain.models.group import Group
 from ...domain.repositories.model_repository import IModelRepository
 from ...domain.unit_of_work import UnitOfWork
 from ...infrastructure.db.repositories.model_repository import SQLModelRepository
@@ -12,6 +13,7 @@ from ...domain.exceptions.entity_already_exists import EntityAlreadyExistsError
 from ...domain.exceptions.validation_error import ValidationError
 from ...domain.protocols.llm_client import LLMClientProtocol
 from ...infrastructure.llm.client_factory import LLMClientFactory
+from .group_service import GroupService
 import logging
 
 logger = logging.getLogger(__name__)
@@ -107,7 +109,7 @@ class ModelService:
     def _create_model_instance(self, url: str, name: str, technical_name: str, provider: LLMProvider,
                               status: LlmModelStatus, capabilities: Dict[str, Any],
                               created: datetime, updated: datetime,
-                              model_id: Optional[int] = None) -> LlmModel:
+                              model_id: Optional[int] = None, groups: Optional[List[Group]] = None) -> LlmModel:
         """Create model instance.
 
         Args:
@@ -120,6 +122,7 @@ class ModelService:
             created (datetime): Creation timestamp
             updated (datetime): Update timestamp
             model_id (Optional[int]): Model ID
+            groups (Optional[List[Group]]): Model groups
 
         Returns:
             LlmModel: Model instance
@@ -132,7 +135,8 @@ class ModelService:
             "status": status,
             "capabilities": capabilities,
             "created": created,
-            "updated": updated
+            "updated": updated,
+            "groups": groups or []
         }
 
         if model_id is not None:
@@ -398,3 +402,126 @@ class ModelService:
                 )
                 repository.add(new_model)
                 logger.debug(f"Created new model: {technical_name}")
+
+    def add_model_to_group(self, model_id: int, group_id: int) -> LlmModel:
+        """Add a model to a group.
+
+        Args:
+            model_id (int): ID of the model
+            group_id (int): ID of the group
+
+        Returns:
+            LlmModel: Updated model entity
+
+        Raises:
+            EntityNotFoundError: If model or group not found
+        """
+        logger.info(f"Adding model {model_id} to group {group_id}")
+        with self._uow as uow:
+            model_repository: IModelRepository = self._repository_factory(uow.session)
+            group_service = GroupService(self._uow)
+
+            # Verify model exists
+            model = model_repository.get_by_id(model_id)
+            if not model:
+                logger.error(f"Model {model_id} not found")
+                raise EntityNotFoundError("Model", str(model_id))
+
+            # Verify group exists
+            group = group_service.get_group_by_id(group_id)
+
+            # Check if the group is already associated with the model
+            model_groups = [g for g in model.groups if g.id == group_id]
+            if model_groups:
+                logger.info(f"Group {group_id} is already associated with model {model_id}")
+                return model
+
+            # Add the group to the model's groups
+            updated_groups = model.groups + [group]
+            updated_model = self._create_model_instance(
+                model_id=model.id,
+                url=model.url,
+                name=model.name,
+                technical_name=model.technical_name,
+                provider=model.provider,
+                status=model.status,
+                capabilities=model.capabilities,
+                created=model.created,
+                updated=datetime.now(timezone.utc),
+                groups=updated_groups
+            )
+
+            result = model_repository.update(updated_model)
+            logger.info(f"Added model {model_id} to group {group_id}")
+            return result
+
+    def remove_model_from_group(self, model_id: int, group_id: int) -> LlmModel:
+        """Remove a model from a group.
+
+        Args:
+            model_id (int): ID of the model
+            group_id (int): ID of the group
+
+        Returns:
+            LlmModel: Updated model entity
+
+        Raises:
+            EntityNotFoundError: If model not found or group not associated with model
+        """
+        logger.info(f"Removing model {model_id} from group {group_id}")
+        with self._uow as uow:
+            model_repository: IModelRepository = self._repository_factory(uow.session)
+
+            # Verify model exists
+            model = model_repository.get_by_id(model_id)
+            if not model:
+                logger.error(f"Model {model_id} not found")
+                raise EntityNotFoundError("Model", str(model_id))
+
+            # Check if the group is associated with the model
+            updated_groups = [g for g in model.groups if g.id != group_id]
+            if len(updated_groups) == len(model.groups):
+                logger.error(f"Group {group_id} is not associated with model {model_id}")
+                raise EntityNotFoundError("Group", f"{group_id} not associated with model {model_id}")
+
+            # Update the model with the new groups list
+            updated_model = self._create_model_instance(
+                model_id=model.id,
+                url=model.url,
+                name=model.name,
+                technical_name=model.technical_name,
+                provider=model.provider,
+                status=model.status,
+                capabilities=model.capabilities,
+                created=model.created,
+                updated=datetime.now(timezone.utc),
+                groups=updated_groups
+            )
+
+            result = model_repository.update(updated_model)
+            logger.info(f"Removed model {model_id} from group {group_id}")
+            return result
+
+    def get_groups_for_model(self, model_id: int) -> List[Group]:
+        """Get all groups associated with a model.
+
+        Args:
+            model_id (int): ID of the model
+
+        Returns:
+            List[Group]: List of groups associated with the model
+
+        Raises:
+            EntityNotFoundError: If model not found
+        """
+        logger.info(f"Getting groups for model {model_id}")
+        with self._uow as uow:
+            model_repository: IModelRepository = self._repository_factory(uow.session)
+
+            # Verify model exists
+            model = model_repository.get_by_id(model_id)
+            if not model:
+                logger.error(f"Model {model_id} not found")
+                raise EntityNotFoundError("Model", str(model_id))
+
+            return model.groups
