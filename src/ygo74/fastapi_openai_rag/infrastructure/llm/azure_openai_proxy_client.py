@@ -11,7 +11,7 @@ from typing import Dict, Any, Optional, AsyncGenerator, List, Union
 from datetime import datetime, timezone
 
 from ...domain.models.chat_completion import (
-    ChatCompletionRequest, ChatCompletionResponse, ChatCompletionChoice,
+    ChatCompletionRequest, ChatCompletionResponse, ChatCompletionChoice,ChatCompletionStreamChoice,
     ChatCompletionStreamResponse, ChatMessage
 )
 from ...domain.models.completion import (
@@ -677,7 +677,7 @@ class AzureOpenAIProxyClient:
             ChatCompletionStreamResponse: Streaming response
         """
         # Extract choices data from the chunk
-        choices = []
+        choices: List[ChatCompletionStreamChoice] = []
         for choice_data in chunk_data.get("choices", []):
             # Extract the delta content from the choice
             delta = choice_data.get("delta", {})
@@ -700,9 +700,9 @@ class AzureOpenAIProxyClient:
                 tool_calls=delta.get("tool_calls")
             )
 
-            choice = ChatCompletionChoice(
+            choice = ChatCompletionStreamChoice(
                 index=choice_data.get("index", 0),
-                message=message,
+                delta=message,
                 finish_reason=choice_data.get("finish_reason")
             )
             choices.append(choice)

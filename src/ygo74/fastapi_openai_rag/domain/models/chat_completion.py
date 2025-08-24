@@ -175,7 +175,7 @@ class ChatCompletionStreamResponse(BaseModel):
     created: int
     model: str
     system_fingerprint: Optional[str] = None
-    choices: List[ChatCompletionChoice] = []
+    choices: List[ChatCompletionStreamChoice] = []
     provider: Optional[LLMProvider] = None
     raw_response: Optional[Dict[str, Any]] = None
     latency_ms: Optional[float] = None

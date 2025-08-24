@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 
 # Setup logging
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 system_prompt= """
@@ -107,11 +107,11 @@ def main():
     import json
 
     # Activer le débogage Langchain - Update to use V2 tracing
-    os.environ["LANGCHAIN_VERBOSE"] = "true"
+    os.environ["LANGCHAIN_VERBOSE"] = "false"
     # Remove deprecated handler
     # os.environ["LANGCHAIN_HANDLER"] = "langchain"
     # Set the V2 tracing environment variable
-    os.environ["LANGCHAIN_TRACING_V2"] = "true"
+    os.environ["LANGCHAIN_TRACING_V2"] = "false"
 
     # Créer un client HTTP standard avec le token d'authentification
     debug_client = httpx.Client(
@@ -132,7 +132,7 @@ def main():
                 print(f"[DEBUG] Request body: (could not decode)")
 
     # Ajouter des hooks d'événements au client
-    debug_client.event_hooks["request"] = [log_request]
+    # debug_client.event_hooks["request"] = [log_request]
 
     llm = ChatOpenAI(
         base_url="http://localhost:8000/v1",
