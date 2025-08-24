@@ -17,23 +17,12 @@ from ....domain.models.autenticated_user import AuthenticatedUser
 from ..security.auth import auth_jwt_or_api_key
 from .models import map_model_list_to_response, ModelResponse
 from ..utils.override_stream_response import OverrideStreamResponse
+from ..utils.json_encoder import DateTimeEncoder
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 router = APIRouter()
-
-# src/ygo74/fastapi_openai_rag/interfaces/api/endpoints/chat_completions.py
-
-class DateTimeEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, datetime):
-            return obj.isoformat()
-        elif hasattr(obj, 'model_dump'):  # For Pydantic models (like ChatCompletionStreamResponse)
-            return obj.model_dump()
-        elif hasattr(obj, 'dict'):  # Fallback for older Pydantic versions
-            return obj.dict()
-        return super().default(obj)
 
 def get_chat_completion_service(db: Session = Depends(get_db)) -> ChatCompletionService:
     """Create ChatCompletionService instance with Unit of Work.

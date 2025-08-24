@@ -10,11 +10,11 @@ from .domain.exceptions.entity_already_exists import EntityAlreadyExistsError
 from .domain.exceptions.validation_error import ValidationError
 from .application.services.config_service import config_service
 from .config.logging_config import setup_logging
-from .interfaces.api.middlewares.audit import AuditMiddleware
-from .interfaces.api.middlewares.audit import PrintForwarder
+from .interfaces.api.middlewares.audit_factory import AuditFactory
 from .infrastructure.observability.telemetry_service import initialize_telemetry, get_telemetry_service
 from .infrastructure.observability.metrics_service import initialize_metrics_service
 from .interfaces.api.middlewares.metrics_middleware import MetricsMiddleware
+from .interfaces.api.middlewares.audit import AuditMiddleware
 from .config.settings import settings
 from datetime import datetime
 
@@ -73,12 +73,10 @@ app = FastAPI(
 
 # Add middlewares
 app.add_middleware(MetricsMiddleware)
-app.add_middleware(
-    AuditMiddleware,
-    forwarders=[
-        PrintForwarder(),
-    ]
-)
+
+# Add audit middleware using the factory
+config = config_service.get_config()
+AuditFactory.create_audit_middleware(app, config)
 
 # Configure CORS
 app.add_middleware(
@@ -114,6 +112,12 @@ async def health_check():
 # from fastapi import Depends
 # @app.get("/management/some-endpoint")
 # async def management_endpoint(user=Depends(get_current_user_oauth)):
+#     ...
+
+# Exemple d'utilisation pour un endpoint chat compatible LangChain :
+# @app.post("/chat")
+# async def chat_endpoint(user=Depends(get_current_user_apikey)):
+#     ...
 #     ...
 
 # Exemple d'utilisation pour un endpoint chat compatible LangChain :
