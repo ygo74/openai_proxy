@@ -13,7 +13,7 @@ from ....application.services.chat_completion_service import ChatCompletionServi
 from ....domain.models.llm_model import LlmModel, LlmModelStatus
 from ....domain.models.configuration import AppConfig
 from ....domain.models.llm import LLMProvider
-from ..decorators import endpoint_handler
+from ..decorators.decorators import endpoint_handler
 from ..security.auth import auth_jwt_or_api_key, require_admin_role
 from ....domain.models.autenticated_user import AuthenticatedUser
 

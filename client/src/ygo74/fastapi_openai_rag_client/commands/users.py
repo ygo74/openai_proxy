@@ -1,6 +1,6 @@
 """Users command module."""
 import logging
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Union
 from knack.cli import CLI
 from knack.commands import CommandGroup, CLICommandsLoader, CLICommand
 from knack.arguments import ArgumentsContext
@@ -26,6 +26,7 @@ class UserCommandsLoader:
             g.command('deactivate', "deactivate_user")
             g.command('create-key', "create_api_key")
             g.command('stats', "get_user_statistics")
+            g.command('get-tokens', "get_user_tokens")
 
         # Add auth commands
         with CommandGroup(command_loader, 'auth', operations_tmpl='ygo74.fastapi_openai_rag_client.commands.users#{}') as g:
@@ -72,6 +73,15 @@ class UserCommandsLoader:
                 arg_context.argument('name', type=str, help='Key name')
                 arg_context.argument('expires_at', type=str, help='Expiration date (ISO format)')
 
+            with ArgumentsContext(command_loader, 'user stats') as arg_context:
+                arg_context.argument('user_id', type=str, help='User ID')
+                arg_context.argument('days', type=int, help='Number of days to retrieve stats for')
+
+            with ArgumentsContext(command_loader, 'user get-tokens') as arg_context:
+                arg_context.argument('user_id', type=str, help='User ID')
+                arg_context.argument('days', type=int, help='Number of days to retrieve token usage for')
+                arg_context.argument('summary', help='Show summary only')
+
         elif command.startswith('auth'):
             with ArgumentsContext(command_loader, 'auth login') as arg_context:
                 arg_context.argument('username', type=str, help='Keycloak username')
@@ -79,6 +89,7 @@ class UserCommandsLoader:
 
             with ArgumentsContext(command_loader, 'auth set-key') as arg_context:
                 arg_context.argument('api_key', type=str, help='API key')
+
 
 def list_users(cmd: CLICommand, skip: int =0, limit: int=100, active_only=False)-> List[Dict[str, Any]]:
     """List all users."""
@@ -143,6 +154,19 @@ def get_user_statistics(cmd: CLICommand) -> Dict[str, Any]:
     """Get user statistics."""
     api_client = get_api_client(cmd)
     return api_client._make_request("GET", "/v1/users/statistics")
+
+def get_user_tokens(
+        cmd: CLICommand,
+        user_id: str,
+        days: int = 30,
+        summary: bool = False
+    ) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
+    """Get token usage statistics for a specific user."""
+    api_client = get_api_client(cmd)
+    if summary:
+        return api_client.get_user_token_usage(user_id=user_id, days=days)
+    else:
+        return api_client.get_user_token_usage_details(user_id=user_id, days=days)
 
 def login(cmd: CLICommand, username: str, password: str) -> Dict[str, Any]:
     """Login with username and password."""

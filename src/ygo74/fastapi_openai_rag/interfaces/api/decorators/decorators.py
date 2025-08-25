@@ -4,7 +4,8 @@ from typing import Callable, Any, List, Optional
 import logging
 from fastapi import HTTPException, Request, status
 
-from ...domain.models.autenticated_user import AuthenticatedUser
+from ....domain.models.autenticated_user import AuthenticatedUser
+from .token_tracking import track_token_usage
 
 logger = logging.getLogger(__name__)
 
@@ -113,3 +114,6 @@ def require_apikey_or_bearer():
         return wrapper
 
     return decorator
+
+# Export the token tracking decorator
+__all__ = ["endpoint_handler", "require_oauth_role", "require_apikey_or_bearer", "track_token_usage"]
