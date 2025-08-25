@@ -69,6 +69,12 @@ class MetricsService:
             unit="s"
         )
 
+        self.llm_requests_in_progress = self.meter.create_up_down_counter(
+            name="llm_requests_in_progress",
+            description="Number of LLM requests currently in progress",
+            unit="1"
+        )
+
         # Database metrics
         self.db_queries_total = self.meter.create_counter(
             name="db_queries_total",
@@ -135,9 +141,29 @@ class MetricsService:
 
         self.auth_attempts_total.add(1, attributes)
 
+    @contextmanager
+    def track_llm_request_in_progress(self, model: str):
+        """Context manager to track LLM requests in progress.
+
+        Args:
+            provider: LLM provider (openai, anthropic, etc.)
+            model: Model name
+
+        Yields:
+            None
+        """
+        attributes = {
+            "model": model
+        }
+        self.llm_requests_in_progress.add(1, attributes)
+
+        try:
+            yield
+        finally:
+            self.llm_requests_in_progress.add(-1, attributes)
+
     def record_llm_request(
         self,
-        provider: str,
         model: str,
         tokens_in: int,
         tokens_out: int,
@@ -155,7 +181,6 @@ class MetricsService:
             success: Whether request was successful
         """
         attributes = {
-            "provider": provider,
             "model": model,
             "success": str(success).lower()
         }
@@ -163,12 +188,18 @@ class MetricsService:
         self.llm_requests_total.add(1, attributes)
         self.llm_request_duration.record(duration, attributes)
 
-        # Record token consumption
-        token_attributes = {**attributes, "token_type": "input"}
-        self.llm_tokens_consumed.add(tokens_in, token_attributes)
+        # Create separate attribute dictionaries for input and output tokens
+        # to avoid overwriting the token_type
+        input_token_attributes = {**attributes, "token_type": "input"}
+        output_token_attributes = {**attributes, "token_type": "output"}
 
-        token_attributes["token_type"] = "output"
-        self.llm_tokens_consumed.add(tokens_out, token_attributes)
+        # Record input token consumption with input-specific attributes
+        self.llm_tokens_consumed.add(tokens_in, input_token_attributes)
+        logger.debug(f"Recorded {tokens_in} input tokens for model {model}")
+
+        # Record output token consumption with output-specific attributes
+        self.llm_tokens_consumed.add(tokens_out, output_token_attributes)
+        logger.debug(f"Recorded {tokens_out} output tokens for model {model}")
 
     def record_db_query(self, operation: str, table: str, duration: float, success: bool) -> None:
         """Record database query metrics.
