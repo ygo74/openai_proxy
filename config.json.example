@@ -1,11 +1,51 @@
 {
     "model_configs": [
         {
-            "url": "URL",
-            "api_key": "KEY",
+            "url": "https://xxx.openai.azure.com",
+            "api_key": "",
             "api_version": "2024-06-01",
-            "provider": "azure"
+            "provider": "azure",
+            "technical_name": "azure_openai_xxx",
+            "name": "Azure OpenAI xxxx",
+            "tenant_id": "",
+            "client_id": "",
+            "client_secret": "",
+            "subscription_id": "",
+            "resource_group": "",
+            "resource_name": ""
         }
     ],
-    "db_type": "sqlite"
+    "db_type": "sqlite",
+    "forwarders": {
+        "print": {
+            "enabled": true,
+            "level": "DEBUG"
+        },
+        "http": [
+            {
+                "enabled": false,
+                "url": "https://example.com/audit-logs",
+                "headers": {
+                    "Authorization": "Bearer your-token-here",
+                    "Content-Type": "application/json"
+                },
+                "retry_count": 3,
+                "timeout_seconds": 5
+            },
+            {
+                "enabled": false,
+                "url": "https://logs.splunk.com/api/v1/ingest",
+                "headers": {
+                    "Authorization": "Splunk your-splunk-token-here",
+                    "Content-Type": "application/json"
+                }
+            }
+        ]
+    },
+    "audit": {
+        "db_enabled": true,
+        "log_level": "INFO",
+        "exclude_paths": ["/health", "/metrics"],
+        "sensitive_headers": ["Authorization", "API-Key"]
+    }
 }

@@ -46,15 +46,46 @@ class AzureModelConfig(ModelConfig):
             values['provider'] = 'azure'
         return values
 
+class ForwarderConfig(BaseModel):
+    """Base configuration for audit log forwarders."""
+    enabled: bool = False
+
+class PrintForwarderConfig(ForwarderConfig):
+    """Configuration for console print forwarder."""
+    level: str = "DEBUG"
+
+class HttpForwarderConfig(ForwarderConfig):
+    """Configuration for HTTP forwarder."""
+    url: str
+    headers: Dict[str, str] = {}
+    retry_count: int = 3
+    timeout_seconds: int = 5
+
+class AuditConfig(BaseModel):
+    """Configuration for audit functionality."""
+    db_enabled: bool = True
+    log_level: str = "INFO"
+    exclude_paths: List[str] = ["/health", "/metrics"]
+    sensitive_headers: List[str] = ["Authorization", "API-Key"]
+
+class ForwardersConfig(BaseModel):
+    """Configuration for all forwarders."""
+    print: PrintForwarderConfig = PrintForwarderConfig()
+    http: List[HttpForwarderConfig] = []
+
 class AppConfig(BaseModel):
     """AppConfig is a configuration model for the application.
 
     Attributes:
         model_configs (List[Union[ModelConfig, AzureModelConfig]]): List of model configurations
         db_type (str): The type of database being used
+        forwarders (ForwardersConfig): Configuration for audit forwarders
+        audit (AuditConfig): Configuration for audit functionality
     """
     model_configs: List[Union[ModelConfig, AzureModelConfig]]
     db_type: str
+    forwarders: ForwardersConfig = ForwardersConfig()
+    audit: AuditConfig = AuditConfig()
 
     @classmethod
     def load_from_json(cls, config_path: str = "config.json") -> "AppConfig":
@@ -90,9 +121,32 @@ class AppConfig(BaseModel):
                     # It's a regular model config
                     processed_configs.append(ModelConfig(**model_config_data))
 
+            # Process forwarders configuration
+            forwarders_config = ForwardersConfig()
+            if "forwarders" in config_data:
+                forwarders_data = config_data["forwarders"]
+
+                # Print forwarder config
+                if "print" in forwarders_data:
+                    forwarders_config.print = PrintForwarderConfig(**forwarders_data["print"])
+
+                # HTTP forwarders config
+                if "http" in forwarders_data and isinstance(forwarders_data["http"], list):
+                    forwarders_config.http = [
+                        HttpForwarderConfig(**http_config)
+                        for http_config in forwarders_data["http"]
+                    ]
+
+            # Process audit configuration
+            audit_config = AuditConfig()
+            if "audit" in config_data:
+                audit_config = AuditConfig(**config_data["audit"])
+
             return cls(
                 model_configs=processed_configs,
-                db_type=config_data.get("db_type", "sqlite")
+                db_type=config_data.get("db_type", "sqlite"),
+                forwarders=forwarders_config,
+                audit=audit_config
             )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -105,7 +159,12 @@ class AppConfig(BaseModel):
             "model_configs": [
                 config.model_dump() for config in self.model_configs
             ],
-            "db_type": self.db_type
+            "db_type": self.db_type,
+            "forwarders": {
+                "print": self.forwarders.print.model_dump(),
+                "http": [http_config.model_dump() for http_config in self.forwarders.http]
+            },
+            "audit": self.audit.model_dump()
         }
 
     def save_to_json(self, config_path: str = "config.json") -> None:

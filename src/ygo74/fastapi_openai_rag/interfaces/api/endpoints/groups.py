@@ -9,7 +9,7 @@ from ....infrastructure.db.session import get_db
 from ....infrastructure.db.unit_of_work import SQLUnitOfWork
 from ....application.services.group_service import GroupService
 from ....domain.models.group import Group
-from ..decorators import endpoint_handler
+from ..decorators.decorators import endpoint_handler
 from ..security.auth import auth_jwt_or_api_key, require_admin_role
 from ....domain.models.autenticated_user import AuthenticatedUser
 
@@ -42,7 +42,7 @@ def get_group_service(db: Session = Depends(get_db)) -> GroupService:
     return GroupService(uow)
 
 
-@router.get("/", response_model=List[GroupResponse])
+@router.get("", response_model=List[GroupResponse])
 @endpoint_handler("get_groups")
 async def get_groups(
     skip: int = 0,
@@ -63,7 +63,7 @@ async def get_groups(
     ) for g in paginated_groups]
 
 
-@router.post("/", response_model=GroupResponse, status_code=201)
+@router.post("", response_model=GroupResponse, status_code=201)
 @endpoint_handler("create_group")
 async def create_group(
     group: GroupCreate,

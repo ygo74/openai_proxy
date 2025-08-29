@@ -360,6 +360,33 @@ class ApiClient:
         """
         return self._make_request("GET", f"/v1/admin/users/{user_id}")
 
+    def get_user_token_usage(self, user_id: str, days: int = 30) -> Dict[str, Any]:
+        """Get token usage statistics for a user.
+
+        Args:
+            user_id: User ID
+            days: Number of days to look back for statistics
+
+        Returns:
+            Dictionary containing token usage statistics
+        """
+        params = {"days": days}
+        return self._make_request("GET", f"/v1/admin/users/{user_id}/token-usage", params=params)
+
+    def get_user_token_usage_details(self, user_id: str, days: int = 30, limit: int = 100) -> List[Dict[str, Any]]:
+        """Get detailed token usage records for a user.
+
+        Args:
+            user_id: User ID
+            days: Number of days to look back for statistics
+            limit: Maximum number of records to return
+
+        Returns:
+            List of token usage detail records
+        """
+        params = {"days": days, "limit": limit}
+        return self._make_request("GET", f"/v1/admin/users/{user_id}/token-usage/details", params=params)
+
     def get_user_by_username(self, username: str) -> Dict[str, Any]:
         """Get user by username.
 

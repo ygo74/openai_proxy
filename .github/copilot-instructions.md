@@ -92,6 +92,64 @@ class GroupMapper:
     def to_domain(orm: GroupORM) -> Group: ...
 ```
 
+## 🏭 Repository and Unit of Work Patterns
+
+**Unit of Work** - Transaction Management:
+- `domain/unit_of_work.py` - Defines `UnitOfWork` protocol and abstract class
+- `infrastructure/db/unit_of_work.py` - SQLAlchemy implementation (`SQLUnitOfWork`)
+- Encapsulates DB transactions and ensures automatic commit/rollback
+
+**Repository Pattern** - Data Access:
+- `domain/repositories/base.py` - Base interface (`BaseRepository`)
+- `domain/repositories/[model]_repository.py` - Specific interface (e.g., `IGroupRepository`)
+- `infrastructure/db/repositories/[model]_repository.py` - Implementation (e.g., `SQLGroupRepository`)
+- Centralizes DB queries and decouples business logic from persistence
+
+**Example Repository Implementation**:
+```python
+# Domain repository interface
+class IUserRepository(Protocol):
+    def get_by_id(self, user_id: int) -> Optional[User]: ...
+    def get_by_username(self, username: str) -> Optional[User]: ...
+    def add(self, user: User) -> User: ...
+    def get_all(self) -> List[User]: ...
+
+# Infrastructure implementation
+class SQLUserRepository(SQLBaseRepository[User, UserORM], IUserRepository):
+    def __init__(self, session: Session):
+        super().__init__(session, UserORM, UserMapper)
+
+    def get_by_username(self, username: str) -> Optional[User]:
+        stmt = select(UserORM).where(UserORM.username == username)
+        result = self._session.execute(stmt)
+        user_orm = result.scalar_one_or_none()
+
+        return self._mapper.to_domain(user_orm) if user_orm else None
+```
+
+**Combined Usage**:
+```python
+class UserService:
+    def __init__(self, uow: UnitOfWork, repository_factory: Optional[callable] = None):
+        self._uow = uow
+        self._repository_factory = repository_factory or (lambda session: SQLUserRepository(session))
+
+    def get_user(self, user_id: int) -> User:
+        with self._uow as uow:
+            repository = self._repository_factory(uow.session)
+            user = repository.get_by_id(user_id)
+            if not user:
+                raise EntityNotFoundError("User", str(user_id))
+            return user
+```
+
+**Benefits**:
+- Facilitates mocking for unit tests (replace repositories)
+- Clear transaction boundaries
+- Separation of concerns (session creation vs DB queries)
+- Consistent multi-table transactions
+- Domain services remain independent of ORM implementation
+
 ## 🧪 Testing Strategy
 
 **Layer-based test organization** matching onion architecture:

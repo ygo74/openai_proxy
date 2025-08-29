@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from jose import jwt, JWTError, ExpiredSignatureError
 import logging
 
-from ..decorators import endpoint_handler
+from ..decorators.decorators import endpoint_handler
 from ..security.auth import auth_jwt_or_api_key
 from ....domain.models.autenticated_user import AuthenticatedUser
 from ....config.settings import settings

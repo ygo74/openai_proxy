@@ -1,7 +1,7 @@
 """User endpoints module."""
 from typing import List, Optional, Dict, Any
-from datetime import datetime
-from fastapi import APIRouter, Depends
+from datetime import datetime, timedelta
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
 import logging
@@ -9,8 +9,9 @@ import logging
 from ....infrastructure.db.session import get_db
 from ....infrastructure.db.unit_of_work import SQLUnitOfWork
 from ....application.services.user_service import UserService
+from ....application.services.token_usage_service import TokenUsageService
 from ....domain.models.user import User, ApiKey
-from ..decorators import endpoint_handler
+from ..decorators.decorators import endpoint_handler
 from ..security.auth import require_admin_role
 from ....domain.models.autenticated_user import AuthenticatedUser
 
@@ -60,12 +61,29 @@ class ApiKeyCreateResponse(BaseModel):
     api_key: str
     key_info: ApiKeyResponse
 
+class TokenUsageDetailResponse(BaseModel):
+    """Token usage detail response schema."""
+    id: int
+    user_id: str
+    model: str
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    timestamp: datetime
+    request_id: Optional[str] = None
+    endpoint: str
+
 def get_user_service(db: Session = Depends(get_db)) -> UserService:
     """Create UserService instance with Unit of Work."""
     session_factory = lambda: db
     uow = SQLUnitOfWork(session_factory)
     return UserService(uow)
 
+def get_token_usage_service(db: Session = Depends(get_db)) -> TokenUsageService:
+    """Create TokenUsageService instance with Unit of Work."""
+    session_factory = lambda: db
+    uow = SQLUnitOfWork(session_factory)
+    return TokenUsageService(uow)
 
 def map_user_to_response(user: User) -> UserResponse:
     """Map User domain model to UserResponse schema."""
@@ -91,7 +109,7 @@ def map_api_key_to_response(api_key: ApiKey) -> ApiKeyResponse:
         last_used_at=api_key.last_used_at
     )
 
-@router.get("/", response_model=List[UserResponse])
+@router.get("", response_model=List[UserResponse])
 @endpoint_handler("get_users")
 async def get_users(
     skip: int = 0,
@@ -111,7 +129,7 @@ async def get_users(
 
     return [map_user_to_response(u) for u in paginated_users]
 
-@router.post("/", response_model=UserResponse, status_code=201)
+@router.post("", response_model=UserResponse, status_code=201)
 @endpoint_handler("create_user")
 async def create_user(
     user: UserCreate,
@@ -235,3 +253,94 @@ async def create_api_key(
         api_key=plain_key,
         key_info=map_api_key_to_response(api_key)
     )
+
+@router.get("/{user_id}/token-usage")
+@endpoint_handler("get_user_token_usage")
+async def get_user_token_usage(
+    user_id: str,
+    days: Optional[int] = Query(30, description="Number of days to look back"),
+    user_service: UserService = Depends(get_user_service),
+    token_service: TokenUsageService = Depends(get_token_usage_service),
+    authenticated_user: AuthenticatedUser = Depends(require_admin_role)
+) -> Dict[str, Any]:
+    """
+    Get token usage statistics for a specific user.
+
+    Args:
+        user_id: The ID of the user
+        days: Number of days to look back for statistics
+
+    Returns:
+        Dictionary containing token usage statistics
+    """
+    # Verify user exists
+    user = user_service.get_user_by_id(user_id)
+
+    # Calculate date range
+    to_date = datetime.now()
+    from_date = to_date - timedelta(days=days)
+
+    # Get token usage summary
+    usage_summary = token_service.get_user_usage_summary(
+        user_id=user.username,
+        from_date=from_date,
+        to_date=to_date
+    )
+
+    # Add user information to the response
+    usage_summary["username"] = user.username
+    usage_summary["email"] = user.email
+    usage_summary["days"] = days
+
+    return usage_summary
+
+@router.get("/{user_id}/token-usage/details")
+@endpoint_handler("get_user_token_usage_details")
+async def get_user_token_usage_details(
+    user_id: str,
+    days: Optional[int] = Query(30, description="Number of days to look back"),
+    limit: Optional[int] = Query(100, description="Maximum number of records to return"),
+    user_service: UserService = Depends(get_user_service),
+    token_service: TokenUsageService = Depends(get_token_usage_service),
+    authenticated_user: AuthenticatedUser = Depends(require_admin_role)
+) -> List[TokenUsageDetailResponse]:
+    """
+    Get detailed token usage records for a specific user.
+
+    Args:
+        user_id: The ID of the user
+        days: Number of days to look back
+        limit: Maximum number of records to return
+
+    Returns:
+        List of detailed token usage records
+    """
+    # Verify user exists
+    user = user_service.get_user_by_id(user_id)
+
+    # Calculate date range
+    to_date = datetime.now()
+    from_date = to_date - timedelta(days=days)
+
+    # Get detailed token usage records
+    usage_details = token_service.get_user_token_usage_details(
+        user_id=user.username,
+        from_date=from_date,
+        to_date=to_date,
+        limit=limit
+    )
+
+    # Map to response model
+    return [
+        TokenUsageDetailResponse(
+            id=record.id,
+            user_id=record.user_id,
+            model=record.model,
+            prompt_tokens=record.prompt_tokens,
+            completion_tokens=record.completion_tokens,
+            total_tokens=record.total_tokens,
+            timestamp=record.timestamp,
+            request_id=record.request_id,
+            endpoint=record.endpoint
+        ) for record in usage_details
+    ]

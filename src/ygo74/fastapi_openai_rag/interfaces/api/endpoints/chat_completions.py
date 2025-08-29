@@ -1,6 +1,6 @@
 """OpenAI-compatible chat completions endpoints."""
 from typing import List, Dict, Any, Union
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 import logging
 import json
@@ -12,28 +12,17 @@ from ....infrastructure.db.unit_of_work import SQLUnitOfWork
 from ....application.services.chat_completion_service import ChatCompletionService
 from ....domain.models.chat_completion import ChatCompletionRequest, ChatCompletionResponse
 from ....domain.models.completion import CompletionRequest, CompletionResponse
-from ..decorators import endpoint_handler
+from ..decorators.decorators import endpoint_handler, track_token_usage
 from ....domain.models.autenticated_user import AuthenticatedUser
 from ..security.auth import auth_jwt_or_api_key
 from .models import map_model_list_to_response, ModelResponse
 from ..utils.override_stream_response import OverrideStreamResponse
+from ..utils.json_encoder import DateTimeEncoder
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 router = APIRouter()
-
-# src/ygo74/fastapi_openai_rag/interfaces/api/endpoints/chat_completions.py
-
-class DateTimeEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, datetime):
-            return obj.isoformat()
-        elif hasattr(obj, 'model_dump'):  # For Pydantic models (like ChatCompletionStreamResponse)
-            return obj.model_dump()
-        elif hasattr(obj, 'dict'):  # Fallback for older Pydantic versions
-            return obj.dict()
-        return super().default(obj)
 
 def get_chat_completion_service(db: Session = Depends(get_db)) -> ChatCompletionService:
     """Create ChatCompletionService instance with Unit of Work.
@@ -50,7 +39,9 @@ def get_chat_completion_service(db: Session = Depends(get_db)) -> ChatCompletion
 
 @router.post("/completions", response_model=CompletionResponse)
 @endpoint_handler("create_completion")
+@track_token_usage()  # Track token usage automatically
 async def create_completion(
+    request: Request,
     completion_request: CompletionRequest,
     service: ChatCompletionService = Depends(get_chat_completion_service),
     user: AuthenticatedUser = Depends(auth_jwt_or_api_key)
@@ -76,8 +67,10 @@ async def create_completion(
 
 @router.post("/chat/completions", response_model=ChatCompletionResponse)
 @endpoint_handler("create_chat_completion")
+@track_token_usage()  # Track token usage automatically
 async def create_chat_completion(
-    request: ChatCompletionRequest,
+    request: Request,
+    chat_completion_request: ChatCompletionRequest,
     service: ChatCompletionService = Depends(get_chat_completion_service),
     user: AuthenticatedUser = Depends(auth_jwt_or_api_key)
 ) -> Any:  # Return type is either ChatCompletionResponse or OverrideStreamResponse
@@ -97,12 +90,12 @@ async def create_chat_completion(
     # Extract user groups for authorization
     user_groups = user.groups if user else None
 
-    if request.stream:
+    if chat_completion_request.stream:
         # Return streaming response
         async def generate_stream():
             logger.debug("Starting SSE streaming generation")
             try:
-                async for chunk in service.create_chat_completion_stream(request, user_groups=user_groups):
+                async for chunk in service.create_chat_completion_stream(chat_completion_request, user_groups=user_groups):
                     # Serialize the chunk with proper content type and format
                     if hasattr(chunk, 'model_dump_json'):
                         # For newer Pydantic (v2+)
@@ -145,7 +138,7 @@ async def create_chat_completion(
         )
     else:
         # Regular response
-        response = await service.create_chat_completion(request, user_groups=user_groups)
+        response = await service.create_chat_completion(chat_completion_request, user_groups=user_groups)
         return response
 
 @router.get("/models")
