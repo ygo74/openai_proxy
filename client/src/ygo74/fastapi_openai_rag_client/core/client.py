@@ -205,6 +205,14 @@ class ApiClient:
 
         return self._make_request("GET", "/v1/admin/models", params=params)
 
+    def refresh_models(self) -> List[Dict[str, Any]]:
+        """Refresh models from all configured providers.
+        Returns:
+            List of refreshed model objects
+        """
+        return self._make_request("POST", "/v1/admin/models/refresh")
+
+
     def get_model(self, model_id: int) -> Dict[str, Any]:
         """Get model by ID.
 

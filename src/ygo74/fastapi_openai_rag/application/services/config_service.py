@@ -121,7 +121,7 @@ class ConfigService:
             db_url = config.db_url
         elif config.db_type == "postgres":
             # TODO: Add PostgreSQL support
-            raise NotImplementedError("PostgreSQL support is not implemented yet")
+            db_url = config.db_url
         else:
             raise ValueError(f"Unsupported database type: {config.db_type}")
 

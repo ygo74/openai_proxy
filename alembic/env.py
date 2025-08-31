@@ -5,6 +5,8 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 from sqlalchemy.engine import Connection
 
+import logging
+
 # Ensure "src" is on sys.path to import project modules
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC_DIR = os.path.join(BASE_DIR, "src")
@@ -27,6 +29,7 @@ target_metadata = Base.metadata
 # Resolve DB URL: prefer env var, fallback to alembic.ini
 db_url = os.getenv("DATABASE_URL") or config.get_main_option("sqlalchemy.url")
 config.set_main_option("sqlalchemy.url", db_url)
+logging.getLogger("alembic.env").info(f"Alembic DB URL: {db_url}")
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""

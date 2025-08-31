@@ -5,7 +5,7 @@ asgiref==3.9.1
 black==24.10.0
 build==1.2.2.post1
 CacheControl==0.14.3
-cachetools==5.3.3
+cachetools==5.5.2
 certifi==2025.7.14
 cffi==1.17.1
 charset-normalizer==3.4.3
@@ -23,7 +23,7 @@ dulwich==0.22.8
 ecdsa==0.19.1
 email_validator==2.2.0
 fastapi==0.115.12
--e git+https://github.com/ygo74/openai_proxy.git@2b186cb39704041f6f9647bb0b52d200f05aabd1#egg=fastapi_openai_rag
+-e git+https://github.com/ygo74/openai_proxy.git@f08fb94a2c687f5cbd6b65970e3b279799725ee1#egg=fastapi_openai_rag
 fastjsonschema==2.21.1
 filelock==3.18.0
 findpython==0.6.3
@@ -83,6 +83,7 @@ pluggy==1.6.0
 poetry==2.1.3
 poetry-core==2.1.3
 protobuf==6.32.0
+psycopg-binary==3.2.9
 pyasn1==0.6.1
 pycodestyle==2.14.0
 pycparser==2.22
@@ -117,10 +118,11 @@ tqdm==4.67.1
 trove-classifiers==2025.5.9.12
 typing-inspection==0.4.1
 typing_extensions==4.13.2
+unique_sdk==0.10.15
 urllib3==2.5.0
 uvicorn==0.34.2
 virtualenv==20.31.2
 wrapt==1.17.3
--e git+https://github.com/ygo74/openai_proxy.git@2b186cb39704041f6f9647bb0b52d200f05aabd1#egg=ygo74.fastapi_openai_rag
+-e git+https://github.com/ygo74/openai_proxy.git@f08fb94a2c687f5cbd6b65970e3b279799725ee1#egg=ygo74.fastapi_openai_rag
 zipp==3.23.0
 zstandard==0.23.0

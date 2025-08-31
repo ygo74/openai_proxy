@@ -16,6 +16,7 @@
         }
     ],
     "db_type": "sqlite",
+    "db_url": "sqlite:///./models.db",
     "forwarders": {
         "print": {
             "enabled": true,
