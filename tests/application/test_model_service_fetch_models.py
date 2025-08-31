@@ -1,7 +1,7 @@
 """Tests for ModelService fetch_available_models method."""
 import sys
 import os
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Union
 import pytest
 from unittest.mock import Mock, MagicMock, patch, AsyncMock
 from datetime import datetime, timezone
@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
 
 from ygo74.fastapi_openai_rag.application.services.model_service import ModelService
-from ygo74.fastapi_openai_rag.domain.models.configuration import ModelConfig
+from ygo74.fastapi_openai_rag.domain.models.configuration import ModelConfig, AzureModelConfig
 from ygo74.fastapi_openai_rag.domain.models.llm import LLMProvider
 from ygo74.fastapi_openai_rag.domain.models.llm_model import LlmModelStatus
 from ygo74.fastapi_openai_rag.domain.protocols.llm_client import LLMClientProtocol
@@ -42,7 +42,7 @@ def repository_factory():
 
 
 @pytest.fixture
-def model_configs():
+def model_configs() -> List[Union[ModelConfig, AzureModelConfig]]:
     """Create test model configurations."""
     return [
         ModelConfig(
@@ -50,16 +50,21 @@ def model_configs():
             technical_name="openai_config",
             provider="openai",
             url="https://api.openai.com",
-            api_key="test-key",
-            api_version="v1"
+            api_key="test-key"
         ),
-        ModelConfig(
+        AzureModelConfig(
             name="Azure GPT-4",
             technical_name="azure_config",
             provider="azure",
             url="https://azure-openai.azure.com",
             api_key="test-azure-key",
-            api_version="2023-05-15"
+            api_version="2023-05-15",
+            tenant_id="test-tenant",
+            client_id="test-client",
+            client_secret="test-secret",
+            subscription_id="test-subscription",
+            resource_group="test-group",
+            resource_name="test-resource"
         )
     ]
 
@@ -119,8 +124,7 @@ async def test_model_service_fetch_available_models_unknown_provider(mock_uow, r
             technical_name="unknown_config",
             provider="unknown",
             url="https://unknown-api.com",
-            api_key="test-key",
-            api_version="v1"
+            api_key="test-key"
         )
     ]
 

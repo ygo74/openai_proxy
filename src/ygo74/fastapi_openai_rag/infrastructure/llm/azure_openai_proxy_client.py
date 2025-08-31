@@ -1,13 +1,9 @@
 """Azure OpenAI proxy client for Azure-specific API calls."""
-import asyncio
 import httpx
 import json
 import time
 import uuid
-import ssl
-import os
-import urllib.parse
-from typing import Dict, Any, Optional, AsyncGenerator, List, Union
+from typing import Dict, Any, Optional, AsyncGenerator, AsyncIterator, List
 from datetime import datetime, timezone
 
 from ...domain.models.chat_completion import (
@@ -18,6 +14,9 @@ from ...domain.models.completion import (
     CompletionRequest, CompletionResponse, CompletionChoice
 )
 from ...domain.models.llm import LLMProvider, TokenUsage
+from ...domain.protocols.llm_client import LLMClientProtocol
+
+from .azure_management_client import AzureManagementClient
 from .http_client_factory import HttpClientFactory
 from .retry_handler import with_enterprise_retry, LLMRetryHandler
 from .enterprise_config import EnterpriseConfig
@@ -25,11 +24,11 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-class AzureOpenAIProxyClient:
+class AzureOpenAIProxyClient(LLMClientProtocol):
     """Azure OpenAI proxy client with API versioning support and retry resilience."""
 
     def __init__(self, api_key: str, base_url: str, api_version: str, provider: LLMProvider = LLMProvider.AZURE,
-                 management_client: Optional['AzureManagementClient'] = None,
+                 management_client: Optional[AzureManagementClient] = None,
                  enterprise_config: Optional[EnterpriseConfig] = None):
         """Initialize Azure OpenAI proxy client with enterprise configuration.
 
@@ -319,7 +318,7 @@ class AzureOpenAIProxyClient:
             timeout=120.0
         )
 
-    async def chat_completion_stream(self, request: ChatCompletionRequest):
+    async def chat_completion_stream(self, request: ChatCompletionRequest) -> AsyncGenerator[ChatCompletionStreamResponse, None]:
         """Stream chat completion via Azure OpenAI API.
 
         Args:

@@ -25,8 +25,8 @@ class Base(DeclarativeBase):
 logger.debug("Importing ORM models...")
 
 try:
-    from .model_orm import ModelORM, AzureModelORM
-    logger.debug("ModelORM and AzureModelORM imported")
+    from .model_orm import ModelORM
+    logger.debug("ModelORM imported")
 except ImportError as e:
     logger.warning(f"Could not import ModelORM: {e}")
 
