@@ -419,3 +419,67 @@ class UserService:
             result = repository.update(updated_user)
             logger.info(f"Groups synced for user {user_id}")
             return result
+
+    def remove_user_groups(self, user_id: str, groups: List[str]) -> User:
+        """Remove one or multiple groups from a user.
+
+        Args:
+            user_id (str): User ID
+            groups (List[str]): Group names to remove
+
+        Returns:
+            User: Updated user after removal
+
+        Raises:
+            EntityNotFoundError: If user not found
+        """
+        logger.info(f"Removing groups {groups} from user {user_id}")
+        with self._uow as uow:
+            repository: IUserRepository = self._repository_factory(uow.session)
+
+            existing_user: Optional[User] = repository.get_by_id(user_id)
+            if not existing_user:
+                logger.error(f"User {user_id} not found for group removal")
+                raise EntityNotFoundError("User", str(user_id))
+
+            for group_name in groups:
+                repository.remove_user_from_group(user_id, group_name)
+
+            updated_user: Optional[User] = repository.get_by_id(user_id)
+            logger.info(f"Groups removed from user {user_id}")
+            return updated_user  # type: ignore[return-value]
+
+    def add_user_groups(self, user_id: str, groups: List[str]) -> User:
+        """Add one or multiple groups to a user.
+
+        Ensures groups exist before association.
+
+        Args:
+            user_id (str): User ID
+            groups (List[str]): Group names to add
+
+        Returns:
+            User: Updated user after addition
+
+        Raises:
+            EntityNotFoundError: If user not found
+        """
+        logger.info(f"Adding groups {groups} to user {user_id}")
+        if groups:
+            # Ensure target groups exist
+            self._group_service.ensure_groups_exist(groups)
+
+        with self._uow as uow:
+            repository: IUserRepository = self._repository_factory(uow.session)
+
+            existing_user: Optional[User] = repository.get_by_id(user_id)
+            if not existing_user:
+                logger.error(f"User {user_id} not found for group addition")
+                raise EntityNotFoundError("User", str(user_id))
+
+            for group_name in groups:
+                repository.add_user_to_group(user_id, group_name)
+
+            updated_user: Optional[User] = repository.get_by_id(user_id)
+            logger.info(f"Groups added to user {user_id}")
+            return updated_user  # type: ignore[return-value]

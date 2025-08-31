@@ -61,6 +61,10 @@ class ApiKeyCreateResponse(BaseModel):
     api_key: str
     key_info: ApiKeyResponse
 
+class GroupsUpdate(BaseModel):
+    """Payload model for adding/removing groups on a user."""
+    groups: List[str]
+
 class TokenUsageDetailResponse(BaseModel):
     """Token usage detail response schema."""
     id: int
@@ -198,6 +202,30 @@ async def update_user(
     )
 
     return map_user_to_response(updated_user)
+
+@router.post("/{user_id}/groups/add", response_model=UserResponse)
+@endpoint_handler("add_user_groups")
+async def add_user_groups(
+    user_id: str,
+    payload: GroupsUpdate,
+    service: UserService = Depends(get_user_service),
+    authenticated_user: AuthenticatedUser = Depends(require_admin_role)
+) -> UserResponse:
+    """Add one or multiple groups to a user."""
+    updated: User = service.add_user_groups(user_id, payload.groups)
+    return map_user_to_response(updated)
+
+@router.post("/{user_id}/groups/remove", response_model=UserResponse)
+@endpoint_handler("remove_user_groups")
+async def remove_user_groups(
+    user_id: str,
+    payload: GroupsUpdate,
+    service: UserService = Depends(get_user_service),
+    authenticated_user: AuthenticatedUser = Depends(require_admin_role)
+) -> UserResponse:
+    """Remove one or multiple groups from a user."""
+    updated: User = service.remove_user_groups(user_id, payload.groups)
+    return map_user_to_response(updated)
 
 @router.delete("/{user_id}")
 @endpoint_handler("delete_user")
