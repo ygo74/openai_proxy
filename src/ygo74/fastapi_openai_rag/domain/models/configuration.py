@@ -22,7 +22,6 @@ class ModelConfig(BaseModel):
     url: str
     provider: str
     api_key: Optional[str] = None
-    api_version: Optional[str] = None  # For Azure models
     rate_limit: Optional[int] = None
     capabilities: Dict[str, Any] = {}
 
@@ -45,6 +44,19 @@ class AzureModelConfig(ModelConfig):
         if isinstance(values, dict):
             values['provider'] = 'azure'
         return values
+
+class UniqueModelConfig(ModelConfig):
+    """Configuration for Unique models.
+
+    Attributes:
+        api_key: API key for Unique
+        base_url: Base URL for Unique API (optional)
+        company_id: Company ID for Unique API calls
+        user_id: Default user ID for Unique API calls (optional)
+    """
+    app_id: str
+    company_id: str
+    user_id: Optional[str] = None
 
 class ForwarderConfig(BaseModel):
     """Base configuration for audit log forwarders."""
@@ -77,12 +89,12 @@ class AppConfig(BaseModel):
     """AppConfig is a configuration model for the application.
 
     Attributes:
-        model_configs (List[Union[ModelConfig, AzureModelConfig]]): List of model configurations
+        model_configs (List[Union[ModelConfig, AzureModelConfig, UniqueModelConfig]]): List of model configurations
         db_type (str): The type of database being used
         forwarders (ForwardersConfig): Configuration for audit forwarders
         audit (AuditConfig): Configuration for audit functionality
     """
-    model_configs: List[Union[ModelConfig, AzureModelConfig]]
+    model_configs: List[Union[ModelConfig, AzureModelConfig, UniqueModelConfig]]
     db_type: str
     forwarders: ForwardersConfig = ForwardersConfig()
     audit: AuditConfig = AuditConfig()
@@ -107,16 +119,11 @@ class AppConfig(BaseModel):
             processed_configs = []
             for model_config_data in config_data.get("model_configs", []):
                 if model_config_data.get("provider", "").lower() == "azure":
-                    # Check if it has Azure-specific fields
-                    azure_fields = ["tenant_id", "client_id", "client_secret",
-                                   "subscription_id", "resource_group", "resource_name"]
-
-                    if all(field in model_config_data for field in azure_fields):
-                        # It's an Azure config with management fields
-                        processed_configs.append(AzureModelConfig(**model_config_data))
-                    else:
-                        # It's a basic Azure config without management fields
-                        processed_configs.append(ModelConfig(**model_config_data))
+                    # It's an Azure config with management fields
+                    processed_configs.append(AzureModelConfig(**model_config_data))
+                elif model_config_data.get("provider", "").lower() == "unique":
+                    # It's a Unique config
+                    processed_configs.append(UniqueModelConfig(**model_config_data))
                 else:
                     # It's a regular model config
                     processed_configs.append(ModelConfig(**model_config_data))

@@ -1,5 +1,5 @@
 """Mapper for Model domain and ORM entities."""
-from typing import List
+from typing import List, Dict, Any
 from ....domain.models.llm_model import LlmModel, LlmModelStatus
 from ....domain.models.llm import LLMProvider
 from ..models.model_orm import ModelORM
@@ -37,14 +37,15 @@ class ModelMapper:
             "azure": LLMProvider.AZURE,
             "anthropic": LLMProvider.ANTHROPIC,
             "mistral": LLMProvider.MISTRAL,
-            "cohere": LLMProvider.COHERE
+            "cohere": LLMProvider.COHERE,
+            "unique": LLMProvider.UNIQUE  # Add Unique provider mapping
         }
 
         provider = provider_mapping.get(provider_value)
         if not provider:
             raise ValueError(f"Invalid provider: {orm_model.provider}")
 
-        base_data = {
+        base_data: Dict[str, Any] = {
             "id": orm_model.id,
             "url": orm_model.url or "",
             "name": orm_model.name or "",
@@ -71,7 +72,7 @@ class ModelMapper:
         """
         from .group_mapper import GroupMapper
 
-        base_data = {
+        base_data: Dict[str, Any] = {
             "id": domain_model.id,
             "url": domain_model.url,
             "name": domain_model.name,
@@ -83,7 +84,6 @@ class ModelMapper:
             "capabilities": domain_model.capabilities
         }
 
-        # Create ORM model instance
         orm_model = ModelORM(**base_data)
 
         # Map related groups if they exist

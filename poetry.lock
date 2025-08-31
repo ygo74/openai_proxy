@@ -1927,6 +1927,22 @@ files = [
 typing-extensions = ">=4.12.0"
 
 [[package]]
+name = "unique-sdk"
+version = "0.10.15"
+description = ""
+optional = false
+python-versions = "<4.0,>=3.11"
+groups = ["main"]
+files = [
+    {file = "unique_sdk-0.10.15-py3-none-any.whl", hash = "sha256:e402c5425b6df3656c8de6f92d23b3c1972ed89340a6fd00f5a187557eb50dec"},
+    {file = "unique_sdk-0.10.15.tar.gz", hash = "sha256:c95b60f3eb86a6b3440017c87f5a51d6f6b81019a4321d471f1abd814bfc461a"},
+]
+
+[package.dependencies]
+requests = ">=2.32.3,<3.0.0"
+typing-extensions = ">=4.9.0,<5.0.0"
+
+[[package]]
 name = "urllib3"
 version = "2.5.0"
 description = "HTTP library with thread-safe connection pooling, file post, and more."
@@ -2077,4 +2093,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.11"
-content-hash = "f262ff6c2ae8065ba90f67bdda35c50e5e50d399a8e5829f5526bb0b71c55351"
+content-hash = "8b95aeceb99549e16169244edb511162cca22fb926b457f1507ac8a0247f5dd0"
