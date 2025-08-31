@@ -29,6 +29,7 @@ class UserService:
         self._uow = uow
         self._repository_factory = repository_factory or (lambda session: UserRepository(session))
         self._group_service = GroupService(uow, repository_factory)
+
         logger.debug("UserService initialized with Unit of Work")
 
     def add_or_update_user(self, user_id: Optional[str] = None,
@@ -61,6 +62,10 @@ class UserService:
                     logger.error(f"User {user_id} not found for update")
                     raise EntityNotFoundError("User", str(user_id))
 
+                if groups is not None:
+                    # Ensure groups exist before updating relationship
+                    self._group_service.ensure_groups_exist(groups)
+
                 updated_user: User = User(
                     id=user_id,
                     username=username or existing_user.username,
@@ -90,6 +95,10 @@ class UserService:
                 if existing_email:
                     logger.warning(f"User with email {email} already exists")
                     raise EntityAlreadyExistsError("User", f"email {email}")
+
+            if groups:
+                # Ensure groups exist before creating relationship
+                self._group_service.ensure_groups_exist(groups)
 
             new_user: User = User(
                 id=str(uuid.uuid4()),
