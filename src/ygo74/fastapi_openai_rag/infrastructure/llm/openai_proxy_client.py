@@ -16,13 +16,15 @@ from ...domain.models.completion import (
     CompletionRequest, CompletionResponse, CompletionChoice
 )
 from ...domain.models.llm import LLMProvider, TokenUsage
+from ...domain.protocols.llm_client import LLMClientProtocol
+
 from .http_client_factory import HttpClientFactory
 from .retry_handler import with_enterprise_retry
 import logging
 
 logger = logging.getLogger(__name__)
 
-class OpenAIProxyClient:
+class OpenAIProxyClient(LLMClientProtocol):
     """Transparent OpenAI proxy client for compatible providers."""
 
     def __init__(self, api_key: str, base_url: str, provider: LLMProvider,
@@ -291,7 +293,7 @@ class OpenAIProxyClient:
         return not supports_completions
 
     @with_enterprise_retry
-    async def stream_chat_completion(self, request: ChatCompletionRequest) -> AsyncGenerator[ChatCompletionStreamResponse, None]:
+    async def chat_completion_stream(self, request: ChatCompletionRequest) -> AsyncGenerator[ChatCompletionStreamResponse, None]:
         """Stream chat completion via transparent proxy.
 
         Args:

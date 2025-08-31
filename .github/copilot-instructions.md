@@ -27,18 +27,16 @@ FastAPI-based LLM proxy supporting OpenAI-compatible APIs for multiple providers
 
 Two distinct auth flows:
 
-**Management endpoints** (`@require_oauth_role(["admin"])`):
+**Management endpoints** (`Depends(require_admin_role)`):
 ```python
 @app.get("/admin/models")
-@require_oauth_role(required_roles=["admin"])
-async def admin_endpoint(request: Request, user: dict = None):
+async def admin_endpoint(request: Request, authenticated_user: AuthenticatedUser = Depends(require_admin_role)):
 ```
 
-**Chat endpoints** (`@require_apikey_or_bearer()`):
+**Chat endpoints** (`Depends(auth_jwt_or_api_key)`):
 ```python
 @app.post("/v1/chat/completions")
-@require_apikey_or_bearer()
-async def chat_endpoint(request: Request, user: dict = None):
+async def chat_endpoint(request: Request, user: AuthenticatedUser = Depends(auth_jwt_or_api_key)):
 ```
 
 ## 🤖 LLM Client Architecture

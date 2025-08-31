@@ -1,5 +1,4 @@
 """User mapper for domain/ORM conversion."""
-import json
 from typing import List, Optional
 from ....domain.models.user import User, ApiKey
 from ..models.user_orm import UserORM, ApiKeyORM
@@ -18,8 +17,8 @@ class UserMapper(BaseMapper[User, UserORM]):
         Returns:
             User: Domain model
         """
-        # Parse groups from JSON string
-        groups = json.loads(orm.groups) if orm.groups else []
+        # Map groups from relationship to list of names
+        groups = [g.name for g in (orm.groups or [])]
 
         # Convert API keys - ensure they are loaded
         api_keys = []
@@ -47,8 +46,7 @@ class UserMapper(BaseMapper[User, UserORM]):
         Returns:
             UserORM: ORM model
         """
-        groups_json = json.dumps(domain.groups) if domain.groups else None
-
+        # Do not set groups here; repository will attach GroupORMs
         user_orm = UserORM(
             id=domain.id,
             username=domain.username,
@@ -56,7 +54,6 @@ class UserMapper(BaseMapper[User, UserORM]):
             is_active=domain.is_active,
             created_at=domain.created_at,
             updated_at=domain.updated_at,
-            groups=groups_json
         )
 
         # Convert API keys to ORM

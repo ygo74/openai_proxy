@@ -211,8 +211,8 @@ if __name__ == "__main__":
             proxy_url="http://localhost:8000",
             api_key="sk-16AwYoZqNoVKjfMz-Mr8TeuaXk3O6JeLwPdQSAQiF0s",
             # api_key="sk-Uhw0UnymWqxlBcI13rv3644-ZwvXXmq_WjrTFvni62A",
-            # model="gpt-4o"
-            model="Unique_GPT-4o"
+            model="gpt-4o"
+            # model="Unique_GPT-4o"
         )
         print("✅ Chat model created successfully")
 
@@ -221,8 +221,8 @@ if __name__ == "__main__":
             proxy_url="http://localhost:8000",
             api_key="sk-16AwYoZqNoVKjfMz-Mr8TeuaXk3O6JeLwPdQSAQiF0s",
             # api_key="sk-Uhw0UnymWqxlBcI13rv3644-ZwvXXmq_WjrTFvni62A",
-            # model="gpt-4o"
-            model="Unique_GPT-4o"
+            model="gpt-4o"
+            # model="Unique_GPT-4o"
         )
         print("✅ LLM created successfully")
 
@@ -235,19 +235,20 @@ if __name__ == "__main__":
         print("   # For completion:")
         print("   response = llm.invoke('Tell me a joke')")
 
-        # response = llm.invoke('Who are you')
-        # print(f"🤖 LLM response: {response}")
+        response = llm.invoke('Who are you')
+        print(f"🤖 LLM response: {response}")
 
         from langchain_core.messages import HumanMessage
         messages = [HumanMessage(content='Hello!, who are you ? can you give me you cutoff date')]
 
-        # chunks = []
-        # for chunk in chat_model.stream(messages):
-        #     chunks.append(chunk)
-        #     print(chunk.content, end="|", flush=True)
-
         response = chat_model.invoke(messages)
         print(f"🤖 LLM response: {response}")
+
+
+        chunks = []
+        for chunk in chat_model.stream(messages):
+            chunks.append(chunk)
+            print(chunk.content, end="|", flush=True)
 
 
     except Exception as e:

@@ -1,12 +1,12 @@
 """User repository for database operations."""
 from datetime import datetime, timezone
-import json
 from typing import Optional, List
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import select, and_
 from ....domain.models.user import User, ApiKey
 from ....domain.repositories.user_repository import IUserRepository
 from ..models.user_orm import UserORM, ApiKeyORM
+from ..models.group_orm import GroupORM
 from ..mappers.user_mapper import UserMapper
 from .base_repository import SQLBaseRepository
 
@@ -22,7 +22,7 @@ class UserRepository(SQLBaseRepository[User, UserORM], IUserRepository):
         """
         super().__init__(session, UserORM, UserMapper)
 
-    def get_by_id(self, id: int) -> Optional[User]:
+    def get_by_id(self, id: str) -> Optional[User]:
         """Get user by ID.
 
         Args:
@@ -33,7 +33,10 @@ class UserRepository(SQLBaseRepository[User, UserORM], IUserRepository):
         """
         stmt = (
             select(UserORM)
-            .options(selectinload(UserORM.api_keys))
+            .options(
+                selectinload(UserORM.api_keys),
+                selectinload(UserORM.groups),
+            )
             .where(UserORM.id == id)
         )
 
@@ -53,7 +56,10 @@ class UserRepository(SQLBaseRepository[User, UserORM], IUserRepository):
         """
         stmt = (
             select(UserORM)
-            .options(selectinload(UserORM.api_keys))  #  Ensure API keys are loaded
+            .options(
+                selectinload(UserORM.api_keys),
+                selectinload(UserORM.groups),
+            )
         )
 
         result = self._session.execute(stmt)
@@ -71,6 +77,11 @@ class UserRepository(SQLBaseRepository[User, UserORM], IUserRepository):
             User: Added user
         """
         user_orm = UserMapper.to_orm(entity)
+        # Attach groups via association table
+        if entity.groups:
+            grp_stmt = select(GroupORM).where(GroupORM.name.in_(entity.groups))
+            groups = self._session.execute(grp_stmt).scalars().all()
+            user_orm.groups = groups
         self._session.add(user_orm)
         self._session.flush()
         self._session.refresh(user_orm)
@@ -87,10 +98,14 @@ class UserRepository(SQLBaseRepository[User, UserORM], IUserRepository):
             User: Updated user
         """
         user_orm = UserMapper.to_orm(entity)
-        self._session.merge(user_orm)
+        merged = self._session.merge(user_orm)
         self._session.flush()
-
-        # Refresh to get updated data
+        # Update group associations if provided (replace with new set)
+        if entity.groups is not None:
+            grp_stmt = select(GroupORM).where(GroupORM.name.in_(entity.groups))
+            groups = self._session.execute(grp_stmt).scalars().all()
+            merged.groups = groups
+            self._session.flush()
         updated_orm = self._session.get(UserORM, entity.id)
         return UserMapper.to_domain(updated_orm)
 
@@ -116,7 +131,10 @@ class UserRepository(SQLBaseRepository[User, UserORM], IUserRepository):
         """
         stmt = (
             select(UserORM)
-            .options(selectinload(UserORM.api_keys))
+            .options(
+                selectinload(UserORM.api_keys),
+                selectinload(UserORM.groups),
+            )
             .where(UserORM.username == username, UserORM.is_active == True)
         )
 
@@ -139,7 +157,10 @@ class UserRepository(SQLBaseRepository[User, UserORM], IUserRepository):
         """
         stmt = (
             select(UserORM)
-            .options(selectinload(UserORM.api_keys))
+            .options(
+                selectinload(UserORM.api_keys),
+                selectinload(UserORM.groups),
+            )
             .where(UserORM.email == email, UserORM.is_active == True)
         )
 
@@ -162,7 +183,10 @@ class UserRepository(SQLBaseRepository[User, UserORM], IUserRepository):
         """
         stmt = (
             select(ApiKeyORM)
-            .options(selectinload(ApiKeyORM.user).selectinload(UserORM.api_keys))
+            .options(
+                selectinload(ApiKeyORM.user).selectinload(UserORM.api_keys),
+                selectinload(ApiKeyORM.user).selectinload(UserORM.groups),
+            )
             .where(
                 ApiKeyORM.key_hash == key_hash,
                 ApiKeyORM.is_active == True,
@@ -190,7 +214,10 @@ class UserRepository(SQLBaseRepository[User, UserORM], IUserRepository):
         """
         stmt = (
             select(UserORM)
-            .options(selectinload(UserORM.api_keys))  # Ensure API keys are loaded
+            .options(
+                selectinload(UserORM.api_keys),
+                selectinload(UserORM.groups),
+            )
             .where(UserORM.is_active == True)
         )
 
@@ -199,33 +226,36 @@ class UserRepository(SQLBaseRepository[User, UserORM], IUserRepository):
 
         return [self._mapper.to_domain(user_orm) for user_orm in user_orms]
 
-    def add_user_to_group(self, user_id: int, group_name: str) -> None:
-        """
-        Add user to a group by updating the JSON groups field.
+    def add_user_to_group(self, user_id: str, group_name: str) -> None:
+        """Add user to a group by updating the relationship.
 
         Args:
             user_id: User's database ID
             group_name: Name of the group to add
         """
         user_orm = self._session.get(UserORM, user_id)
-        if user_orm:
-            current_groups = json.loads(user_orm.groups) if user_orm.groups else []
-            if group_name not in current_groups:
-                current_groups.append(group_name)
-                user_orm.groups = json.dumps(current_groups)
+        if not user_orm:
+            return
+        group = self._session.execute(
+            select(GroupORM).where(GroupORM.name == group_name)
+        ).scalar_one_or_none()
+        if group and group not in user_orm.groups:
+            user_orm.groups.append(group)
+            self._session.flush()
 
-    def remove_user_from_group(self, user_id: int, group_name: str) -> None:
-        """
-        Remove user from a group by updating the JSON groups field.
+    def remove_user_from_group(self, user_id: str, group_name: str) -> None:
+        """Remove user from a group by updating the relationship.
 
         Args:
             user_id: User's database ID
             group_name: Name of the group to remove
         """
         user_orm = self._session.get(UserORM, user_id)
-        if user_orm:
-            current_groups = json.loads(user_orm.groups) if user_orm.groups else []
-            if group_name in current_groups:
-                current_groups.remove(group_name)
-                user_orm.groups = json.dumps(current_groups)
-                user_orm.groups = json.dumps(current_groups)
+        if not user_orm:
+            return
+        group = self._session.execute(
+            select(GroupORM).where(GroupORM.name == group_name)
+        ).scalar_one_or_none()
+        if group and group in user_orm.groups:
+            user_orm.groups.remove(group)
+            self._session.flush()

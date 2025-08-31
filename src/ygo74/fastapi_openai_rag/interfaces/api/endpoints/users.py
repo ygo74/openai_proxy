@@ -14,6 +14,8 @@ from ....domain.models.user import User, ApiKey
 from ..decorators.decorators import endpoint_handler
 from ..security.auth import require_admin_role
 from ....domain.models.autenticated_user import AuthenticatedUser
+from ....infrastructure.db.repositories.model_repository import SQLModelRepository
+from ....infrastructure.db.repositories.group_repository import SQLGroupRepository
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +63,10 @@ class ApiKeyCreateResponse(BaseModel):
     api_key: str
     key_info: ApiKeyResponse
 
+class GroupsUpdate(BaseModel):
+    """Payload model for adding/removing groups on a user."""
+    groups: List[str]
+
 class TokenUsageDetailResponse(BaseModel):
     """Token usage detail response schema."""
     id: int
@@ -77,7 +83,11 @@ def get_user_service(db: Session = Depends(get_db)) -> UserService:
     """Create UserService instance with Unit of Work."""
     session_factory = lambda: db
     uow = SQLUnitOfWork(session_factory)
-    return UserService(uow)
+    return UserService(
+        uow,
+        model_repository_factory=lambda s: SQLModelRepository(s),
+        group_repository_factory=lambda s: SQLGroupRepository(s),
+    )
 
 def get_token_usage_service(db: Session = Depends(get_db)) -> TokenUsageService:
     """Create TokenUsageService instance with Unit of Work."""
@@ -198,6 +208,30 @@ async def update_user(
     )
 
     return map_user_to_response(updated_user)
+
+@router.post("/{user_id}/groups/add", response_model=UserResponse)
+@endpoint_handler("add_user_groups")
+async def add_user_groups(
+    user_id: str,
+    payload: GroupsUpdate,
+    service: UserService = Depends(get_user_service),
+    authenticated_user: AuthenticatedUser = Depends(require_admin_role)
+) -> UserResponse:
+    """Add one or multiple groups to a user."""
+    updated: User = service.add_user_groups(user_id, payload.groups)
+    return map_user_to_response(updated)
+
+@router.post("/{user_id}/groups/remove", response_model=UserResponse)
+@endpoint_handler("remove_user_groups")
+async def remove_user_groups(
+    user_id: str,
+    payload: GroupsUpdate,
+    service: UserService = Depends(get_user_service),
+    authenticated_user: AuthenticatedUser = Depends(require_admin_role)
+) -> UserResponse:
+    """Remove one or multiple groups from a user."""
+    updated: User = service.remove_user_groups(user_id, payload.groups)
+    return map_user_to_response(updated)
 
 @router.delete("/{user_id}")
 @endpoint_handler("delete_user")

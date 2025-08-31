@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from src.ygo74.fastapi_openai_rag.domain.models.user import User, ApiKey
 from src.ygo74.fastapi_openai_rag.domain.exceptions.entity_not_found_exception import EntityNotFoundError
 from src.ygo74.fastapi_openai_rag.domain.exceptions.entity_already_exists import EntityAlreadyExistsError
+from src.ygo74.fastapi_openai_rag.domain.models.autenticated_user import AuthenticatedUser
+from src.ygo74.fastapi_openai_rag.interfaces.api.endpoints.users import router, get_user_service, require_admin_role
 
 # Mock the dependencies to avoid database calls in tests
 @pytest.fixture
@@ -21,6 +23,7 @@ def client(mock_user_service):
 
     # Override the dependency
     app.dependency_overrides[get_user_service] = lambda: mock_user_service
+    app.dependency_overrides[require_admin_role] = lambda: AuthenticatedUser(id="user1", username="admin", groups=["admin"], type="jwt")  # type: ignore
 
     with TestClient(app) as test_client:
         yield test_client
@@ -239,3 +242,63 @@ class TestUserEndpoints:
         assert data["active_users"] == 1
         assert data["inactive_users"] == 1
         assert data["inactive_users"] == 1
+
+    def test_add_user_groups_endpoint_success(self, client, mock_user_service):
+        """Add groups to a user returns updated user."""
+        user_id = "u-1"
+        updated_user = User(
+            id=user_id,
+            username="john",
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+            is_active=True,
+            groups=["user", "admin", "editor"]
+        )
+        mock_user_service.add_user_groups.return_value = updated_user
+
+        resp = client.post(f"/v1/admin/users/{user_id}/groups/add", json={"groups": ["admin", "editor"]})
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["id"] == user_id
+        assert data["groups"] == ["user", "admin", "editor"]
+        mock_user_service.add_user_groups.assert_called_once_with(user_id, ["admin", "editor"])
+
+    def test_remove_user_groups_endpoint_success(self, client, mock_user_service):
+        """Remove groups from a user returns updated user."""
+        user_id = "u-2"
+        updated_user = User(
+            id=user_id,
+            username="jane",
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+            is_active=True,
+            groups=["user"]
+        )
+        mock_user_service.remove_user_groups.return_value = updated_user
+
+        resp = client.post(f"/v1/admin/users/{user_id}/groups/remove", json={"groups": ["editor", "viewer"]})
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["id"] == user_id
+        assert data["groups"] == ["user"]
+        mock_user_service.remove_user_groups.assert_called_once_with(user_id, ["editor", "viewer"])
+
+    def test_add_user_groups_endpoint_user_not_found(self, client, mock_user_service):
+        """Adding groups to a missing user returns 404 via endpoint handler."""
+        user_id = "missing"
+        mock_user_service.add_user_groups.side_effect = EntityNotFoundError("User", user_id)
+
+        resp = client.post(f"/v1/admin/users/{user_id}/groups/add", json={"groups": ["admin"]})
+
+        assert resp.status_code == 404
+
+    def test_remove_user_groups_endpoint_user_not_found(self, client, mock_user_service):
+        """Removing groups for a missing user returns 404 via endpoint handler."""
+        user_id = "missing"
+        mock_user_service.remove_user_groups.side_effect = EntityNotFoundError("User", user_id)
+
+        resp = client.post(f"/v1/admin/users/{user_id}/groups/remove", json={"groups": ["admin"]})
+
+        assert resp.status_code == 404

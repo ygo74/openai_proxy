@@ -5,6 +5,8 @@ import logging
 from knack.commands import CLICommandsLoader, CommandGroup
 from knack.help_files import helps
 from knack.cli import CLI
+from knack.arguments import ArgumentsContext
+
 from typing import Optional, Dict, Any
 from .core.auth import AuthContext
 from .core.client import ApiClient
@@ -101,6 +103,10 @@ class RagProxyCommandsLoader(CLICommandsLoader):
 
         # This method is called for each command registered
         # Load sub-command arguments from each command module
+
+        # with ArgumentsContext(command, 'whoami') as arg_context:
+        #     arg_context.argument('force-cache-clear', help="clear the cached authenticated user")
+
         try:
             GroupCommandsLoader().load_arguments(self, command)
             ModelCommandsLoader().load_arguments(self, command)
@@ -115,13 +121,18 @@ def show_version() -> Dict[str, str]:
     from . import __version__ as cli_version
     return {'version': cli_version}
 
-def whoami(cmd) -> Dict[str, Any]:
+def whoami(cmd, force_cache_clear = True) -> Dict[str, Any]:
     """Get the current authenticated user."""
     api_client = cmd.cli_ctx.data.get('api_client')
     if not api_client:
         return {'error': 'Not authenticated'}
 
-    return api_client._make_request("GET", "/v1/whoami")
+    if force_cache_clear:
+        logger.info("Forcing cache clear for authenticated user")
+        return api_client._make_request("GET", "/v1/whoami?force_cache_clear=true")
+    else:
+        logger.info("Fetching authenticated user info")
+        return api_client._make_request("GET", "/v1/whoami")
 
 def main():
     """Run the CLI."""

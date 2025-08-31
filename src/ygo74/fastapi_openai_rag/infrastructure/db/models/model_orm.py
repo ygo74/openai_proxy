@@ -1,5 +1,5 @@
 """Model ORM implementation."""
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, List  # removed Optional
 from sqlalchemy import String, DateTime, UniqueConstraint, JSON, Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from datetime import datetime, timezone
@@ -9,17 +9,15 @@ from .model_authorization import model_authorization
 from .group_orm import GroupORM
 
 class ModelORM(Base):
-    """SQLAlchemy model for LLM models.
+    """SQLAlchemy model for LLM models without polymorphism.
 
     Attributes:
         id (int): Primary key
         url (str): Model API endpoint URL
         name (str): Model display name
         technical_name (str): Unique technical identifier
-        status (ModelStatus): Current model status
+        status (LlmModelStatus): Current model status
         provider (str): LLM provider type
-        model_type (str): Discriminator column for polymorphic inheritance
-        api_version (Optional[str]): API version for Azure models
         created (datetime): Creation timestamp
         updated (datetime): Last update timestamp
         capabilities (JSON): Model capabilities configuration
@@ -27,19 +25,11 @@ class ModelORM(Base):
     """
     __tablename__ = "models"
 
-    # Polymorphic configuration
-    __mapper_args__ = {
-        "polymorphic_identity": "standard",
-        "polymorphic_on": "model_type",
-    }
-
     id: Mapped[int] = mapped_column(primary_key=True)
     url: Mapped[str] = mapped_column(String(255), nullable=False)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     technical_name: Mapped[str] = mapped_column(String(100), nullable=False)
     provider: Mapped[str] = mapped_column(String(100), nullable=False)
-    model_type: Mapped[str] = mapped_column(String(50), nullable=False)
-    api_version: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     status: Mapped[LlmModelStatus] = mapped_column(
         SQLEnum(LlmModelStatus),
         nullable=False,
@@ -63,37 +53,3 @@ class ModelORM(Base):
         secondary=model_authorization,
         back_populates="models"
     )
-
-
-class AzureModelORM(ModelORM):
-    """SQLAlchemy model for Azure LLM models."""
-
-    __mapper_args__ = {
-        "polymorphic_identity": "azure",
-    }
-
-    def __init__(self, **kwargs: dict[str, Any]):
-        """Initialize Azure model with required api_version."""
-        super().__init__(**kwargs)
-
-
-class UniqueModelORM(ModelORM):
-    """SQLAlchemy model for Unique AI LLM models.
-
-    Unique models require company_id and optionally a user_id for API calls.
-    """
-
-    __mapper_args__ = {
-        "polymorphic_identity": "unique",
-    }
-
-    def __init__(self, **kwargs: dict[str, Any]):
-        """Initialize Unique model with required company_id.
-
-        Args:
-            **kwargs: Keyword arguments including required company_id
-
-        Raises:
-            ValueError: If company_id is missing
-        """
-        super().__init__(**kwargs)

@@ -51,3 +51,23 @@ class IUserRepository(BaseRepository[User]):
             List[User]: List of active users
         """
         pass
+
+    @abstractmethod
+    def add_user_to_group(self, user_id: str, group_name: str) -> None:
+        """Add a user to a group.
+
+        Args:
+            user_id (str): The user ID
+            group_name (str): The group name to add
+        """
+        pass
+
+    @abstractmethod
+    def remove_user_from_group(self, user_id: str, group_name: str) -> None:
+        """Remove a user from a group.
+
+        Args:
+            user_id (str): The user ID
+            group_name (str): The group name to remove
+        """
+        pass

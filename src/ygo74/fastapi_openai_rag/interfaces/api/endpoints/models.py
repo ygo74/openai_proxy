@@ -95,7 +95,6 @@ async def get_models(
     skip: int = 0,
     limit: int = 100,
     service: ModelService = Depends(get_model_service),
-    chat_service: ChatCompletionService = Depends(get_chat_completion_service),
     user: AuthenticatedUser = Depends(auth_jwt_or_api_key)
 ) -> List[ModelResponse]:
     """Get list of models with optional status filtering.
@@ -108,18 +107,16 @@ async def get_models(
         skip: Number of models to skip (pagination)
         limit: Maximum number of models to return (pagination)
         service: Model service
-        chat_service: Chat completion service
         user: Authenticated user information
 
     Returns:
         List of models the user has access to
     """
     # Get models the user has access to based on their group membership
-    user_groups = user.groups
-    logger.debug(f"Fetching models for user {user.username} with groups: {user_groups}")
+    logger.debug(f"Fetching models for user {user.username} with groups: {user.groups}")
 
     # Get all models accessible to the user
-    models = chat_service.get_models_for_user(user_groups)
+    models = user.models
 
     # Apply status filter if provided
     if status_filter:
@@ -171,7 +168,6 @@ async def get_model_statistics(
 async def search_models_by_name(
     name: str,
     service: ModelService = Depends(get_model_service),
-    chat_service: ChatCompletionService = Depends(get_chat_completion_service),
     user: AuthenticatedUser = Depends(auth_jwt_or_api_key)
 ) -> List[ModelResponse]:
     """Search models by name.
@@ -182,18 +178,16 @@ async def search_models_by_name(
     Args:
         name: Search term to filter models by name
         service: Model service
-        chat_service: Chat completion service
         user: Authenticated user information
 
     Returns:
         List of models matching the search criteria that the user has access to
     """
     # Get models the user has access to based on their group membership
-    user_groups = user.groups
-    logger.debug(f"Searching models for user {user.username} with groups: {user_groups}")
+    logger.debug(f"Searching models for user {user.username} with groups: {user.groups}")
 
     # Get all models accessible to the user
-    models = chat_service.get_models_for_user(user_groups)
+    models = user.models
 
     # Simple name filtering
     filtered_models = [m for m in models if name.lower() in m.name.lower()]
@@ -226,7 +220,6 @@ async def create_model(
 async def get_model(
     model_id: int,
     service: ModelService = Depends(get_model_service),
-    chat_service: ChatCompletionService = Depends(get_chat_completion_service),
     user: AuthenticatedUser = Depends(auth_jwt_or_api_key)
 ) -> ModelResponse:
     """Get a specific model by ID.
@@ -236,7 +229,6 @@ async def get_model(
     Args:
         model_id: ID of the model to retrieve
         service: Model service
-        chat_service: Chat completion service
         user: Authenticated user information
 
     Returns:
@@ -246,8 +238,7 @@ async def get_model(
         HTTPException: If the model is not found or the user doesn't have access to it
     """
     # Get all models the user has access to
-    user_groups = user.groups
-    accessible_models = chat_service.get_models_for_user(user_groups)
+    accessible_models = user.models
 
     # Find the specific model by ID
     model = service.get_model_by_id(model_id)
@@ -260,7 +251,7 @@ async def get_model(
         )
 
     # Check if the user has access to the model
-    if not any(m.id == model_id for m in accessible_models) and "admin" not in user_groups:
+    if not any(m.id == model_id for m in accessible_models) and "admin" not in user.groups:
         raise HTTPException(
             status_code=http_status.HTTP_403_FORBIDDEN,
             detail=f"You don't have access to this model"
