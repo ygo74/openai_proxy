@@ -212,7 +212,7 @@ async def create_model(
     This endpoint requires admin privileges.
     """
     _, created_model = service.add_or_update_model(
-        model_id=-1,
+        model_id=None,
         url=model.url,
         name=model.name,
         technical_name=model.technical_name,

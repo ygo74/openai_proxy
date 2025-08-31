@@ -134,7 +134,7 @@ class ProxyLangchainFactory:
             logger.debug(f"Creating ChatOpenAI with base_url: {base_url}, model: {model_name}")
 
             return ChatOpenAI(
-                streaming=True,
+                streaming=False,
                 base_url=base_url,
                 api_key=proxy_api_key,
                 model=model_name,
@@ -211,7 +211,8 @@ if __name__ == "__main__":
             proxy_url="http://localhost:8000",
             api_key="sk-16AwYoZqNoVKjfMz-Mr8TeuaXk3O6JeLwPdQSAQiF0s",
             # api_key="sk-Uhw0UnymWqxlBcI13rv3644-ZwvXXmq_WjrTFvni62A",
-            model="gpt-4o"
+            # model="gpt-4o"
+            model="Unique_GPT-4o"
         )
         print("✅ Chat model created successfully")
 
@@ -220,7 +221,8 @@ if __name__ == "__main__":
             proxy_url="http://localhost:8000",
             api_key="sk-16AwYoZqNoVKjfMz-Mr8TeuaXk3O6JeLwPdQSAQiF0s",
             # api_key="sk-Uhw0UnymWqxlBcI13rv3644-ZwvXXmq_WjrTFvni62A",
-            model="gpt-4o"
+            # model="gpt-4o"
+            model="Unique_GPT-4o"
         )
         print("✅ LLM created successfully")
 
@@ -238,13 +240,14 @@ if __name__ == "__main__":
 
         from langchain_core.messages import HumanMessage
         messages = [HumanMessage(content='Hello!, who are you ? can you give me you cutoff date')]
-        chunks = []
-        for chunk in chat_model.stream(messages):
-            chunks.append(chunk)
-            print(chunk.content, end="|", flush=True)
 
-        # response = chat_model.invoke(messages)
-        # print(f"🤖 LLM response: {response}")
+        # chunks = []
+        # for chunk in chat_model.stream(messages):
+        #     chunks.append(chunk)
+        #     print(chunk.content, end="|", flush=True)
+
+        response = chat_model.invoke(messages)
+        print(f"🤖 LLM response: {response}")
 
 
     except Exception as e:

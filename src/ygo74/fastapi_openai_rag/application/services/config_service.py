@@ -1,7 +1,7 @@
 """Configuration service for managing application configuration."""
 import os
 from typing import Dict, Optional, Union
-from ...domain.models.configuration import AppConfig, ModelConfig, AzureModelConfig
+from ...domain.models.configuration import AppConfig, ModelConfig, AzureModelConfig, UniqueModelConfig
 from ...domain.models.configuration import AppConfig
 from ...infrastructure.db.session import SessionManager
 from ...infrastructure.db.init_db import init_db, create_initial_data
@@ -64,7 +64,7 @@ class ConfigService:
             logger.error(f"Failed to load configuration: {str(e)}")
             raise
 
-    def get_model_config(self, technical_name: str) -> Optional[Union[ModelConfig, AzureModelConfig]]:
+    def get_model_config(self, technical_name: str) -> Optional[Union[ModelConfig, AzureModelConfig, UniqueModelConfig]]:
         """Get Model config for the provider.
 
         Args:

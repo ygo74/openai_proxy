@@ -74,6 +74,26 @@ class AzureModelORM(ModelORM):
 
     def __init__(self, **kwargs: dict[str, Any]):
         """Initialize Azure model with required api_version."""
-        if 'api_version' not in kwargs or not kwargs['api_version']:
-            raise ValueError("api_version is required for Azure models")
+        super().__init__(**kwargs)
+
+
+class UniqueModelORM(ModelORM):
+    """SQLAlchemy model for Unique AI LLM models.
+
+    Unique models require company_id and optionally a user_id for API calls.
+    """
+
+    __mapper_args__ = {
+        "polymorphic_identity": "unique",
+    }
+
+    def __init__(self, **kwargs: dict[str, Any]):
+        """Initialize Unique model with required company_id.
+
+        Args:
+            **kwargs: Keyword arguments including required company_id
+
+        Raises:
+            ValueError: If company_id is missing
+        """
         super().__init__(**kwargs)

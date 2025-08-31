@@ -6,7 +6,8 @@ from ...domain.models.llm_model import LlmModel
 from ...domain.protocols.llm_client import LLMClientProtocol
 from .openai_proxy_client import OpenAIProxyClient
 from .azure_openai_proxy_client import AzureOpenAIProxyClient
-from ...domain.models.configuration import AzureModelConfig, ModelConfig
+from .unique_proxy_client import UniqueProxyClient
+from ...domain.models.configuration import AzureModelConfig, ModelConfig, UniqueModelConfig
 from .azure_auth_client import AzureAuthClient
 from .azure_management_client import AzureManagementClient
 from .retry_handler import LLMRetryHandler
@@ -22,14 +23,14 @@ class LLMClientFactory:
     @staticmethod
     def create_client(
         model: LlmModel,
-        model_config: Union[ModelConfig, AzureModelConfig],
+        model_config: Union[ModelConfig, AzureModelConfig, UniqueModelConfig],
         enterprise_config: Optional[EnterpriseConfig] = None
     ) -> LLMClientProtocol:
         """Create appropriate LLM client based on model configuration with enterprise features.
 
         Args:
             model (LlmModel): Model configuration
-            model_config (Union[ModelConfig, AzureModelConfig]): Additional configuration from the config file
+            model_config (Union[ModelConfig, AzureModelConfig, UniqueModelConfig]): Additional configuration from the config file
             enterprise_config (Optional[EnterpriseConfig]): Enterprise configuration
 
         Returns:
@@ -85,6 +86,25 @@ class LLMClientFactory:
             return OpenAIProxyClient(
                 api_key=model_config.api_key,
                 base_url=model.url,
+                provider=provider,
+                enterprise_config=enterprise_config
+            )
+
+        elif provider == LLMProvider.UNIQUE:
+            # Validate that we have a UniqueModelConfig
+            if not isinstance(model_config, UniqueModelConfig):
+                raise ValueError("Unique provider requires UniqueModelConfig")
+
+            if not model_config.company_id:
+                raise ValueError("Unique provider requires company_id")
+
+            logger.debug(f"Creating Unique proxy client for {provider} at {model.url}")
+            return UniqueProxyClient(
+                api_key=model_config.api_key,
+                app_id=model_config.app_id,
+                company_id=model_config.company_id,
+                user_id=model_config.user_id,
+                base_url=model.url or model_config.base_url,
                 provider=provider,
                 enterprise_config=enterprise_config
             )

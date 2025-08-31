@@ -11,6 +11,7 @@ class LLMProvider(str, Enum):
     AZURE = "azure"
     MISTRAL = "mistral"
     COHERE = "cohere"
+    UNIQUE = "unique"  # Add the new Unique provider
 
 class TokenUsage(BaseModel):
     """Token usage information for an LLM request.
