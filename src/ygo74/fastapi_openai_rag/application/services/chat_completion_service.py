@@ -1,8 +1,10 @@
 """Chat completion service for handling OpenAI-compatible requests."""
 import time
 import uuid
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, AsyncGenerator
 from datetime import datetime, timezone
+
+from ...domain.models.autenticated_user import AuthenticatedUser
 from ...domain.models.chat_completion import (
     ChatCompletionRequest, ChatCompletionResponse, ChatCompletionChoice,
     ChatMessage, ChatMessageRole
@@ -38,12 +40,12 @@ class ChatCompletionService:
         self._client_cache: Dict[str, LLMClientProtocol] = {}
         logger.debug("ChatCompletionService initialized")
 
-    async def create_chat_completion(self, request: ChatCompletionRequest, user_groups: Optional[List[str]] = None) -> ChatCompletionResponse:
+    async def create_chat_completion(self, request: ChatCompletionRequest, user: AuthenticatedUser) -> ChatCompletionResponse:
         """Create a chat completion.
 
         Args:
             request (ChatCompletionRequest): Chat completion request
-            user_groups (Optional[List[str]]): User's group memberships for authorization check
+            user (AuthenticatedUser): Authenticated user with group memberships
 
         Returns:
             ChatCompletionResponse: Generated chat completion
@@ -57,7 +59,7 @@ class ChatCompletionService:
         logger.info(f"Creating chat completion with model {request.model}")
 
         # Validate and get model, checking authorization
-        model = await self._get_and_validate_model(request.model, user_groups)
+        model = await self._get_and_validate_model(request.model, user)
 
         # Get or create client for this model
         client = self._get_or_create_client(model)
@@ -82,12 +84,12 @@ class ChatCompletionService:
             logger.error(f"Error in chat completion: {str(e)}")
             raise
 
-    async def create_completion(self, request: CompletionRequest, user_groups: Optional[List[str]] = None) -> CompletionResponse:
+    async def create_completion(self, request: CompletionRequest, user: AuthenticatedUser) -> CompletionResponse:
         """Create a text completion.
 
         Args:
             request (CompletionRequest): Text completion request
-            user_groups (Optional[List[str]]): User's group memberships for authorization check
+            user (AuthenticatedUser): Authenticated user with group memberships
 
         Returns:
             CompletionResponse: Generated text completion
@@ -101,7 +103,7 @@ class ChatCompletionService:
         logger.info(f"Creating text completion with model {request.model}")
 
         # Validate and get model, checking authorization
-        model = await self._get_and_validate_model(request.model, user_groups)
+        model = await self._get_and_validate_model(request.model, user)
 
         # Get or create client for this model
         client = self._get_or_create_client(model)
@@ -126,12 +128,12 @@ class ChatCompletionService:
             logger.error(f"Error in text completion: {str(e)}")
             raise
 
-    async def create_chat_completion_stream(self, request: ChatCompletionRequest, user_groups: Optional[List[str]] = None):
+    async def create_chat_completion_stream(self, request: ChatCompletionRequest, user: AuthenticatedUser) -> AsyncGenerator[ChatCompletionResponse, None]:
         """Create a streaming chat completion.
 
         Args:
             request (ChatCompletionRequest): Chat completion request
-            user_groups (Optional[List[str]]): User's group memberships for authorization check
+            user (AuthenticatedUser): Authenticated user with group memberships
 
         Yields:
             ChatCompletionResponse: Streaming chunks of the response
@@ -145,7 +147,7 @@ class ChatCompletionService:
         logger.info(f"Creating streaming chat completion with model {request.model}")
 
         # Validate and get model, checking authorization
-        model = await self._get_and_validate_model(request.model, user_groups)
+        model = await self._get_and_validate_model(request.model, user)
 
         # Get or create client for this model
         client = self._get_or_create_client(model)
@@ -175,12 +177,12 @@ class ChatCompletionService:
             logger.error(f"Error in streaming chat completion: {str(e)}")
             raise
 
-    async def _get_and_validate_model(self, model_name: str, user_groups: Optional[List[str]] = None) -> LlmModel:
+    async def _get_and_validate_model(self, model_name: str, user: AuthenticatedUser) -> LlmModel:
         """Get and validate model from database, checking user authorization.
 
         Args:
             model_name (str): Model name or technical name
-            user_groups (Optional[List[str]]): User's group memberships for authorization check
+            user (AuthenticatedUser): Authenticated user with group memberships
 
         Returns:
             LlmModel: Validated model entity
@@ -203,16 +205,16 @@ class ChatCompletionService:
             model = models[0]
 
             # If no user groups provided or user is admin, allow access
-            if not user_groups or "admin" in user_groups:
+            if not user or "admin" in user:
                 return model
 
             # For regular users, check if they have access to this model
             # Get all models the user has access to
-            accessible_models = self.get_models_for_user(user_groups)
+            accessible_models = user.models
 
             # Check if requested model is in user's accessible models
             if not any(m.id == model.id for m in accessible_models):
-                logger.warning(f"User with groups {user_groups} attempted unauthorized access to model {model_name}")
+                logger.warning(f"User with groups {user} attempted unauthorized access to model {model_name}")
                 raise PermissionError(f"Not authorized to access model {model_name}")
 
             return model
@@ -281,51 +283,14 @@ class ChatCompletionService:
         request_dict['model'] = model.name  # Use technical name for API calls
         return CompletionRequest(**request_dict)
 
-    def get_models_for_user(self, user_groups: List[str]) -> List[LlmModel]:
+    def get_models_for_user(self, user: AuthenticatedUser) -> List[LlmModel]:
         """Get models accessible to user based on group membership.
 
         Args:
-            user_groups: List of group names the user belongs to
+            user (AuthenticatedUser): Authenticated user with group memberships
 
         Returns:
             List of LLM models the user has access to
         """
-        logger.debug(f"Getting models for user with groups: {user_groups}")
-
-        result_models = []
-
-        with self._uow as uow:
-            # Create repositories
-            model_repository = SQLModelRepository(uow.session)
-            group_repository = SQLGroupRepository(uow.session)
-
-            # If user is admin, return all approved models
-            if "admin" in user_groups:
-                all_models = model_repository.get_all()
-                result_models = [model for model in all_models if model.status == LlmModelStatus.APPROVED]
-                logger.debug(f"Admin user, returning all {len(result_models)} approved models")
-                return result_models
-
-            # For regular users, get models from their groups
-            accessible_models = {}  # Use a dictionary with model_id as keys instead of a set
-
-            # Get all groups user belongs to
-            for group_name in user_groups:
-                group = group_repository.get_by_name(group_name)
-                if not group:
-                    logger.warning(f"User group '{group_name}' not found in database")
-                    continue
-                logger.debug(f"Found group: {group.name} (ID: {group.id}) for user")
-                # Get models associated with this group
-                group_models = model_repository.get_by_group_id(group.id)
-
-                # Only add approved models
-                for model in group_models:
-                    if model.status == LlmModelStatus.APPROVED:
-                        # Use model ID as dictionary key to avoid duplicate models
-                        accessible_models[model.id] = model
-
-            result_models = list(accessible_models.values())
-            logger.debug(f"Regular user, returning {len(result_models)} models from user's groups")
-
-        return result_models
+        logger.debug(f"Getting models for user : {user.username}")
+        return user.models

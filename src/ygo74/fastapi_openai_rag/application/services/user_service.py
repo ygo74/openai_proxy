@@ -1,11 +1,14 @@
 """User service implementation."""
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Callable
 from datetime import datetime, timezone
 import uuid
 import hashlib
 import secrets
 from ...domain.models.user import User, ApiKey
+from ...domain.models.llm_model import LlmModel, LlmModelStatus
 from ...domain.repositories.user_repository import IUserRepository
+from ...domain.repositories.model_repository import IModelRepository
+from ...domain.repositories.group_repository import IGroupRepository
 from ...domain.unit_of_work import UnitOfWork
 from ...infrastructure.db.repositories.user_repository import UserRepository
 from ...domain.exceptions.entity_not_found_exception import EntityNotFoundError
@@ -19,8 +22,14 @@ logger = logging.getLogger(__name__)
 class UserService:
     """Service for managing users."""
 
-    def __init__(self, uow: UnitOfWork, repository_factory: Optional[callable] = None):
-        """Initialize service with Unit of Work and optional repository factory.
+    def __init__(
+        self,
+        uow: UnitOfWork,
+        repository_factory: Optional[Callable[[object], IUserRepository]] = None,
+        model_repository_factory: Optional[Callable[[object], IModelRepository]] = None,
+        group_repository_factory: Optional[Callable[[object], IGroupRepository]] = None,
+    ):
+        """Initialize service with Unit of Work and optional repository factories.
 
         Args:
             uow (UnitOfWork): Unit of Work for transaction management
@@ -29,6 +38,8 @@ class UserService:
         self._uow = uow
         self._repository_factory = repository_factory or (lambda session: UserRepository(session))
         self._group_service = GroupService(uow, repository_factory)
+        self._model_repository_factory = model_repository_factory
+        self._group_repository_factory = group_repository_factory
 
         logger.debug("UserService initialized with Unit of Work")
 
@@ -483,3 +494,49 @@ class UserService:
             updated_user: Optional[User] = repository.get_by_id(user_id)
             logger.info(f"Groups added to user {user_id}")
             return updated_user  # type: ignore[return-value]
+
+    def get_models_for_user(self, user_groups: List[str]) -> List[LlmModel]:
+        """Get models accessible to a user based on group membership.
+
+        Admins get all approved models. Regular users get approved models
+        linked to any of their groups. Duplicates are removed by model ID.
+
+        Args:
+            user_groups (List[str]): Group names the user belongs to
+
+        Returns:
+            List[LlmModel]: Accessible models for the user
+        """
+        logger.debug(f"Getting models for user with groups: {user_groups}")
+        if not self._model_repository_factory or not self._group_repository_factory:
+            raise RuntimeError("Model/Group repository factories must be provided to UserService")
+
+        result_models: List[LlmModel] = []
+        with self._uow as uow:
+            model_repository: IModelRepository = self._model_repository_factory(uow.session)
+            group_repository: IGroupRepository = self._group_repository_factory(uow.session)
+
+            # Admin shortcut: return all approved models
+            if "admin" in user_groups:
+                all_models: List[LlmModel] = model_repository.get_all()
+                result_models = [m for m in all_models if m.status == LlmModelStatus.APPROVED]
+                logger.debug(f"Admin user, returning {len(result_models)} approved models")
+                return result_models
+
+            # Regular users: aggregate models from each group
+            accessible_models = {}  # key: model_id, value: LlmModel
+            for group_name in user_groups:
+                group = group_repository.get_by_name(group_name)
+                if not group:
+                    logger.warning(f"User group '{group_name}' not found in database")
+                    continue
+
+                group_models: List[LlmModel] = model_repository.get_by_group_id(group.id)  # type: ignore[arg-type]
+                for model in group_models:
+                    if model.status == LlmModelStatus.APPROVED:
+                        accessible_models[model.id] = model
+
+            result_models = list(accessible_models.values())
+            logger.debug(f"Regular user, returning {len(result_models)} models from user's groups")
+
+        return result_models

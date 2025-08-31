@@ -8,6 +8,7 @@ from src.ygo74.fastapi_openai_rag.domain.models.user import User, ApiKey
 from src.ygo74.fastapi_openai_rag.domain.exceptions.entity_not_found_exception import EntityNotFoundError
 from src.ygo74.fastapi_openai_rag.domain.exceptions.entity_already_exists import EntityAlreadyExistsError
 from src.ygo74.fastapi_openai_rag.domain.exceptions.validation_error import ValidationError
+from src.ygo74.fastapi_openai_rag.domain.models.llm_model import LlmModelStatus
 
 
 class MockUnitOfWork:
@@ -65,9 +66,30 @@ class TestUserService:
         return factory
 
     @pytest.fixture
-    def service(self, mock_uow: MockUnitOfWork, mock_repository_factory: Mock) -> UserService:
+    def mock_model_repository(self) -> Mock:
+        """Mock model repository."""
+        return Mock()
+
+    @pytest.fixture
+    def mock_group_repository(self) -> Mock:
+        """Mock group repository."""
+        return Mock()
+
+    @pytest.fixture
+    def service(
+        self,
+        mock_uow: MockUnitOfWork,
+        mock_repository_factory: Mock,
+        mock_model_repository: Mock,
+        mock_group_repository: Mock,
+    ) -> UserService:
         """Create a UserService instance with mocks."""
-        return UserService(mock_uow, mock_repository_factory)
+        return UserService(
+            mock_uow,
+            mock_repository_factory,
+            model_repository_factory=lambda s: mock_model_repository,
+            group_repository_factory=lambda s: mock_group_repository,
+        )
 
     def test_add_or_update_user_create_success(self, service: UserService, mock_repository: Mock):
         """Test successful user creation."""
@@ -353,3 +375,49 @@ class TestUserService:
 
         assert mock_uow.rolled_back is True
         assert mock_uow.committed is False
+
+    def test_get_models_for_user_admin_returns_only_approved(
+        self,
+        service: UserService,
+        mock_model_repository: Mock,
+        mock_group_repository: Mock,
+    ):
+        """Admin user receives all approved models."""
+        # arrange
+        m1 = Mock(id="m1", status=LlmModelStatus.APPROVED)
+        m2 = Mock(id="m2", status=LlmModelStatus.PENDING)
+        m3 = Mock(id="m3", status=LlmModelStatus.APPROVED)
+        mock_model_repository.get_all.return_value = [m1, m2, m3]
+
+        # act
+        result = service.get_models_for_user(["admin"])
+
+        # assert
+        assert {m.id for m in result} == {"m1", "m3"}
+        mock_model_repository.get_all.assert_called_once()
+        mock_group_repository.get_by_name.assert_not_called()
+
+    def test_get_models_for_user_regular_user_dedup_and_filter_approved(
+        self,
+        service: UserService,
+        mock_model_repository: Mock,
+        mock_group_repository: Mock,
+    ):
+        """Regular user gets union of approved models from their groups, deduplicated."""
+        # arrange
+        mock_group_repository.get_by_name.side_effect = [
+            Mock(id=1, name="g1"),
+            Mock(id=2, name="g2"),
+        ]
+        g1_models = [Mock(id="m1", status=LlmModelStatus.APPROVED), Mock(id="m2", status=LlmModelStatus.PENDING)]
+        g2_models = [Mock(id="m1", status=LlmModelStatus.APPROVED), Mock(id="m3", status=LlmModelStatus.APPROVED)]
+        mock_model_repository.get_by_group_id.side_effect = [g1_models, g2_models]
+
+        # act
+        result = service.get_models_for_user(["g1", "g2"])
+
+        # assert
+        assert {m.id for m in result} == {"m1", "m3"}
+        assert mock_model_repository.get_by_group_id.call_count == 2
+        mock_group_repository.get_by_name.assert_any_call("g1")
+        mock_group_repository.get_by_name.assert_any_call("g2")

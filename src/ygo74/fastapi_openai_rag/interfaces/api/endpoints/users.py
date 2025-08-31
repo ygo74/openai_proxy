@@ -14,6 +14,8 @@ from ....domain.models.user import User, ApiKey
 from ..decorators.decorators import endpoint_handler
 from ..security.auth import require_admin_role
 from ....domain.models.autenticated_user import AuthenticatedUser
+from ....infrastructure.db.repositories.model_repository import SQLModelRepository
+from ....infrastructure.db.repositories.group_repository import SQLGroupRepository
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +83,11 @@ def get_user_service(db: Session = Depends(get_db)) -> UserService:
     """Create UserService instance with Unit of Work."""
     session_factory = lambda: db
     uow = SQLUnitOfWork(session_factory)
-    return UserService(uow)
+    return UserService(
+        uow,
+        model_repository_factory=lambda s: SQLModelRepository(s),
+        group_repository_factory=lambda s: SQLGroupRepository(s),
+    )
 
 def get_token_usage_service(db: Session = Depends(get_db)) -> TokenUsageService:
     """Create TokenUsageService instance with Unit of Work."""

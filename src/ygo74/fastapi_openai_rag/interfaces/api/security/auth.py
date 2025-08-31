@@ -12,6 +12,8 @@ from ....domain.models.autenticated_user import AuthenticatedUser
 from ....infrastructure.db.session import get_db
 from ....application.services.user_service import UserService
 from ....infrastructure.db.unit_of_work import SQLUnitOfWork
+from ....infrastructure.db.repositories.model_repository import SQLModelRepository
+from ....infrastructure.db.repositories.group_repository import SQLGroupRepository
 from ....config.settings import settings
 from ....infrastructure.llm.retry_handler import KeycloakRetryHandler
 
@@ -23,6 +25,27 @@ bearer_scheme = HTTPBearer(auto_error=False)
 # --- Keycloak public key cache (cachetools TTL) --------------------------------
 _KEYCLOAK_JWKS_CACHE_TTL_SECONDS: int = int(os.getenv("KEYCLOAK_JWKS_CACHE_TTL", "3600"))
 _keycloak_pubkey_cache: TTLCache[str, str] = TTLCache(maxsize=16, ttl=_KEYCLOAK_JWKS_CACHE_TTL_SECONDS)
+
+# --- Authenticated user cache (cachetools TTL) ---------------------------------
+_AUTH_USER_CACHE_TTL_SECONDS: int = int(os.getenv("AUTH_USER_CACHE_TTL", "300"))
+_authenticated_user_cache: TTLCache[str, AuthenticatedUser] = TTLCache(maxsize=2048, ttl=_AUTH_USER_CACHE_TTL_SECONDS)
+
+def clear_authenticated_user_cache_entry(username: str) -> bool:
+    """Clear the cached AuthenticatedUser for the given username.
+
+    Args:
+        username (str): Username key used for the cache
+
+    Returns:
+        bool: True if an entry was removed, False otherwise
+    """
+    try:
+        del _authenticated_user_cache[username]
+        logger.debug(f"Cleared AuthenticatedUser cache for '{username}'")
+        return True
+    except KeyError:
+        logger.debug(f"No AuthenticatedUser cache entry found for '{username}'")
+        return False
 
 # Create a reusable retry handler instance (sync for requests)
 _keycloak_retry_handler = KeycloakRetryHandler()
@@ -97,22 +120,38 @@ async def _authenticate_with_api_key(
     key_hash = hashlib.sha256(token.encode()).hexdigest()
     logger.debug(f"Looking for API key hash: {key_hash[:10]}...")
 
+    # Cache lookup
+    cached_user = _authenticated_user_cache.get(key_hash)
+    if cached_user:
+        logger.debug(f"AuthenticatedUser cache hit for '{key_hash}'")
+        return cached_user
+
     try:
         user = user_service.get_user_by_api_key_hash(key_hash)
-        if user:
-            logger.info(f"API key authentication successful for user: {user.username}")
-            return AuthenticatedUser(
-                id=user.id,
-                username=user.username,
-                type="api_key",
-                groups=user.groups
-            )
-        else:
+
+        if not user:
             logger.debug("No user found for API key hash")
             return None
+
+        # Get user's accessible models
+        allowed_models = user_service.get_models_for_user(user.groups)
+
+        auth_user = AuthenticatedUser(
+            id=user.id,
+            username=user.username,
+            type="api_key",
+            groups=user.groups,
+            models=allowed_models
+        )
+        _authenticated_user_cache[key_hash] = auth_user
+        logger.info(f"JWT authentication successful (cache set), updated groups for user: {user.username}")
+        return auth_user
+
     except Exception as e:
         logger.error(f"Error finding user by API key: {e}")
         return None
+
+
 
 async def _decode_jwt_token(token_str: str) -> Optional[Dict[str, Any]]:
     """
@@ -215,6 +254,12 @@ async def _authenticate_with_jwt_payload(
 
     logger.debug(f"JWT contains username: {username}")
 
+    # Cache lookup
+    cached_user = _authenticated_user_cache.get(username)
+    if cached_user:
+        logger.debug(f"AuthenticatedUser cache hit for '{username}'")
+        return cached_user
+
     # Extract groups from different possible JWT claims
     keycloak_groups: List[str] = (payload.get("groups") or
                                  payload.get("realm_access", {}).get("roles", []) or
@@ -233,44 +278,40 @@ async def _authenticate_with_jwt_payload(
         if user:
             logger.debug(f"Found existing user in DB: {user.username}")
             # Update user's groups from Keycloak
-            updated_user = user_service.sync_user_groups_from_keycloak(
+            user = user_service.sync_user_groups_from_keycloak(
                 user_id=user.id,
                 keycloak_groups=keycloak_groups
             )
-            logger.info(f"JWT authentication successful, updated groups for user: {updated_user.username}")
-            return AuthenticatedUser(
-                id=updated_user.id,
-                username=updated_user.username,
-                type="jwt",
-                groups=updated_user.groups
-            )
+
         else:
             logger.debug("User from JWT not found in database, creating new user")
             # Create new user from JWT claims
-            new_user = user_service.create_user_from_keycloak(
+            user = user_service.create_user_from_keycloak(
                 username=username,
                 email=email,
                 first_name=first_name,
                 last_name=last_name,
                 keycloak_groups=keycloak_groups
             )
-            logger.info(f"JWT authentication successful, created new user: {new_user.username}")
-            return AuthenticatedUser(
-                id=new_user.id,
-                username=new_user.username,
-                type="jwt",
-                groups=new_user.groups
-            )
+
     except Exception as e:
         logger.error(f"Error creating/updating user from JWT: {e}")
-        # Fallback to JWT claims if database operations fail
-        logger.warning(f"Falling back to JWT claims for user: {username}")
-        return AuthenticatedUser(
-            id=payload.get("sub", f"jwt-{username}"),
-            username=username,
-            type="jwt",
-            groups=keycloak_groups
-        )
+        raise
+
+    # Get user's accessible models
+    allowed_models = user_service.get_models_for_user(keycloak_groups)
+
+    auth_user = AuthenticatedUser(
+        id=user.id,
+        username=user.username,
+        type="jwt",
+        groups=user.groups,
+        models=allowed_models
+    )
+    _authenticated_user_cache[username] = auth_user
+    logger.info(f"JWT authentication successful (cache set), updated groups for user: {user.username}")
+    return auth_user
+
 
 async def _authenticate_with_bearer_token(
     bearer_token: str,
@@ -331,7 +372,11 @@ async def auth_jwt_or_api_key(
     """
     session_factory = lambda: db
     uow = SQLUnitOfWork(session_factory)
-    user_service = UserService(uow)
+    user_service = UserService(
+        uow,
+        model_repository_factory=lambda s: SQLModelRepository(s),
+        group_repository_factory=lambda s: SQLGroupRepository(s),
+    )
 
     # Debug logging
     logger.debug(f"API Key Header: {api_key_header_value}")

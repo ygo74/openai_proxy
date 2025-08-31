@@ -59,10 +59,7 @@ async def create_completion(
     Returns:
         CompletionResponse: Generated text completion
     """
-    # Extract user groups for authorization
-    user_groups = user.groups if user else None
-
-    response = await service.create_completion(completion_request, user_groups=user_groups)
+    response = await service.create_completion(completion_request, user=user)
     return response
 
 @router.post("/chat/completions", response_model=ChatCompletionResponse)
@@ -87,15 +84,12 @@ async def create_chat_completion(
     Returns:
         ChatCompletionResponse: Generated chat completion or StreamingResponse
     """
-    # Extract user groups for authorization
-    user_groups = user.groups if user else None
-
     if chat_completion_request.stream:
         # Return streaming response
         async def generate_stream():
             logger.debug("Starting SSE streaming generation")
             try:
-                async for chunk in service.create_chat_completion_stream(chat_completion_request, user_groups=user_groups):
+                async for chunk in service.create_chat_completion_stream(chat_completion_request, user=user):
                     # Serialize the chunk with proper content type and format
                     if hasattr(chunk, 'model_dump_json'):
                         # For newer Pydantic (v2+)
@@ -138,7 +132,7 @@ async def create_chat_completion(
         )
     else:
         # Regular response
-        response = await service.create_chat_completion(chat_completion_request, user_groups=user_groups)
+        response = await service.create_chat_completion(chat_completion_request, user=user)
         return response
 
 @router.get("/models")
@@ -160,11 +154,10 @@ async def list_models(
         List[ModelResponse]: List of models the user has access to
     """
     # Get all models accessible to the user based on their groups
-    user_groups = user.groups
-    logger.debug(f"Fetching models for user {user.username} with groups: {user_groups}")
+    logger.debug(f"Fetching models for user {user.username} with groups: {user.groups}")
 
     # Use service to get models based on user groups
-    models = service.get_models_for_user(user_groups)
+    models = service.get_models_for_user(user)
 
     # Convert domain models to OpenAI API compatible format
     return map_model_list_to_response(models)

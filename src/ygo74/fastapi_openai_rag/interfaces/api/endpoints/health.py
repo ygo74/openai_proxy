@@ -2,7 +2,7 @@
 from datetime import datetime, timezone
 import time
 from typing import Dict, Any, List
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 import logging
@@ -10,9 +10,13 @@ import logging
 from ....infrastructure.db.session import get_db
 from ....application.services.config_service import config_service
 from ..decorators.decorators import endpoint_handler
-from ..security.auth import auth_jwt_or_api_key
+from ..security.auth import auth_jwt_or_api_key, clear_authenticated_user_cache_entry
 from ....domain.models.autenticated_user import AuthenticatedUser
 from ....domain.models.configuration import AppConfig
+from ....infrastructure.db.unit_of_work import SQLUnitOfWork
+from ....application.services.user_service import UserService
+from ....infrastructure.db.repositories.model_repository import SQLModelRepository
+from ....infrastructure.db.repositories.group_repository import SQLGroupRepository
 
 
 logger = logging.getLogger(__name__)
@@ -28,22 +32,44 @@ class HealthStatus:
 @router.get("/whoami")
 @endpoint_handler("whoami")
 async def whoami(
-    user: AuthenticatedUser = Depends(auth_jwt_or_api_key)
+    user: AuthenticatedUser = Depends(auth_jwt_or_api_key),
+    force_cache_clear: bool = Query(False, description="If true, clear the cached authenticated user"),
+    db: Session = Depends(get_db)
 ) -> Dict[str, Any]:
     """Get current user information from token.
 
+    Optionally clears the cached AuthenticatedUser and reloads the user from DB to avoid stale groups.
+
     Args:
-        user (AuthenticatedUser): Authenticated user
+        user: Authenticated user
+        force_cache_clear: Whether to clear the cached user entry
 
     Returns:
-        Dict[str, Any]: Current user information
+        Current user information and cache clear status
     """
+    cache_cleared: bool = False
+    groups: List[str] = user.groups
+
+    if force_cache_clear:
+        cache_cleared = clear_authenticated_user_cache_entry(user.username)
+        # Reload user from DB to ensure fresh groups are returned
+        session_factory = lambda: db
+        uow = SQLUnitOfWork(session_factory)
+        user_service = UserService(
+            uow,
+            model_repository_factory=lambda s: SQLModelRepository(s),
+            group_repository_factory=lambda s: SQLGroupRepository(s),
+        )
+        fresh_user = user_service.get_user_by_id(user.id)
+        groups = fresh_user.groups
+
     return {
         "authenticated": True,
         "user_id": user.id,
         "username": user.username,
         "auth_type": user.type,
-        "groups": user.groups
+        "groups": groups,
+        "cache_cleared": cache_cleared
     }
 
 
