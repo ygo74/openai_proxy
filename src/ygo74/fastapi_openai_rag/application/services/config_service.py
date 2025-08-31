@@ -118,7 +118,7 @@ class ConfigService:
 
         # Initialize database connection
         if config.db_type == "sqlite":
-            db_url = "sqlite:///./models.db"
+            db_url = config.db_url
         elif config.db_type == "postgres":
             # TODO: Add PostgreSQL support
             raise NotImplementedError("PostgreSQL support is not implemented yet")

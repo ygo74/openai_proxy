@@ -96,6 +96,7 @@ class AppConfig(BaseModel):
     """
     model_configs: List[Union[ModelConfig, AzureModelConfig, UniqueModelConfig]]
     db_type: str
+    db_url: str
     forwarders: ForwardersConfig = ForwardersConfig()
     audit: AuditConfig = AuditConfig()
 
@@ -152,6 +153,7 @@ class AppConfig(BaseModel):
             return cls(
                 model_configs=processed_configs,
                 db_type=config_data.get("db_type", "sqlite"),
+                db_url=config_data.get("db_url"),
                 forwarders=forwarders_config,
                 audit=audit_config
             )
