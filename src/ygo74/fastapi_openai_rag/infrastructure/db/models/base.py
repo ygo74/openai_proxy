@@ -48,12 +48,16 @@ try:
 except ImportError as e:
     logger.warning(f"Could not import model_authorization: {e}")
 
-# Commented out to prevent circular import with Alembic migrations
-# Since AuditLogORM is already created by the Alembic migration
-# try:
-#     from .audit_log_orm import AuditLogORM
-#     logger.debug("AuditLogORM imported")
-# except ImportError as e:
-#     logger.warning(f"Could not import AuditLogORM: {e}")
+try:
+    from .audit_log_orm import AuditLogORM
+    logger.debug("AuditLogORM imported")
+except ImportError as e:
+    logger.warning(f"Could not import AuditLogORM: {e}")
+
+try:
+    from .token_usage_orm import TokenUsageORM
+    logger.debug("TokenUsageORM imported")
+except ImportError as e:
+    logger.warning(f"Could not import TokenUsageORM: {e}")
 
 logger.info(f"Base metadata contains {len(Base.metadata.tables)} tables: {list(Base.metadata.tables.keys())}")

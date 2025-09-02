@@ -100,3 +100,25 @@ Clique sur Ajouter un rôle
 Sélectionne le rôle Lecteur ou Cognitive Services Contributor
 
 Dans la section Membre, choisis Identité managée ou application et sélectionne ton application
+
+# Database initialisation
+
+- install dependencies
+
+  ``` powershell
+  poetry add alembic sqlalchemy psycopg2-binary
+
+  ```
+
+- alembic.ini
+
+  ``` ini
+  sqlalchemy.url = postgresql+psycopg2://fastapi:fastapi@localhost:5432/fastapi_proxy
+  ```
+
+- Generate first migration
+
+``` powershell
+poetry run alembic revision --autogenerate -m "init schema"
+
+```

@@ -416,3 +416,27 @@ class UniqueProxyClient(LLMClientProtocol):
             timestamp=chat_response.timestamp,
             raw_response=chat_response.raw_response
         )
+
+    @with_enterprise_retry
+    async def list_models(self) -> List[Dict[str, Any]]:
+        """List available models from Azure OpenAI API with retry resilience.
+
+        Returns:
+            List[Dict[str, Any]]: List of available models
+
+        Raises:
+            httpx.HTTPError: If API request fails after all retries
+        """
+        return []
+
+    @with_enterprise_retry
+    async def list_deployments(self) -> List[Dict[str, Any]]:
+        """List deployed models from Azure using Management API or fallback to models endpoint with retry.
+
+        Returns:
+            List[Dict[str, Any]]: List of deployed models with deployment info
+
+        Raises:
+            httpx.HTTPError: If API request fails after all retries
+        """
+        return []

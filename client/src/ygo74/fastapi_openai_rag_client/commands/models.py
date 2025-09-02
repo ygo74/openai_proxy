@@ -26,6 +26,7 @@ class ModelCommandsLoader:
             g.command('set-status', "update_model_status")
             g.command('add-to-group', "add_model_to_group")
             g.command('remove-from-group', "remove_model_from_group")
+            g.command('refresh', "refresh_models")
 
         return {}
 
@@ -69,6 +70,9 @@ class ModelCommandsLoader:
         with ArgumentsContext(command_loader, 'model remove-from-group') as arg_context:
             arg_context.argument('model_id', type=int, help='Model ID')
             arg_context.argument('group_id', type=int, help='Group ID')
+
+        with ArgumentsContext(command_loader, 'model refresh') as arg_context:
+            pass
 
 def list_models(cmd: CLICommand, skip: int = 0, limit: int = 100, status_filter=None) -> List[Dict[str, Any]]:
     """List all models."""
@@ -138,3 +142,8 @@ def remove_model_from_group(cmd: CLICommand, model_id: int, group_id: int) -> Di
     """Remove model from group."""
     api_client = get_api_client(cmd)
     return api_client.remove_model_from_group(model_id=model_id, group_id=group_id)
+
+def refresh_models(cmd: CLICommand) -> List[Dict[str, Any]]:
+    """Refresh models from all configured providers."""
+    api_client = get_api_client(cmd)
+    return api_client.refresh_models()

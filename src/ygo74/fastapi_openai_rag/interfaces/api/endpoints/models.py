@@ -116,7 +116,10 @@ async def get_models(
     logger.debug(f"Fetching models for user {user.username} with groups: {user.groups}")
 
     # Get all models accessible to the user
-    models = user.models
+    if "admin" in user.groups:
+        models = service.get_all_models()
+    else:
+        models = user.models
 
     # Apply status filter if provided
     if status_filter:
@@ -187,7 +190,10 @@ async def search_models_by_name(
     logger.debug(f"Searching models for user {user.username} with groups: {user.groups}")
 
     # Get all models accessible to the user
-    models = user.models
+    if "admin" in user.groups:
+        models = service.get_all_models()
+    else:
+        models = user.models
 
     # Simple name filtering
     filtered_models = [m for m in models if name.lower() in m.name.lower()]
@@ -237,8 +243,11 @@ async def get_model(
     Raises:
         HTTPException: If the model is not found or the user doesn't have access to it
     """
-    # Get all models the user has access to
-    accessible_models = user.models
+    # Get all models accessible to the user
+    if "admin" in user.groups:
+        accessible_models = service.get_all_models()
+    else:
+        accessible_models = user.models
 
     # Find the specific model by ID
     model = service.get_model_by_id(model_id)
