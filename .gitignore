@@ -7,4 +7,6 @@ config.json
 .env.*
 *egg-info
 *langchain_call_azure_openai.py
+*langchain_call_azure_openai*
+*call_azure_openai*
 unique/**

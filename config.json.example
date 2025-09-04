@@ -17,6 +17,8 @@
     ],
     "db_type": "sqlite",
     "db_url": "sqlite:///./models.db",
+    // "db_type": "postgres",
+    // "db_url": "postgresql://fastapi:fastapi@localhost:5431/fastapi_proxy",
     "forwarders": {
         "print": {
             "enabled": true,

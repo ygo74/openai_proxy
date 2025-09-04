@@ -48,6 +48,12 @@ Streaming is supported for chat completions by setting the `stream` parameter to
 
 The API will return a Server-Sent Events (SSE) stream that can be consumed by clients such as the official OpenAI SDK or compatible libraries.
 
+## Using tools
+
+Tools are supported in the underlying model supports function calls:
+- https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/function-calling
+- https://python.langchain.com/docs/how_to/tool_results_pass_to_model/
+
 # Azure configuration
 
 Pour pouvoir lister les modèles déployés sur Azure via l’API REST que tu mentionnes, il te faut une authentification OAuth 2.0 avec Azure Active Directory (AAD). Voici comment procéder étape par étape pour intégrer cela dans une API :
