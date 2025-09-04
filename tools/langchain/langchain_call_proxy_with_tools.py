@@ -80,9 +80,7 @@ def main():
 
     print("First API call: Ask the model to use the function")
     ai_msg = llm_with_tools.invoke(messages)
-
-    print(ai_msg.tool_calls)
-
+    # print(ai_msg.tool_calls)
     messages.append(ai_msg)
 
     print("Handle tool calls")
