@@ -20,6 +20,7 @@ from ...domain.protocols.llm_client import LLMClientProtocol
 
 from .http_client_factory import HttpClientFactory
 from .retry_handler import with_enterprise_retry
+from .enterprise_config import EnterpriseConfig
 import logging
 
 logger = logging.getLogger(__name__)
@@ -27,40 +28,36 @@ logger = logging.getLogger(__name__)
 class OpenAIProxyClient(LLMClientProtocol):
     """Transparent OpenAI proxy client for compatible providers."""
 
-    def __init__(self, api_key: str, base_url: str, provider: LLMProvider,
-                 proxy_url: Optional[str] = None,
-                 proxy_auth: Optional[httpx.Auth] = None,
-                 verify_ssl: Union[bool, str, ssl.SSLContext] = True,
-                 ca_cert_file: Optional[str] = None,
-                 client_cert_file: Optional[str] = None,
-                 client_key_file: Optional[str] = None):
-        """Initialize OpenAI proxy client.
+    def __init__(self, api_key: str, base_url: str, provider: LLMProvider = LLMProvider.OPENAI,
+                 enterprise_config: Optional[EnterpriseConfig] = None):
+        """Initialize OpenAI proxy client with enterprise configuration.
 
         Args:
             api_key (str): API key for authentication
-            base_url (str): Base URL for the OpenAI-compatible API
-            provider (LLMProvider): Provider type (OPENAI, AZURE, etc.)
-            proxy_url (Optional[str]): Corporate proxy URL (e.g., "http://proxy.company.com:8080")
-            proxy_auth (Optional[httpx.Auth]): Proxy authentication (Basic, Digest, etc.)
-            verify_ssl (Union[bool, str, ssl.SSLContext]): SSL verification. Can be True, False, path to CA bundle, or SSLContext
-            ca_cert_file (Optional[str]): Path to custom CA certificate file for enterprise SSL interception
-            client_cert_file (Optional[str]): Path to client certificate file for mutual TLS
-            client_key_file (Optional[str]): Path to client private key file for mutual TLS
+            base_url (str): Base URL for the OpenAI API
+            provider (LLMProvider): Provider type (defaults to OPENAI)
+            enterprise_config (Optional[EnterpriseConfig]): Enterprise configuration
         """
         self.api_key = api_key
         self.base_url = base_url.rstrip('/')
         self.provider = provider
 
+        # Use default enterprise config if none provided
+        if enterprise_config is None:
+            enterprise_config = EnterpriseConfig()
+
+        self.enterprise_config = enterprise_config
+
         # Create HTTP client using factory with enterprise settings
         self._client = HttpClientFactory.create_async_client(
             target_url=self.base_url,
             timeout=120.0,
-            proxy_url=proxy_url,
-            proxy_auth=proxy_auth,
-            verify_ssl=verify_ssl,
-            ca_cert_file=ca_cert_file,
-            client_cert_file=client_cert_file,
-            client_key_file=client_key_file
+            proxy_url=enterprise_config.proxy_url,
+            proxy_auth=enterprise_config.proxy_auth,
+            verify_ssl=enterprise_config.verify_ssl,
+            ca_cert_file=enterprise_config.ca_cert_file,
+            client_cert_file=enterprise_config.client_cert_file,
+            client_key_file=enterprise_config.client_key_file
         )
 
         logger.debug(f"OpenAIProxyClient initialized for {provider} at {base_url}")
