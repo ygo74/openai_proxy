@@ -108,8 +108,13 @@ class ChatCompletionService:
         """
         logger.info(f"Creating text completion with model {request.model}")
 
+        # Validate and get model, checking authorization
         model = await self._get_and_validate_model(request.model, user)
+
+        # Get or create client for this model
         client = self._get_or_create_client(model)
+
+        # Update request with provider info
         request_with_provider = self._prepare_completion_request(request, model)
 
         # Capability introspection
@@ -278,7 +283,7 @@ class ChatCompletionService:
         """
         # Create a copy with updated model information
         request_dict = request.model_dump()
-        request_dict['model'] = model.name  # Use technical name for API calls
+        request_dict['model'] = model.name
         return ChatCompletionRequest(**request_dict)
 
     def _prepare_completion_request(self, request: CompletionRequest, model: LlmModel) -> CompletionRequest:
@@ -293,7 +298,7 @@ class ChatCompletionService:
         """
         # Create a copy with updated model information
         request_dict = request.model_dump()
-        request_dict['model'] = model.name  # Use technical name for API calls
+        request_dict['model'] = model.name
         return CompletionRequest(**request_dict)
 
     async def _completion_via_chat_fallback(self, request: CompletionRequest, client: LLMClientProtocol, model: LlmModel) -> CompletionResponse:
