@@ -103,7 +103,9 @@ Clique sur Contrôle d’accès (IAM) dans le menu de gauche
 
 Clique sur Ajouter un rôle
 
-Sélectionne le rôle Lecteur ou Cognitive Services Contributor
+Sélectionne le rôle permettant de lire les déploiements:
+
+- Use this Role : Cognitive Services OpenAI User
 
 Dans la section Membre, choisis Identité managée ou application et sélectionne ton application
 

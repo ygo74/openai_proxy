@@ -2,7 +2,8 @@
 import httpx
 import ssl
 import logging
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional, Union, Type, cast
+from types import TracebackType
 from .azure_auth_client import AzureAuthClient
 from .http_client_factory import HttpClientFactory
 from .retry_handler import with_enterprise_retry  # Ajout de l'import du décorateur
@@ -62,8 +63,8 @@ class AzureManagementClient:
         Raises:
             httpx.HTTPError: If API request fails
         """
-        # Get access token
-        access_token = await self.auth_client.get_access_token()
+        # Get access token (cast to str for typing clarity)
+        access_token: str = cast(str, await self.auth_client.get_access_token())
 
         url = (
             f"https://management.azure.com/subscriptions/{self.subscription_id}"
@@ -87,18 +88,42 @@ class AzureManagementClient:
             deployments = response_data.get("value", [])
 
             # Transform deployment data to match our expected format
-            deployment_models = []
+            deployment_models: List[Dict[str, Any]] = []
             for deployment in deployments:
-                properties = deployment.get("properties", {})
-                model_info = properties.get("model", {})
+                properties: Dict[str, Any] = deployment.get("properties", {}) or {}
+                model_info: Dict[str, Any] = properties.get("model", {}) or {}
 
-                deployment_name = deployment.get("name", "")
-                model_name = model_info.get("name", "")
+                deployment_name: str = deployment.get("name", "")
+                model_name: str = model_info.get("name", "")
 
-                deployment_model = {
-                    "id": deployment_name,  # Use deployment name as ID (this is what you use in API calls)
+                # Use Azure-provided capabilities directly instead of manual heuristic
+                raw_capabilities: Dict[str, Any] = properties.get("capabilities", {}) or {}
+
+                # Normalize capabilities if provided, else fallback to heuristic booleans
+                if raw_capabilities:
+                    def _as_bool(v: object) -> bool:
+                        return v if isinstance(v, bool) else str(v).lower() == "true"
+
+                    normalized: Dict[str, Any] = {}
+                    for k, v in raw_capabilities.items():
+                        # Numeric detection
+                        if isinstance(v, str) and v.isdigit():
+                            try:
+                                normalized[k] = int(v)
+                                continue
+                            except ValueError:
+                                pass
+                        # Boolean-like
+                        if isinstance(v, (str, bool)):
+                            normalized[k] = _as_bool(v)
+                        else:
+                            normalized[k] = v
+                    azure_capabilities: Dict[str, Any] = normalized
+
+                deployment_model: Dict[str, Any] = {
+                    "id": deployment_name,
                     "object": "model",
-                    "model": model_name,  # Underlying model name
+                    "model": model_name,
                     "deployment_id": deployment_name,
                     "deployment_status": properties.get("provisioningState", "Unknown"),
                     "model_version": model_info.get("version", ""),
@@ -107,11 +132,7 @@ class AzureManagementClient:
                     "scale_settings": properties.get("scaleSettings", {}),
                     "created": deployment.get("systemData", {}).get("createdAt", ""),
                     "owned_by": "azure-openai",
-                    "capabilities": {
-                        "chat_completions": self._supports_chat_completions(model_name),
-                        "completions": self._supports_completions(model_name),
-                        "embeddings": self._supports_embeddings(model_name)
-                    }
+                    "capabilities": azure_capabilities,
                 }
                 deployment_models.append(deployment_model)
 
@@ -128,45 +149,6 @@ class AzureManagementClient:
             logger.error(f"Unexpected error fetching Azure deployments: {str(e)}")
             raise
 
-    def _supports_chat_completions(self, model_name: str) -> bool:
-        """Check if a model supports chat completions.
-
-        Args:
-            model_name (str): Model name
-
-        Returns:
-            bool: True if model supports chat completions
-        """
-        chat_models = ["gpt-4", "gpt-3.5-turbo", "gpt-35-turbo"]
-        return any(chat_model in model_name.lower() for chat_model in chat_models)
-
-    def _supports_completions(self, model_name: str) -> bool:
-        """Check if a model supports text completions.
-
-        Args:
-            model_name (str): Model name
-
-        Returns:
-            bool: True if model supports completions
-        """
-        completion_models = [
-            "text-davinci-003", "text-davinci-002", "text-curie-001",
-            "text-babbage-001", "text-ada-001", "davinci-002", "babbage-002"
-        ]
-        return any(comp_model in model_name.lower() for comp_model in completion_models)
-
-    def _supports_embeddings(self, model_name: str) -> bool:
-        """Check if a model supports embeddings.
-
-        Args:
-            model_name (str): Model name
-
-        Returns:
-            bool: True if model supports embeddings
-        """
-        embedding_models = ["text-embedding", "ada-002"]
-        return any(emb_model in model_name.lower() for emb_model in embedding_models)
-
     async def close(self) -> None:
         """Close the HTTP client."""
         if hasattr(self, '_client') and self._client:
@@ -176,6 +158,12 @@ class AzureManagementClient:
         """Async context manager entry."""
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Async context manager exit."""
+    async def __aexit__(self, exc_type: Optional[Type[BaseException]], exc_val: Optional[BaseException], exc_tb: Optional[TracebackType]) -> None:
+        """Async context manager exit.
+
+        Args:
+            exc_type (Optional[Type[BaseException]]): Exception type if raised
+            exc_val (Optional[BaseException]): Exception instance if raised
+            exc_tb (Optional[TracebackType]): Traceback if raised
+        """
         await self.close()

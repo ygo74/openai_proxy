@@ -427,45 +427,6 @@ class AzureOpenAIProxyClient(LLMClientProtocol):
         # Fallback to the standard models endpoint with retry
         return await self.list_models()
 
-    def _supports_chat_completions(self, model_name: str) -> bool:
-        """Check if a model supports chat completions.
-
-        Args:
-            model_name (str): Model name
-
-        Returns:
-            bool: True if model supports chat completions
-        """
-        chat_models = ["gpt-4", "gpt-3.5-turbo", "gpt-35-turbo"]
-        return any(chat_model in model_name.lower() for chat_model in chat_models)
-
-    def _supports_completions(self, model_name: str) -> bool:
-        """Check if a model supports text completions.
-
-        Args:
-            model_name (str): Model name
-
-        Returns:
-            bool: True if model supports completions
-        """
-        completion_models = [
-            "text-davinci-003", "text-davinci-002", "text-curie-001",
-            "text-babbage-001", "text-ada-001", "davinci-002", "babbage-002"
-        ]
-        return any(comp_model in model_name.lower() for comp_model in completion_models)
-
-    def _supports_embeddings(self, model_name: str) -> bool:
-        """Check if a model supports embeddings.
-
-        Args:
-            model_name (str): Model name
-
-        Returns:
-            bool: True if model supports embeddings
-        """
-        embedding_models = ["text-embedding", "ada-002"]
-        return any(emb_model in model_name.lower() for emb_model in embedding_models)
-
     def _build_url(self, endpoint: str, deployment_name: str) -> str:
         """Build Azure OpenAI API URL with deployment and API version.
 
