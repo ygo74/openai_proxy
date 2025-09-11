@@ -100,30 +100,43 @@ class ChatCompletionService:
             PermissionError: If user is not authorized to access the model
             RuntimeError: If provider client not configured
         """
+        """Create a text completion.
+
+        Implements capability-based fallback: if the model does not support the
+        'completions' endpoint but supports chat, it will internally perform a
+        chat completion and convert the result to a CompletionResponse.
+        """
         logger.info(f"Creating text completion with model {request.model}")
 
-        # Validate and get model, checking authorization
         model = await self._get_and_validate_model(request.model, user)
-
-        # Get or create client for this model
         client = self._get_or_create_client(model)
-
-        # Update request with provider info
         request_with_provider = self._prepare_completion_request(request, model)
 
-        # Measure request time and execute
+        # Capability introspection
+        capabilities = model.capabilities or {}
+        def _as_bool(val: Any) -> bool:
+            return val is True or (isinstance(val, str) and val.lower() == "true")
+        supports_completions = any(_as_bool(capabilities.get(k)) for k in [
+            "completions", "completion", "text_completion"
+        ])
+        supports_chat = any(_as_bool(capabilities.get(k)) for k in [
+            "chat_completions", "chatCompletion", "chat", "chat_completion"
+        ])
+
         start_time = time.time()
         try:
-            response = await client.completion(request_with_provider)
-            latency_ms = (time.time() - start_time) * 1000
+            if supports_completions or not supports_chat:
+                # Direct call (or no chat fallback available)
+                response = await client.completion(request_with_provider)
+            else:
+                logger.info("Model lacks 'completions' capability; falling back to chat completion conversion")
+                response = await self._completion_via_chat_fallback(request_with_provider, client, model)
 
-            # Update response with timing info
+            latency_ms = (time.time() - start_time) * 1000
             response.latency_ms = latency_ms
             response.timestamp = datetime.now(timezone.utc)
-
-            logger.info(f"Text completion successful in {latency_ms:.2f}ms")
+            logger.info(f"Text completion successful in {latency_ms:.2f}ms (fallback={not supports_completions and supports_chat})")
             return response
-
         except Exception as e:
             logger.error(f"Error in text completion: {str(e)}")
             raise
@@ -204,8 +217,8 @@ class ChatCompletionService:
             # Take the first model found
             model = models[0]
 
-            # If no user groups provided or user is admin, allow access
-            if not user or "admin" in user:
+            # If user is admin, allow access
+            if "admin" in user.groups:
                 return model
 
             # For regular users, check if they have access to this model
@@ -282,6 +295,73 @@ class ChatCompletionService:
         request_dict = request.model_dump()
         request_dict['model'] = model.name  # Use technical name for API calls
         return CompletionRequest(**request_dict)
+
+    async def _completion_via_chat_fallback(self, request: CompletionRequest, client: LLMClientProtocol, model: LlmModel) -> CompletionResponse:
+        """Execute a completion request via chat fallback based on model capabilities.
+
+        Args:
+            request (CompletionRequest): Original completion request (with provider model name applied)
+            client (LLMClientProtocol): LLM client
+            model (LlmModel): Model entity (for metadata)
+
+        Returns:
+            CompletionResponse: Converted response from chat completion
+        """
+        # Build chat messages from prompt
+        if isinstance(request.prompt, str):
+            content = request.prompt
+        elif isinstance(request.prompt, list):
+            content = "\n".join(str(p) for p in request.prompt)
+        else:
+            content = str(request.prompt)
+
+        chat_messages = [ChatMessage(role=ChatMessageRole.USER, content=content)]
+
+        # Choose max_tokens fallback
+        max_tokens = request.max_tokens if request.max_tokens is not None else 1000
+
+        chat_request = ChatCompletionRequest(
+            model=request.model,  # already replaced by provider name
+            messages=chat_messages,
+            max_tokens=max_tokens,
+            temperature=request.temperature,
+            top_p=request.top_p,
+            n=request.n,
+            stream=False,  # fallback only for non-stream in this method
+            stop=request.stop,
+            presence_penalty=request.presence_penalty,
+            frequency_penalty=request.frequency_penalty,
+            user=request.user,
+            seed=request.seed
+        )
+
+        chat_response = await client.chat_completion(chat_request)
+        return self._convert_chat_to_completion_response(chat_response, model)
+
+    def _convert_chat_to_completion_response(self, chat_response: ChatCompletionResponse, model: LlmModel) -> CompletionResponse:
+        """Convert a ChatCompletionResponse to a CompletionResponse for fallback cases."""
+        choices: List[CompletionChoice] = []
+        for chat_choice in chat_response.choices:
+            choices.append(CompletionChoice(
+                text=chat_choice.message.content or "",
+                index=chat_choice.index,
+                logprobs=None,
+                finish_reason=chat_choice.finish_reason
+            ))
+
+        return CompletionResponse(
+            id=chat_response.id,
+            object="text_completion",
+            created=chat_response.created,
+            model=chat_response.model,
+            system_fingerprint=chat_response.system_fingerprint,
+            choices=choices,
+            usage=chat_response.usage,
+            provider=chat_response.provider,
+            latency_ms=chat_response.latency_ms,
+            timestamp=chat_response.timestamp,
+            raw_response=chat_response.raw_response
+        )
 
     def get_models_for_user(self, user: AuthenticatedUser) -> List[LlmModel]:
         """Get models accessible to user based on group membership.

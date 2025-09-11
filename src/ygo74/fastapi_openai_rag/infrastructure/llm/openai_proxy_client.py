@@ -111,29 +111,8 @@ class OpenAIProxyClient(LLMClientProtocol):
             logger.error(f"Unexpected error in chat completion: {str(e)}")
             raise
 
-    async def completion(self, request: CompletionRequest) -> CompletionResponse:
-        """Create text completion via transparent proxy with smart routing.
-
-        Args:
-            request (CompletionRequest): Text completion request
-
-        Returns:
-            CompletionResponse: Generated response
-
-        Raises:
-            httpx.HTTPError: If API request fails
-        """
-        # Check if model supports completions endpoint
-        model_name = request.model
-        if self._should_use_chat_completions(model_name):
-            logger.info(f"Model {model_name} doesn't support completions endpoint, converting to chat completion")
-            return await self._completion_via_chat(request)
-
-        # Use standard completions endpoint
-        return await self._direct_completion(request)
-
     @with_enterprise_retry
-    async def _direct_completion(self, request: CompletionRequest) -> CompletionResponse:
+    async def completion(self, request: CompletionRequest) -> CompletionResponse:
         """Direct completion via completions endpoint.
 
         Args:
@@ -175,119 +154,6 @@ class OpenAIProxyClient(LLMClientProtocol):
         except Exception as e:
             logger.error(f"Unexpected error in text completion: {str(e)}")
             raise
-
-    async def _completion_via_chat(self, request: CompletionRequest) -> CompletionResponse:
-        """Convert completion request to chat completion for models that don't support completions.
-
-        Args:
-            request (CompletionRequest): Text completion request
-
-        Returns:
-            CompletionResponse: Generated response converted from chat completion
-        """
-        from ...domain.models.chat_completion import ChatCompletionRequest, ChatMessage
-
-        # Convert completion request to chat completion request
-        messages = []
-
-        # Handle prompt conversion
-        if isinstance(request.prompt, str):
-            content = request.prompt
-        elif isinstance(request.prompt, list):
-            content = "\n".join(str(p) for p in request.prompt)
-        else:
-            content = str(request.prompt)
-
-        messages.append(ChatMessage(role="user", content=content))
-
-        # Ensure max_tokens is properly set - use higher default if not specified
-        max_tokens = request.max_tokens
-        if max_tokens is None:
-            max_tokens = 1000  # Higher default for better responses
-            logger.debug(f"No max_tokens specified, using default: {max_tokens}")
-
-        logger.debug(f"Converting completion to chat completion with max_tokens: {max_tokens}")
-
-        # Create chat completion request
-        chat_request = ChatCompletionRequest(
-            model=request.model,
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=request.temperature,
-            top_p=request.top_p,
-            n=request.n,
-            stream=request.stream,
-            stop=request.stop,
-            presence_penalty=request.presence_penalty,
-            frequency_penalty=request.frequency_penalty,
-            user=request.user,
-            seed=request.seed
-        )
-
-        # Make chat completion request
-        chat_response = await self.chat_completion(chat_request)
-
-        # Convert chat response back to completion response
-        return self._convert_chat_to_completion_response(chat_response)
-
-    def _convert_chat_to_completion_response(self, chat_response) -> CompletionResponse:
-        """Convert chat completion response to completion response.
-
-        Args:
-            chat_response: Chat completion response
-
-        Returns:
-            CompletionResponse: Converted completion response
-        """
-        choices = []
-        for chat_choice in chat_response.choices:
-            choice = CompletionChoice(
-                text=chat_choice.message.content or "",
-                index=chat_choice.index,
-                logprobs=None,  # Chat completions don't provide logprobs in the same format
-                finish_reason=chat_choice.finish_reason
-            )
-            choices.append(choice)
-
-        return CompletionResponse(
-            id=chat_response.id,
-            object="text_completion",  # Keep original object type
-            created=chat_response.created,
-            model=chat_response.model,
-            system_fingerprint=chat_response.system_fingerprint,
-            choices=choices,
-            usage=chat_response.usage,
-            provider=chat_response.provider,
-            latency_ms=chat_response.latency_ms,
-            timestamp=chat_response.timestamp,
-            raw_response=chat_response.raw_response
-        )
-
-    def _should_use_chat_completions(self, model_name: str) -> bool:
-        """Determine if model should use chat completions endpoint.
-
-        Args:
-            model_name (str): Model name
-
-        Returns:
-            bool: True if should use chat completions
-        """
-        # List of models that support completions endpoint
-        completion_models = [
-            "text-davinci-003",
-            "text-davinci-002",
-            "text-curie-001",
-            "text-babbage-001",
-            "text-ada-001",
-            "davinci-002",
-            "babbage-002"
-        ]
-
-        model_name_lower = model_name.lower()
-        supports_completions = any(comp_model in model_name_lower for comp_model in completion_models)
-
-        # If it doesn't support completions, use chat completions
-        return not supports_completions
 
     @with_enterprise_retry
     async def _establish_stream_connection(self, request: ChatCompletionRequest):

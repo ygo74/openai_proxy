@@ -68,27 +68,6 @@ class AzureOpenAIProxyClient(LLMClientProtocol):
 
     @with_enterprise_retry
     async def completion(self, request: CompletionRequest) -> CompletionResponse:
-        """Create text completion via Azure OpenAI API with smart routing and retry resilience.
-
-        Args:
-            request (CompletionRequest): Text completion request
-
-        Returns:
-            CompletionResponse: Generated response
-
-        Raises:
-            httpx.HTTPError: If API request fails after all retries
-        """
-        # Check if model supports completions endpoint
-        model_name = request.model
-        if self._should_use_chat_completions(model_name):
-            logger.info(f"Model {model_name} doesn't support completions endpoint, converting to chat completion")
-            return await self._completion_via_chat(request)
-
-        # Use standard completions endpoint
-        return await self._direct_completion(request)
-
-    async def _direct_completion(self, request: CompletionRequest) -> CompletionResponse:
         """Direct completion via completions endpoint with automatic retry.
 
         Args:
@@ -218,31 +197,6 @@ class AzureOpenAIProxyClient(LLMClientProtocol):
             raw_response=chat_response.raw_response
         )
 
-    def _should_use_chat_completions(self, model_name: str) -> bool:
-        """Determine if model should use chat completions endpoint.
-
-        Args:
-            model_name (str): Model name
-
-        Returns:
-            bool: True if should use chat completions
-        """
-        # List of models that support completions endpoint
-        completion_models = [
-            "text-davinci-003",
-            "text-davinci-002",
-            "text-curie-001",
-            "text-babbage-001",
-            "text-ada-001",
-            "davinci-002",
-            "babbage-002"
-        ]
-
-        model_name_lower = model_name.lower()
-        supports_completions = any(comp_model in model_name_lower for comp_model in completion_models)
-
-        # If it doesn't support completions, use chat completions
-        return not supports_completions
 
     @with_enterprise_retry
     async def chat_completion(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
