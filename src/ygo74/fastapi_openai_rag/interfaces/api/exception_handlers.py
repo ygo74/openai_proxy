@@ -95,5 +95,5 @@ class ExceptionHandlers:
         logger.error(f"Unhandled exception on {request.url}: {str(exc)}", exc_info=True)
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={"detail": "Internal server error"}
+            content={"detail": f"Internal server error - see logs for details: {str(exc)}"}
         )
