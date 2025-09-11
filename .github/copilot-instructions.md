@@ -170,6 +170,10 @@ class UserService:
 ## 🔧 Code Style
 
 - **English documentation** for all functions/classes
+
+  - **function docstrings**: Purpose, args, returns, exceptions
+  - **class docstrings**: Overview, attributes, methods
+
 - **Full typing**: All function args, returns, variables
 - **Class-based imports**: Prefer `MyClass.static_method()` over standalone functions
 - **Pydantic models**: Use for validation, serialization in domain layer

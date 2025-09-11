@@ -381,6 +381,104 @@ class AzureOpenAIProxyClient(LLMClientProtocol):
         # Fallback to the standard models endpoint with retry
         return await self.list_models()
 
+    @with_enterprise_retry
+    async def responses(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Call Azure Responses API (if supported) or raise.
+
+        Azure endpoint pattern:
+        POST /openai/deployments/{deployment}/responses?api-version=..."""
+        deployment = payload.get("model") or payload.get("deployment") or ""
+        if not deployment:
+            raise ValueError("Payload must include 'model' (deployment name) for Azure responses API")
+        url = f"{self.base_url}/openai/v1/responses"
+        headers = self._get_headers()
+        body = {k: v for k, v in payload.items() if v is not None}
+        # Remove model field (in URL) to avoid Azure validation errors
+        # body.pop("model", None)
+        if body.get("stream") is True:
+            body["stream"] = False
+        logger.debug(f"Calling Azure /responses for deployment {deployment} with keys: {list(body.keys())}")
+        try:
+            res = await self._client.post(url=url, headers=headers, json=body, timeout=120.0)
+            res.raise_for_status()
+            data = res.json()
+            return data
+        except httpx.HTTPStatusError as e:
+            err = self._parse_azure_error(e)
+            logger.error(f"Azure HTTP error in responses: {err}")
+            raise httpx.HTTPError(f"Azure OpenAI API error: {err}")
+        except Exception as e:
+            logger.error(f"Unexpected Azure responses error: {e}")
+            raise
+
+
+    @with_enterprise_retry
+    async def _establish_responses_stream_connection(self, payload: Dict[str, Any]):
+        """Establish streaming connection to Azure Responses API with retry capability.
+
+        Args:
+            payload (Dict[str, Any]): Payload for the responses API
+
+        Returns:
+            httpx.AsyncClient.stream: HTTP streaming response
+        """
+        deployment = payload.get("model") or payload.get("deployment") or ""
+        if not deployment:
+            raise ValueError("Payload must include 'model' (deployment name) for Azure responses streaming")
+        url = f"{self.base_url}/openai/v1/responses"
+        headers = self._get_headers()
+        body = {k: v for k, v in payload.items() if v is not None}
+        body["stream"] = True
+
+        logger.debug(f"Starting Azure streaming /responses for deployment {deployment}")
+        logger.debug(f"Stream request payload: {body}")
+        logger.debug(f"Stream request headers: {headers}")
+
+        return self._client.stream(
+            "POST",
+            url=url,
+            headers=headers,
+            json=body,
+            timeout=120.0
+        )
+
+    async def responses_stream(self, payload: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], None]:
+        """Stream Azure Responses API events (SSE-like).
+
+        Args:
+            payload (Dict[str, Any]): Payload for the responses API
+        Yields:
+            Dict[str, Any]: Streaming response events
+
+        """
+        try:
+            # Get streaming connection with retry
+            stream_ctx = await self._establish_responses_stream_connection(payload)
+
+            async with stream_ctx as res:
+                res.raise_for_status()
+                async for line in res.aiter_lines():
+                    if not line:
+                        continue
+                    line = line.strip()
+                    if line.startswith("data: "):
+                        line = line[6:]
+                    if line == "[DONE]":
+                        break
+                    try:
+                        evt = json.loads(line)
+                        yield evt
+                    except json.JSONDecodeError:
+                        logger.debug(f"Skipping non-JSON Azure responses line: {line[:80]}")
+                        continue
+        except httpx.HTTPStatusError as e:
+            err = self._parse_azure_error(e)
+            logger.error(f"Azure HTTP error in responses stream: {err}")
+            raise httpx.HTTPError(f"Azure OpenAI API error: {err}")
+        except Exception as e:
+            logger.error(f"Unexpected Azure responses stream error: {e}")
+            raise
+
     def _build_url(self, endpoint: str, deployment_name: str) -> str:
         """Build Azure OpenAI API URL with deployment and API version.
 

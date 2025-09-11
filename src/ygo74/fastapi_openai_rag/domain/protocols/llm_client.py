@@ -1,5 +1,6 @@
 """Protocols for LLM client implementations."""
-from typing import AsyncGenerator, Protocol, List, Dict, Any
+from typing import AsyncGenerator, Protocol, List, Dict, Any, Optional, Type
+from types import TracebackType
 from ..models.chat_completion import ChatCompletionRequest, ChatCompletionResponse, ChatCompletionStreamResponse
 from ..models.completion import CompletionRequest, CompletionResponse
 
@@ -55,13 +56,19 @@ class LLMClientProtocol(Protocol):
         """
         ...
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> "LLMClientProtocol":
         """Async context manager entry."""
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType]
+    ) -> Optional[bool]:
         """Async context manager exit with automatic cleanup."""
         await self.close()
+        return None
 
     async def chat_completion_stream(self, request: ChatCompletionRequest) -> AsyncGenerator[ChatCompletionStreamResponse, None]:
         """Stream chat completion via Azure OpenAI API with retry for connection establishment.
@@ -72,4 +79,29 @@ class LLMClientProtocol(Protocol):
         Yields:
             ChatCompletionStreamResponse: Streaming response chunks
         """
+        yield  # type: ignore[misc]
+        raise StopAsyncIteration  # pragma: no cover
+
+    # --- New Responses API methods ---
+    async def responses(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Call the Responses API (direct /v1/responses or provider equivalent).
+
+        Args:
+            payload (Dict[str, Any]): Raw request payload (OpenAI compatible)
+
+        Returns:
+            Dict[str, Any]: Raw provider response (OpenAI compatible)
+        """
         ...
+
+    async def responses_stream(self, payload: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], None]:
+        """Stream Responses API events.
+
+        Args:
+            payload (Dict[str, Any]): Raw request payload with stream=True
+
+        Yields:
+            Dict[str, Any]: Streamed response events
+        """
+        yield {}  # type: ignore[misc]
+        raise StopAsyncIteration  # pragma: no cover

@@ -5,12 +5,13 @@ import json
 import time
 import uuid
 import ssl
-from typing import Dict, Any, Optional, AsyncGenerator, List, Union
+from typing import Dict, Any, Optional, AsyncGenerator, List, Union, Type
 from datetime import datetime, timezone
+from types import TracebackType
 
 from ...domain.models.chat_completion import (
     ChatCompletionRequest, ChatCompletionResponse, ChatCompletionChoice, ChatCompletionStreamChoice,
-    ChatCompletionStreamResponse, ChatMessage
+    ChatCompletionStreamResponse, ChatMessage, ChatMessageRole
 )
 from ...domain.models.completion import (
     CompletionRequest, CompletionResponse, CompletionChoice
@@ -310,6 +311,77 @@ class OpenAIProxyClient(LLMClientProtocol):
 
         return deployments
 
+    @with_enterprise_retry
+    async def responses(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Call the OpenAI Responses API.
+
+        Args:
+            payload (Dict[str, Any]): OpenAI responses request payload (already OpenAI-compatible)
+
+        Returns:
+            Dict[str, Any]: Raw JSON response
+        """
+        url = f"{self.base_url}/responses"
+        headers = self._get_headers()
+        # Ensure stream flag absent or False for non-stream
+        payload = {k: v for k, v in payload.items() if v is not None}
+        if payload.get("stream") is True:
+            # Caller should use responses_stream for streaming
+            payload["stream"] = False
+        logger.debug(f"Calling /responses at {url} with keys: {list(payload.keys())}")
+        try:
+            res = await self._client.post(url=url, headers=headers, json=payload, timeout=120.0)
+            res.raise_for_status()
+            data = res.json()
+            logger.debug("Responses API call succeeded")
+            return data
+        except httpx.HTTPStatusError as e:
+            error_details = self._parse_openai_error(e)
+            logger.error(f"OpenAI HTTP error in responses: {error_details}")
+            raise httpx.HTTPError(f"OpenAI API error: {error_details}")
+        except Exception as e:
+            logger.error(f"Unexpected error in responses API: {e}")
+            raise
+
+    async def responses_stream(self, payload: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], None]:
+        """Stream events from the OpenAI Responses API.
+
+        Args:
+            payload (Dict[str, Any]): Request payload with stream=True
+
+        Yields:
+            Dict[str, Any]: Parsed SSE event data objects
+        """
+        url = f"{self.base_url}/responses"
+        headers = self._get_headers()
+        payload = {k: v for k, v in payload.items() if v is not None}
+        payload["stream"] = True
+        logger.debug(f"Starting streaming /responses to {url}")
+        try:
+            async with self._client.stream("POST", url, headers=headers, json=payload, timeout=120.0) as res:
+                res.raise_for_status()
+                async for line in res.aiter_lines():
+                    if not line:
+                        continue
+                    line = line.strip()
+                    if line.startswith("data: "):
+                        line = line[6:]
+                    if line == "[DONE]":
+                        break
+                    try:
+                        event = json.loads(line)
+                        yield event
+                    except json.JSONDecodeError:
+                        logger.debug(f"Skipping non JSON line in responses stream: {line[:80]}")
+                        continue
+        except httpx.HTTPStatusError as e:
+            error_details = self._parse_openai_error(e)
+            logger.error(f"OpenAI HTTP error in responses stream: {error_details}")
+            raise httpx.HTTPError(f"OpenAI API error: {error_details}")
+        except Exception as e:
+            logger.error(f"Unexpected error in responses stream: {e}")
+            raise
+
     def _get_headers(self) -> Dict[str, str]:
         """Get headers for API requests.
 
@@ -370,11 +442,14 @@ class OpenAIProxyClient(LLMClientProtocol):
             ChatCompletionResponse: Domain response
         """
         # Extract choices
-        choices = []
+        choices: List[ChatCompletionChoice] = []
         for choice_data in response_data.get("choices", []):
             message_data = choice_data.get("message", {})
+            role_raw = message_data.get("role") or "assistant"
+            if isinstance(role_raw, str) and role_raw not in {r.value for r in ChatMessageRole}:  # type: ignore[attr-defined]
+                role_raw = ChatMessageRole.ASSISTANT
             message = ChatMessage(
-                role=message_data.get("role"),
+                role=role_raw,  # type: ignore[arg-type]
                 content=message_data.get("content"),
                 function_call=message_data.get("function_call"),
                 tool_calls=message_data.get("tool_calls")
@@ -420,7 +495,7 @@ class OpenAIProxyClient(LLMClientProtocol):
             CompletionResponse: Domain response
         """
         # Extract choices
-        choices = []
+        choices: List[CompletionChoice] = []
         for choice_data in response_data.get("choices", []):
             choice = CompletionChoice(
                 text=choice_data.get("text", ""),
@@ -471,15 +546,12 @@ class OpenAIProxyClient(LLMClientProtocol):
             logger.debug(f"Stream chunk delta content: {delta}")
 
             # Assigner une valeur par défaut pour le rôle si elle est None
-            role = delta.get("role")
-            if role is None:
-                # Dans les chunks de streaming Azure, le rôle est souvent défini uniquement
-                # dans le premier chunk et est généralement "assistant" pour les chunks suivants
-                role = "assistant"
-
+            role = delta.get("role") or "assistant"
+            if isinstance(role, str) and role not in {r.value for r in ChatMessageRole}:  # type: ignore[attr-defined]
+                role = ChatMessageRole.ASSISTANT
             # Create a message object from the delta
             message = ChatMessage(
-                role=role,  # Utilisez la valeur par défaut si nécessaire
+                role=role,  # type: ignore[arg-type]
                 content=delta.get("content", ""),  # Ensure content is never None
                 function_call=delta.get("function_call"),
                 tool_calls=delta.get("tool_calls")
@@ -550,6 +622,11 @@ class OpenAIProxyClient(LLMClientProtocol):
         """Async context manager entry."""
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Async context manager exit with automatic cleanup."""
+    async def __aexit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType]
+    ) -> Optional[bool]:
         await self.close()
+        return None

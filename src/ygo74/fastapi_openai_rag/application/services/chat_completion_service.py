@@ -7,7 +7,8 @@ from datetime import datetime, timezone
 from ...domain.models.autenticated_user import AuthenticatedUser
 from ...domain.models.chat_completion import (
     ChatCompletionRequest, ChatCompletionResponse, ChatCompletionChoice,
-    ChatMessage, ChatMessageRole
+    ChatMessage, ChatMessageRole, ChatCompletionStreamResponse,
+    MessageContentText, MessageContentImageURL, MessageContentPart
 )
 from ...domain.models.completion import (
     CompletionRequest, CompletionResponse, CompletionChoice
@@ -146,7 +147,7 @@ class ChatCompletionService:
             logger.error(f"Error in text completion: {str(e)}")
             raise
 
-    async def create_chat_completion_stream(self, request: ChatCompletionRequest, user: AuthenticatedUser) -> AsyncGenerator[ChatCompletionResponse, None]:
+    async def create_chat_completion_stream(self, request: ChatCompletionRequest, user: AuthenticatedUser) -> AsyncGenerator[ChatCompletionStreamResponse, None]:
         """Create a streaming chat completion.
 
         Args:
@@ -194,6 +195,118 @@ class ChatCompletionService:
         except Exception as e:
             logger.error(f"Error in streaming chat completion: {str(e)}")
             raise
+
+    async def create_response(self, payload: Dict[str, Any], user: AuthenticatedUser) -> Dict[str, Any]:
+        """Create a unified Responses API style response with capability fallback.
+
+        This inspects the model capabilities. If the model declares a responses capability
+        (any of: responses / response / responses_api == true) the underlying client
+        responses endpoint is used directly. Otherwise, if the model supports chat, the
+        payload is converted to an internal ChatCompletionRequest and executed via the
+        chat endpoint, then wrapped to emulate an OpenAI Responses output structure.
+
+        Args:
+            payload (Dict[str, Any]): Raw incoming /v1/responses request payload (OpenAI compatible).
+            user (AuthenticatedUser): Authenticated user performing the request.
+
+        Returns:
+            Dict[str, Any]: OpenAI-compatible Responses JSON (direct or fallback-wrapped).
+
+        Raises:
+            ValidationError: If required fields are missing or capabilities absent.
+            EntityNotFoundError: If the referenced model does not exist.
+            PermissionError: If the user lacks access to the model.
+        """
+        model_name = str(payload.get("model"))
+        if not model_name:
+            raise ValidationError("model is required in responses payload")
+        model = await self._get_and_validate_model(model_name, user)
+        client = self._get_or_create_client(model)
+        caps = model.capabilities or {}
+        def _b(v: Any) -> bool:
+            return v is True or (isinstance(v, str) and v.lower() == "true")
+        supports_responses = any(_b(caps.get(k)) for k in ["responses", "response", "responses_api"])
+        supports_chat = any(_b(caps.get(k)) for k in ["chat", "chat_completion", "chatCompletion", "chat_completions"])
+        if supports_responses:
+            return await client.responses(payload)
+        if not supports_chat:
+            raise ValidationError(f"Model {model_name} does not support responses or chat capabilities")
+        chat_req = self._responses_payload_to_chat_request(payload)
+        chat_resp = await self.create_chat_completion(chat_req, user)
+        return self._chat_response_to_responses(chat_resp)
+
+    async def create_response_stream(self, payload: Dict[str, Any], user: AuthenticatedUser) -> AsyncGenerator[Dict[str, Any], None]:
+        """Stream a Responses API request, applying chat fallback if needed.
+
+        For native responses capability the underlying client streaming events are
+        passed through. For chat fallback each chat delta is mapped to synthetic
+        Responses events (response.output_text.delta). At the end response.completed
+        and done events are emitted.
+
+        Args:
+            payload (Dict[str, Any]): Raw /v1/responses payload containing stream=true.
+            user (AuthenticatedUser): Authenticated user performing the request.
+
+        Yields:
+            Dict[str, Any]: Streaming event objects (already OpenAI-compatible semantics).
+
+        Raises:
+            ValidationError: If model or capabilities are invalid.
+            EntityNotFoundError: If model not found.
+            PermissionError: If user not authorized.
+        """
+        model_name = str(payload.get("model"))
+        if not model_name:
+            raise ValidationError("model is required in responses payload")
+        model = await self._get_and_validate_model(model_name, user)
+        client = self._get_or_create_client(model)
+        caps: Dict[str, Any] = model.capabilities or {}
+        def _b(v: Any) -> bool:
+            return v is True or (isinstance(v, str) and v.lower() == "true")
+        supports_responses = any(_b(caps.get(k)) for k in ["responses", "response", "responses_api"])
+        supports_chat = any(_b(caps.get(k)) for k in ["chat", "chat_completion", "chatCompletion", "chat_completions"])
+        if supports_responses:
+            stream_gen = client.responses_stream(payload)
+            # Some implementations may return a coroutine that resolves to an async generator; handle defensively
+            if hasattr(stream_gen, "__aiter__"):
+                async for evt in stream_gen:  # type: ignore[assignment]
+                    yield evt  # type: ignore[misc]
+            else:  # pragma: no cover - defensive
+                resolved = await stream_gen  # type: ignore[func-returns-value]
+                async for evt in resolved:  # type: ignore[attr-defined]
+                    yield evt
+            return
+        if not supports_chat:
+            raise ValidationError(f"Model {model_name} does not support responses or chat capabilities")
+        chat_req = self._responses_payload_to_chat_request(payload, force_stream=True)
+        async for chunk in self.create_chat_completion_stream(chat_req, user):
+            delta_parts: List[str] = []
+            for choice in chunk.choices:
+                content_piece = choice.delta.content
+                if isinstance(content_piece, list):
+                    for p in content_piece:
+                        txt: Optional[str] = None
+                        if isinstance(p, dict):
+                            t1 = p.get("text")
+                            t2 = p.get("content")
+                            txt = t1 if isinstance(t1, str) else (t2 if isinstance(t2, str) else None)
+                        else:
+                            try:
+                                d = p.model_dump()  # type: ignore[attr-defined]
+                                t1 = d.get("text")
+                                t2 = d.get("content")
+                                txt = t1 if isinstance(t1, str) else (t2 if isinstance(t2, str) else None)
+                            except Exception:  # noqa: BLE001
+                                txt = None
+                        if txt:
+                            delta_parts.append(txt)
+                elif isinstance(content_piece, str):
+                    if content_piece:
+                        delta_parts.append(content_piece)
+            if delta_parts:
+                yield {"event": "response.output_text.delta", "data": {"delta": "".join(delta_parts)}}
+        yield {"event": "response.completed", "data": {}}
+        yield {"event": "done", "data": {}}
 
     async def _get_and_validate_model(self, model_name: str, user: AuthenticatedUser) -> LlmModel:
         """Get and validate model from database, checking user authorization.
@@ -347,8 +460,23 @@ class ChatCompletionService:
         """Convert a ChatCompletionResponse to a CompletionResponse for fallback cases."""
         choices: List[CompletionChoice] = []
         for chat_choice in chat_response.choices:
+            content = chat_choice.message.content
+            if isinstance(content, list):
+                flat_parts: List[str] = []
+                for p in content:
+                    if isinstance(p, dict):
+                        flat_parts.append(str(p.get("text") or p.get("content") or ""))
+                    else:
+                        try:
+                            d = p.model_dump()
+                            flat_parts.append(str(d.get("text") or ""))
+                        except Exception:
+                            pass
+                content_text = "".join(flat_parts)
+            else:
+                content_text = content or ""
             choices.append(CompletionChoice(
-                text=chat_choice.message.content or "",
+                text=content_text,
                 index=chat_choice.index,
                 logprobs=None,
                 finish_reason=chat_choice.finish_reason
@@ -367,6 +495,92 @@ class ChatCompletionService:
             timestamp=chat_response.timestamp,
             raw_response=chat_response.raw_response
         )
+
+    def _responses_payload_to_chat_request(self, payload: Dict[str, Any], force_stream: bool = False) -> ChatCompletionRequest:
+        """Convert a /v1/responses style payload to ChatCompletionRequest for fallback.
+
+        Collapses the array of input items (input_text, input_image) into a single
+        user message with multi-part content, adding an optional system instruction.
+
+        Args:
+            payload (Dict[str, Any]): Raw responses request payload.
+            force_stream (bool): Force stream flag on resulting ChatCompletionRequest.
+
+        Returns:
+            ChatCompletionRequest: Constructed chat request ready for provider.
+        """
+        input_items = payload.get("input") or []
+        instructions = payload.get("instructions")
+        parts: List[MessageContentPart] = []
+        for item in input_items:
+            if not isinstance(item, dict):
+                continue
+            itype = item.get("type")
+            if itype == "input_text":
+                parts.append(MessageContentText(type="text", text=item.get("text", "")))
+            elif itype == "input_image":
+                url = item.get("image_url") or item.get("url") or item.get("source")
+                if url:
+                    parts.append(MessageContentImageURL(type="image_url", image_url={"url": url}))
+        messages: List[ChatMessage] = []
+        if instructions:
+            messages.append(ChatMessage(role=ChatMessageRole.SYSTEM, content=instructions))
+        if len(parts) == 1:
+            messages.append(ChatMessage(role=ChatMessageRole.USER, content=parts[0].model_dump()))
+        else:
+            messages.append(ChatMessage(role=ChatMessageRole.USER, content=parts))
+        return ChatCompletionRequest(
+            model=payload.get("model"),
+            messages=messages,
+            max_tokens=payload.get("max_output_tokens") or payload.get("max_tokens"),
+            temperature=payload.get("temperature"),
+            stream=force_stream or bool(payload.get("stream")),
+            top_logprobs=None
+        )
+
+    def _chat_response_to_responses(self, chat_resp: ChatCompletionResponse) -> Dict[str, Any]:
+        """Adapt a ChatCompletionResponse to a minimal Responses object.
+
+        Args:
+            chat_resp (ChatCompletionResponse): Completed chat response.
+
+        Returns:
+            Dict[str, Any]: Responses-style JSON object.
+        """
+        def _flatten(choice: ChatCompletionChoice) -> str:
+            content = choice.message.content
+            if isinstance(content, list):
+                # Extract text fields from parts
+                texts: List[str] = []
+                for p in content:
+                    if isinstance(p, dict):
+                        texts.append(str(p.get("text") or p.get("content") or ""))
+                    else:
+                        try:
+                            d = p.model_dump()
+                            texts.append(str(d.get("text") or ""))
+                        except Exception:
+                            texts.append("")
+                return "".join(texts)
+            return content or ""
+        text = "".join([_flatten(c) for c in chat_resp.choices])
+        return {
+            "id": chat_resp.id,
+            "object": "response",
+            "model": chat_resp.model,
+            "created": chat_resp.created,
+            "output": [
+                {
+                    "id": f"{chat_resp.id}-msg0",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {"type": "output_text", "text": text}
+                    ]
+                }
+            ],
+            "usage": chat_resp.usage.model_dump(),
+        }
 
     def get_models_for_user(self, user: AuthenticatedUser) -> List[LlmModel]:
         """Get models accessible to user based on group membership.
