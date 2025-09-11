@@ -88,36 +88,6 @@ class TestAzureOpenAIProxyClient:
         assert headers["Content-Type"] == "application/json"
         assert "User-Agent" in headers
 
-    def test_azure_openai_proxy_client_should_use_chat_completions(self):
-        """Test model endpoint detection."""
-        # arrange
-        with patch('src.ygo74.fastapi_openai_rag.infrastructure.llm.azure_openai_proxy_client.HttpClientFactory'):
-            client = AzureOpenAIProxyClient(
-                api_key="test-key",
-                base_url="https://test.openai.azure.com",
-                api_version="2024-06-01"
-            )
-
-        # act & assert
-        assert client._should_use_chat_completions("gpt-4") is True
-        assert client._should_use_chat_completions("gpt-35-turbo") is True
-        assert client._should_use_chat_completions("text-davinci-003") is False
-
-    def test_azure_openai_proxy_client_supports_capabilities(self):
-        """Test model capability detection."""
-        # arrange
-        with patch('src.ygo74.fastapi_openai_rag.infrastructure.llm.azure_openai_proxy_client.HttpClientFactory'):
-            client = AzureOpenAIProxyClient(
-                api_key="test-key",
-                base_url="https://test.openai.azure.com",
-                api_version="2024-06-01"
-            )
-
-        # act & assert
-        assert client._supports_chat_completions("gpt-4") is True
-        assert client._supports_completions("text-davinci-003") is True
-        assert client._supports_embeddings("text-embedding-ada-002") is True
-
     @pytest.mark.asyncio
     async def test_azure_openai_proxy_client_close(self):
         """Test client cleanup."""

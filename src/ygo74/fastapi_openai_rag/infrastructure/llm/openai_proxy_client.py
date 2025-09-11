@@ -9,7 +9,7 @@ from typing import Dict, Any, Optional, AsyncGenerator, List, Union
 from datetime import datetime, timezone
 
 from ...domain.models.chat_completion import (
-    ChatCompletionRequest, ChatCompletionResponse, ChatCompletionChoice,
+    ChatCompletionRequest, ChatCompletionResponse, ChatCompletionChoice, ChatCompletionStreamChoice,
     ChatCompletionStreamResponse, ChatMessage
 )
 from ...domain.models.completion import (
@@ -20,6 +20,7 @@ from ...domain.protocols.llm_client import LLMClientProtocol
 
 from .http_client_factory import HttpClientFactory
 from .retry_handler import with_enterprise_retry
+from .enterprise_config import EnterpriseConfig
 import logging
 
 logger = logging.getLogger(__name__)
@@ -27,40 +28,36 @@ logger = logging.getLogger(__name__)
 class OpenAIProxyClient(LLMClientProtocol):
     """Transparent OpenAI proxy client for compatible providers."""
 
-    def __init__(self, api_key: str, base_url: str, provider: LLMProvider,
-                 proxy_url: Optional[str] = None,
-                 proxy_auth: Optional[httpx.Auth] = None,
-                 verify_ssl: Union[bool, str, ssl.SSLContext] = True,
-                 ca_cert_file: Optional[str] = None,
-                 client_cert_file: Optional[str] = None,
-                 client_key_file: Optional[str] = None):
-        """Initialize OpenAI proxy client.
+    def __init__(self, api_key: str, base_url: str, provider: LLMProvider = LLMProvider.OPENAI,
+                 enterprise_config: Optional[EnterpriseConfig] = None):
+        """Initialize OpenAI proxy client with enterprise configuration.
 
         Args:
             api_key (str): API key for authentication
-            base_url (str): Base URL for the OpenAI-compatible API
-            provider (LLMProvider): Provider type (OPENAI, AZURE, etc.)
-            proxy_url (Optional[str]): Corporate proxy URL (e.g., "http://proxy.company.com:8080")
-            proxy_auth (Optional[httpx.Auth]): Proxy authentication (Basic, Digest, etc.)
-            verify_ssl (Union[bool, str, ssl.SSLContext]): SSL verification. Can be True, False, path to CA bundle, or SSLContext
-            ca_cert_file (Optional[str]): Path to custom CA certificate file for enterprise SSL interception
-            client_cert_file (Optional[str]): Path to client certificate file for mutual TLS
-            client_key_file (Optional[str]): Path to client private key file for mutual TLS
+            base_url (str): Base URL for the OpenAI API
+            provider (LLMProvider): Provider type (defaults to OPENAI)
+            enterprise_config (Optional[EnterpriseConfig]): Enterprise configuration
         """
         self.api_key = api_key
         self.base_url = base_url.rstrip('/')
         self.provider = provider
 
+        # Use default enterprise config if none provided
+        if enterprise_config is None:
+            enterprise_config = EnterpriseConfig()
+
+        self.enterprise_config = enterprise_config
+
         # Create HTTP client using factory with enterprise settings
         self._client = HttpClientFactory.create_async_client(
             target_url=self.base_url,
             timeout=120.0,
-            proxy_url=proxy_url,
-            proxy_auth=proxy_auth,
-            verify_ssl=verify_ssl,
-            ca_cert_file=ca_cert_file,
-            client_cert_file=client_cert_file,
-            client_key_file=client_key_file
+            proxy_url=enterprise_config.proxy_url,
+            proxy_auth=enterprise_config.proxy_auth,
+            verify_ssl=enterprise_config.verify_ssl,
+            ca_cert_file=enterprise_config.ca_cert_file,
+            client_cert_file=enterprise_config.client_cert_file,
+            client_key_file=enterprise_config.client_key_file
         )
 
         logger.debug(f"OpenAIProxyClient initialized for {provider} at {base_url}")
@@ -114,29 +111,8 @@ class OpenAIProxyClient(LLMClientProtocol):
             logger.error(f"Unexpected error in chat completion: {str(e)}")
             raise
 
-    async def completion(self, request: CompletionRequest) -> CompletionResponse:
-        """Create text completion via transparent proxy with smart routing.
-
-        Args:
-            request (CompletionRequest): Text completion request
-
-        Returns:
-            CompletionResponse: Generated response
-
-        Raises:
-            httpx.HTTPError: If API request fails
-        """
-        # Check if model supports completions endpoint
-        model_name = request.model
-        if self._should_use_chat_completions(model_name):
-            logger.info(f"Model {model_name} doesn't support completions endpoint, converting to chat completion")
-            return await self._completion_via_chat(request)
-
-        # Use standard completions endpoint
-        return await self._direct_completion(request)
-
     @with_enterprise_retry
-    async def _direct_completion(self, request: CompletionRequest) -> CompletionResponse:
+    async def completion(self, request: CompletionRequest) -> CompletionResponse:
         """Direct completion via completions endpoint.
 
         Args:
@@ -179,128 +155,15 @@ class OpenAIProxyClient(LLMClientProtocol):
             logger.error(f"Unexpected error in text completion: {str(e)}")
             raise
 
-    async def _completion_via_chat(self, request: CompletionRequest) -> CompletionResponse:
-        """Convert completion request to chat completion for models that don't support completions.
-
-        Args:
-            request (CompletionRequest): Text completion request
-
-        Returns:
-            CompletionResponse: Generated response converted from chat completion
-        """
-        from ...domain.models.chat_completion import ChatCompletionRequest, ChatMessage
-
-        # Convert completion request to chat completion request
-        messages = []
-
-        # Handle prompt conversion
-        if isinstance(request.prompt, str):
-            content = request.prompt
-        elif isinstance(request.prompt, list):
-            content = "\n".join(str(p) for p in request.prompt)
-        else:
-            content = str(request.prompt)
-
-        messages.append(ChatMessage(role="user", content=content))
-
-        # Ensure max_tokens is properly set - use higher default if not specified
-        max_tokens = request.max_tokens
-        if max_tokens is None:
-            max_tokens = 1000  # Higher default for better responses
-            logger.debug(f"No max_tokens specified, using default: {max_tokens}")
-
-        logger.debug(f"Converting completion to chat completion with max_tokens: {max_tokens}")
-
-        # Create chat completion request
-        chat_request = ChatCompletionRequest(
-            model=request.model,
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=request.temperature,
-            top_p=request.top_p,
-            n=request.n,
-            stream=request.stream,
-            stop=request.stop,
-            presence_penalty=request.presence_penalty,
-            frequency_penalty=request.frequency_penalty,
-            user=request.user,
-            seed=request.seed
-        )
-
-        # Make chat completion request
-        chat_response = await self.chat_completion(chat_request)
-
-        # Convert chat response back to completion response
-        return self._convert_chat_to_completion_response(chat_response)
-
-    def _convert_chat_to_completion_response(self, chat_response) -> CompletionResponse:
-        """Convert chat completion response to completion response.
-
-        Args:
-            chat_response: Chat completion response
-
-        Returns:
-            CompletionResponse: Converted completion response
-        """
-        choices = []
-        for chat_choice in chat_response.choices:
-            choice = CompletionChoice(
-                text=chat_choice.message.content or "",
-                index=chat_choice.index,
-                logprobs=None,  # Chat completions don't provide logprobs in the same format
-                finish_reason=chat_choice.finish_reason
-            )
-            choices.append(choice)
-
-        return CompletionResponse(
-            id=chat_response.id,
-            object="text_completion",  # Keep original object type
-            created=chat_response.created,
-            model=chat_response.model,
-            system_fingerprint=chat_response.system_fingerprint,
-            choices=choices,
-            usage=chat_response.usage,
-            provider=chat_response.provider,
-            latency_ms=chat_response.latency_ms,
-            timestamp=chat_response.timestamp,
-            raw_response=chat_response.raw_response
-        )
-
-    def _should_use_chat_completions(self, model_name: str) -> bool:
-        """Determine if model should use chat completions endpoint.
-
-        Args:
-            model_name (str): Model name
-
-        Returns:
-            bool: True if should use chat completions
-        """
-        # List of models that support completions endpoint
-        completion_models = [
-            "text-davinci-003",
-            "text-davinci-002",
-            "text-curie-001",
-            "text-babbage-001",
-            "text-ada-001",
-            "davinci-002",
-            "babbage-002"
-        ]
-
-        model_name_lower = model_name.lower()
-        supports_completions = any(comp_model in model_name_lower for comp_model in completion_models)
-
-        # If it doesn't support completions, use chat completions
-        return not supports_completions
-
     @with_enterprise_retry
-    async def chat_completion_stream(self, request: ChatCompletionRequest) -> AsyncGenerator[ChatCompletionStreamResponse, None]:
-        """Stream chat completion via transparent proxy.
+    async def _establish_stream_connection(self, request: ChatCompletionRequest):
+        """Establish streaming connection with retry capability.
 
         Args:
             request (ChatCompletionRequest): Chat completion request
 
-        Yields:
-            ChatCompletionStreamResponse: Streaming response chunks
+        Returns:
+            httpx.AsyncClient.stream: HTTP streaming response
         """
         url = f"{self.base_url}/chat/completions"
         headers = self._get_headers()
@@ -311,27 +174,69 @@ class OpenAIProxyClient(LLMClientProtocol):
 
         logger.debug(f"Starting streaming chat completion to {url}")
 
-        async with self._client.stream(
+        return self._client.stream(
             "POST",
             url=url,
             headers=headers,
             json=payload,
             timeout=120.0
-        ) as response:
-            response.raise_for_status()
+        )
 
-            async for line in response.aiter_lines():
-                if line.startswith("data: "):
-                    data = line[6:]  # Remove "data: " prefix
 
-                    if data.strip() == "[DONE]":
+    async def chat_completion_stream(self, request: ChatCompletionRequest) -> AsyncGenerator[ChatCompletionStreamResponse, None]:
+        """Stream chat completion via transparent proxy.
+
+        Args:
+            request (ChatCompletionRequest): Chat completion request
+
+        Yields:
+            ChatCompletionStreamResponse: Streaming response chunks
+        """
+
+        try:
+            # Get streaming connection with retry
+            stream_ctx = await self._establish_stream_connection(request)
+
+            # Process the stream without retry
+            async with stream_ctx as res:
+                res.raise_for_status()
+
+                # Les en-têtes sont gérés au niveau de OverrideStreamResponse et pas ici
+                # car nous ne retournons pas directement la réponse HTTP, mais des objets ChatCompletionStreamResponse
+
+                async for line in res.aiter_lines():
+                    # Skip empty lines
+                    if not line.strip():
+                        continue
+
+                    # Strip "data: " prefix if present (for SSE format)
+                    line = line.strip()
+                    if line.startswith('data: '):
+                        line = line[6:]  # Remove 'data: ' prefix
+
+                    # Check for the [DONE] message that indicates end of stream
+                    if line == '[DONE]':
                         break
 
                     try:
-                        chunk_data = json.loads(data)
-                        yield self._parse_stream_chunk(chunk_data)
+                        # Parse the JSON data into a dictionary
+                        chunk_data = json.loads(line)
+
+                        # Convert to ChatCompletionStreamResponse
+                        stream_response = self._parse_stream_chunk(chunk_data)
+
+                        # Yield the parsed response object
+                        yield stream_response
+
                     except json.JSONDecodeError:
+                        logger.warning(f"Failed to parse streaming response chunk: {line}")
                         continue
+
+        except httpx.HTTPStatusError as e:
+            error_details = self._parse_openai_error(e)
+            logger.error(f"OpenAI HTTP error in streaming chat completion: {error_details}")
+            raise httpx.HTTPError(f"OpenAI API error: {error_details}")
+
 
     @with_enterprise_retry
     async def list_models(self) -> List[Dict[str, Any]]:
@@ -556,15 +461,51 @@ class OpenAIProxyClient(LLMClientProtocol):
         Returns:
             ChatCompletionStreamResponse: Streaming response
         """
-        # This is a simplified implementation
-        # You would need to implement proper streaming response parsing
+        # Extract choices data from the chunk
+        choices: List[ChatCompletionStreamChoice] = []
+        for choice_data in chunk_data.get("choices", []):
+            # Extract the delta content from the choice
+            delta = choice_data.get("delta", {})
+
+            # Log the actual content for debugging
+            logger.debug(f"Stream chunk delta content: {delta}")
+
+            # Assigner une valeur par défaut pour le rôle si elle est None
+            role = delta.get("role")
+            if role is None:
+                # Dans les chunks de streaming Azure, le rôle est souvent défini uniquement
+                # dans le premier chunk et est généralement "assistant" pour les chunks suivants
+                role = "assistant"
+
+            # Create a message object from the delta
+            message = ChatMessage(
+                role=role,  # Utilisez la valeur par défaut si nécessaire
+                content=delta.get("content", ""),  # Ensure content is never None
+                function_call=delta.get("function_call"),
+                tool_calls=delta.get("tool_calls")
+            )
+
+            choice = ChatCompletionStreamChoice(
+                index=choice_data.get("index", 0),
+                delta=message,
+                finish_reason=choice_data.get("finish_reason")
+            )
+            choices.append(choice)
+
+        # Create the response with all required fields
         return ChatCompletionStreamResponse(
-            id=chunk_data.get("id", ""),
+            id=chunk_data.get("id", str(uuid.uuid4())),
             object=chunk_data.get("object", "chat.completion.chunk"),
             created=chunk_data.get("created", int(time.time())),
-            model=chunk_data.get("model", ""),
-            choices=[]  # Would need proper parsing
+            model=chunk_data.get("model", "unknown"),
+            system_fingerprint=chunk_data.get("system_fingerprint"),
+            choices=choices,
+            provider=self.provider,
+            raw_response=chunk_data,
+            latency_ms=None,  # Ces valeurs seront définies plus tard dans le service
+            timestamp=datetime.now(timezone.utc)
         )
+
 
     def _parse_openai_error(self, error: httpx.HTTPStatusError) -> str:
         """Parse OpenAI error response.

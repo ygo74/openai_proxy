@@ -3,7 +3,7 @@ from typing import Dict, Any, Optional
 from sqlalchemy import Integer, String, Float, DateTime, JSON, func
 from sqlalchemy.orm import Mapped, mapped_column
 
-from ygo74.fastapi_openai_rag.infrastructure.db.models.base import Base
+from .base import Base
 
 
 class AuditLogORM(Base):

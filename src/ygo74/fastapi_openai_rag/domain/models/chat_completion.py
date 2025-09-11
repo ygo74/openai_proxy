@@ -2,7 +2,7 @@
 from datetime import datetime
 from typing import Dict, Any, Optional, List, Union, Literal
 from enum import Enum
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from .llm import TokenUsage, LLMProvider
 
 class ChatMessageRole(str, Enum):
@@ -12,6 +12,23 @@ class ChatMessageRole(str, Enum):
     ASSISTANT = "assistant"
     FUNCTION = "function"
     TOOL = "tool"
+
+class MessageContentText(BaseModel):
+    """Text content part."""
+    type: Literal["text"]
+    text: str
+
+class MessageContentImageURL(BaseModel):
+    """Image URL (can be data URL or remote URL)."""
+    type: Literal["image_url"]
+    image_url: dict  # {"url": "...", optional: "detail": "high"/...}
+
+class MessageContentFile(BaseModel):
+    """File content part."""
+    type: Literal["file"]
+    file: dict  # {"filename": "...", "file_data": "..."/...}
+
+MessageContentPart = Union[MessageContentText, MessageContentImageURL, MessageContentFile]
 
 class ChatMessage(BaseModel):
     """A single chat message.
@@ -25,11 +42,32 @@ class ChatMessage(BaseModel):
         tool_call_id (Optional[str]): ID of the tool call being responded to
     """
     role: ChatMessageRole
-    content: Optional[str] = None
+    content: Optional[Union[str, List[MessageContentPart]]] = None
     name: Optional[str] = None
     function_call: Optional[Dict[str, Any]] = None
     tool_calls: Optional[List[Dict[str, Any]]] = None
     tool_call_id: Optional[str] = None
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def normalize_content(cls, v):
+        # If already a list -> keep
+        # If dict (single part) -> wrap
+        # If simple string -> keep (on laissera la conversion plus tard si besoin)
+        return v
+
+    def as_provider_message(self) -> dict:
+        """Return dict ready for provider call (keeps multi-part if present)."""
+        if isinstance(self.content, str):
+            return {"role": self.role, "content": self.content}
+        return {
+            "role": self.role,
+            "content": [
+                part.model_dump() if isinstance(part, (MessageContentText, MessageContentImageURL)) else part
+                for part in self.content
+            ],
+        }
+
 
 class ChatCompletionFunction(BaseModel):
     """Function definition for chat completion.
@@ -98,6 +136,7 @@ class ChatCompletionRequest(BaseModel):
     seed: Optional[int] = None
     logprobs: Optional[bool] = None
     top_logprobs: Optional[int] = Field(None, ge=0, le=5)
+
 
 class ChatCompletionChoice(BaseModel):
     """A single chat completion choice.

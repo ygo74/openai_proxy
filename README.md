@@ -48,6 +48,12 @@ Streaming is supported for chat completions by setting the `stream` parameter to
 
 The API will return a Server-Sent Events (SSE) stream that can be consumed by clients such as the official OpenAI SDK or compatible libraries.
 
+## Using tools
+
+Tools are supported in the underlying model supports function calls:
+- https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/function-calling
+- https://python.langchain.com/docs/how_to/tool_results_pass_to_model/
+
 # Azure configuration
 
 Pour pouvoir lister les modèles déployés sur Azure via l’API REST que tu mentionnes, il te faut une authentification OAuth 2.0 avec Azure Active Directory (AAD). Voici comment procéder étape par étape pour intégrer cela dans une API :
@@ -97,7 +103,9 @@ Clique sur Contrôle d’accès (IAM) dans le menu de gauche
 
 Clique sur Ajouter un rôle
 
-Sélectionne le rôle Lecteur ou Cognitive Services Contributor
+Sélectionne le rôle permettant de lire les déploiements:
+
+- Use this Role : Cognitive Services OpenAI User
 
 Dans la section Membre, choisis Identité managée ou application et sélectionne ton application
 
