@@ -169,7 +169,7 @@ class UserService:
 
 ## 🔧 Code Style
 
-- **English documentation** for all functions/classes
+- **English documentation** for all functions/classes, written in clear, concise English
 
   - **function docstrings**: Purpose, args, returns, exceptions
   - **class docstrings**: Overview, attributes, methods

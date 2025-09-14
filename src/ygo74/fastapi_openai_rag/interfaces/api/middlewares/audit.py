@@ -169,7 +169,9 @@ class AuditMiddleware(BaseHTTPMiddleware):
         self.save_audit_to_db(audit_log)
 
         # 2️⃣ Full log forwarding for LLM endpoints
-        if request.url.path.startswith("/v1/completions") or request.url.path.startswith("/v1/chat/completions"):
+        if request.url.path.startswith("/v1/completions") \
+           or request.url.path.startswith("/v1/chat/completions") \
+           or request.url.path.startswith("/v1/responses"):
             full_event: Dict[str, Any] = {
                 **audit_log,
                 "request_body": body_text,

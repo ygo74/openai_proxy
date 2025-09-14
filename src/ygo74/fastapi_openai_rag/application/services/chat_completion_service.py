@@ -24,6 +24,9 @@ from ...infrastructure.db.repositories.model_repository import SQLModelRepositor
 from ...infrastructure.db.repositories.group_repository import SQLGroupRepository
 from ...infrastructure.llm.client_factory import LLMClientFactory
 from .config_service import config_service
+from ...domain.models.response import ResponsesCreatePayload
+from openai.types.responses.response import Response as OpenAIResponse
+from openai.types.responses.response_stream_event import ResponseStreamEvent
 import logging
 
 logger = logging.getLogger(__name__)
@@ -196,117 +199,40 @@ class ChatCompletionService:
             logger.error(f"Error in streaming chat completion: {str(e)}")
             raise
 
-    async def create_response(self, payload: Dict[str, Any], user: AuthenticatedUser) -> Dict[str, Any]:
-        """Create a unified Responses API style response with capability fallback.
-
-        This inspects the model capabilities. If the model declares a responses capability
-        (any of: responses / response / responses_api == true) the underlying client
-        responses endpoint is used directly. Otherwise, if the model supports chat, the
-        payload is converted to an internal ChatCompletionRequest and executed via the
-        chat endpoint, then wrapped to emulate an OpenAI Responses output structure.
+    async def create_response(self, payload: ResponsesCreatePayload, user: AuthenticatedUser) -> OpenAIResponse:
+        """Execute a Responses API request and return the OpenAI SDK Response object.
 
         Args:
-            payload (Dict[str, Any]): Raw incoming /v1/responses request payload (OpenAI compatible).
-            user (AuthenticatedUser): Authenticated user performing the request.
+            payload (ResponsesCreatePayload): Validated request payload
+            user (AuthenticatedUser): Authenticated user
 
         Returns:
-            Dict[str, Any]: OpenAI-compatible Responses JSON (direct or fallback-wrapped).
-
-        Raises:
-            ValidationError: If required fields are missing or capabilities absent.
-            EntityNotFoundError: If the referenced model does not exist.
-            PermissionError: If the user lacks access to the model.
+            OpenAIResponse: OpenAI SDK typed response object
         """
-        model_name = str(payload.get("model"))
+        model_name = payload.model
         if not model_name:
             raise ValidationError("model is required in responses payload")
         model = await self._get_and_validate_model(model_name, user)
         client = self._get_or_create_client(model)
-        caps = model.capabilities or {}
-        def _b(v: Any) -> bool:
-            return v is True or (isinstance(v, str) and v.lower() == "true")
-        supports_responses = any(_b(caps.get(k)) for k in ["responses", "response", "responses_api"])
-        supports_chat = any(_b(caps.get(k)) for k in ["chat", "chat_completion", "chatCompletion", "chat_completions"])
-        if supports_responses:
-            return await client.responses(payload)
-        if not supports_chat:
-            raise ValidationError(f"Model {model_name} does not support responses or chat capabilities")
-        chat_req = self._responses_payload_to_chat_request(payload)
-        chat_resp = await self.create_chat_completion(chat_req, user)
-        return self._chat_response_to_responses(chat_resp)
+        return await client.responses(payload)
 
-    async def create_response_stream(self, payload: Dict[str, Any], user: AuthenticatedUser) -> AsyncGenerator[Dict[str, Any], None]:
-        """Stream a Responses API request, applying chat fallback if needed.
-
-        For native responses capability the underlying client streaming events are
-        passed through. For chat fallback each chat delta is mapped to synthetic
-        Responses events (response.output_text.delta). At the end response.completed
-        and done events are emitted.
+    async def create_response_stream(self, payload: ResponsesCreatePayload, user: AuthenticatedUser) -> AsyncGenerator[ResponseStreamEvent, None]:
+        """Stream Responses API events (OpenAI SDK ResponseStreamEvent objects).
 
         Args:
-            payload (Dict[str, Any]): Raw /v1/responses payload containing stream=true.
-            user (AuthenticatedUser): Authenticated user performing the request.
+            payload (ResponsesCreatePayload): Validated request payload with stream True
+            user (AuthenticatedUser): Authenticated user
 
         Yields:
-            Dict[str, Any]: Streaming event objects (already OpenAI-compatible semantics).
-
-        Raises:
-            ValidationError: If model or capabilities are invalid.
-            EntityNotFoundError: If model not found.
-            PermissionError: If user not authorized.
+            ResponseStreamEvent: OpenAI SDK streaming event objects
         """
-        model_name = str(payload.get("model"))
+        model_name = payload.model
         if not model_name:
             raise ValidationError("model is required in responses payload")
         model = await self._get_and_validate_model(model_name, user)
         client = self._get_or_create_client(model)
-        caps: Dict[str, Any] = model.capabilities or {}
-        def _b(v: Any) -> bool:
-            return v is True or (isinstance(v, str) and v.lower() == "true")
-        supports_responses = any(_b(caps.get(k)) for k in ["responses", "response", "responses_api"])
-        supports_chat = any(_b(caps.get(k)) for k in ["chat", "chat_completion", "chatCompletion", "chat_completions"])
-        if supports_responses:
-            stream_gen = client.responses_stream(payload)
-            # Some implementations may return a coroutine that resolves to an async generator; handle defensively
-            if hasattr(stream_gen, "__aiter__"):
-                async for evt in stream_gen:  # type: ignore[assignment]
-                    yield evt  # type: ignore[misc]
-            else:  # pragma: no cover - defensive
-                resolved = await stream_gen  # type: ignore[func-returns-value]
-                async for evt in resolved:  # type: ignore[attr-defined]
-                    yield evt
-            return
-        if not supports_chat:
-            raise ValidationError(f"Model {model_name} does not support responses or chat capabilities")
-        chat_req = self._responses_payload_to_chat_request(payload, force_stream=True)
-        async for chunk in self.create_chat_completion_stream(chat_req, user):
-            delta_parts: List[str] = []
-            for choice in chunk.choices:
-                content_piece = choice.delta.content
-                if isinstance(content_piece, list):
-                    for p in content_piece:
-                        txt: Optional[str] = None
-                        if isinstance(p, dict):
-                            t1 = p.get("text")
-                            t2 = p.get("content")
-                            txt = t1 if isinstance(t1, str) else (t2 if isinstance(t2, str) else None)
-                        else:
-                            try:
-                                d = p.model_dump()  # type: ignore[attr-defined]
-                                t1 = d.get("text")
-                                t2 = d.get("content")
-                                txt = t1 if isinstance(t1, str) else (t2 if isinstance(t2, str) else None)
-                            except Exception:  # noqa: BLE001
-                                txt = None
-                        if txt:
-                            delta_parts.append(txt)
-                elif isinstance(content_piece, str):
-                    if content_piece:
-                        delta_parts.append(content_piece)
-            if delta_parts:
-                yield {"event": "response.output_text.delta", "data": {"delta": "".join(delta_parts)}}
-        yield {"event": "response.completed", "data": {}}
-        yield {"event": "done", "data": {}}
+        async for evt in client.responses_stream(payload):
+            yield evt
 
     async def _get_and_validate_model(self, model_name: str, user: AuthenticatedUser) -> LlmModel:
         """Get and validate model from database, checking user authorization.
@@ -497,18 +423,7 @@ class ChatCompletionService:
         )
 
     def _responses_payload_to_chat_request(self, payload: Dict[str, Any], force_stream: bool = False) -> ChatCompletionRequest:
-        """Convert a /v1/responses style payload to ChatCompletionRequest for fallback.
-
-        Collapses the array of input items (input_text, input_image) into a single
-        user message with multi-part content, adding an optional system instruction.
-
-        Args:
-            payload (Dict[str, Any]): Raw responses request payload.
-            force_stream (bool): Force stream flag on resulting ChatCompletionRequest.
-
-        Returns:
-            ChatCompletionRequest: Constructed chat request ready for provider.
-        """
+        """Deprecated: chat fallback now handled by client. Retained for backward compatibility (unused)."""
         input_items = payload.get("input") or []
         instructions = payload.get("instructions")
         parts: List[MessageContentPart] = []
@@ -539,14 +454,7 @@ class ChatCompletionService:
         )
 
     def _chat_response_to_responses(self, chat_resp: ChatCompletionResponse) -> Dict[str, Any]:
-        """Adapt a ChatCompletionResponse to a minimal Responses object.
-
-        Args:
-            chat_resp (ChatCompletionResponse): Completed chat response.
-
-        Returns:
-            Dict[str, Any]: Responses-style JSON object.
-        """
+        """Deprecated: conversion handled by client layer now. Kept for legacy compatibility."""
         def _flatten(choice: ChatCompletionChoice) -> str:
             content = choice.message.content
             if isinstance(content, list):

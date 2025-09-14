@@ -1,11 +1,27 @@
 """Protocols for LLM client implementations."""
 from typing import AsyncGenerator, Protocol, List, Dict, Any, Optional, Type
 from types import TracebackType
-from ..models.chat_completion import ChatCompletionRequest, ChatCompletionResponse, ChatCompletionStreamResponse
+
+from ..models.chat_completion import (
+    ChatCompletionRequest,
+    ChatCompletionResponse,
+    ChatCompletionStreamResponse,
+)
 from ..models.completion import CompletionRequest, CompletionResponse
+from ..models.response import ResponsesCreatePayload  # NEW
+
+# OpenAI SDK response types
+from openai.types.responses.response import Response as OpenAIResponse
+from openai.types.responses.response_stream_event import ResponseStreamEvent
 
 class LLMClientProtocol(Protocol):
-    """Protocol for LLM client implementations."""
+    """Protocol for LLM client implementations.
+
+    All concrete clients must implement these coroutine methods. The Responses API
+    methods operate on the domain's `ResponsesCreatePayload` and return official
+    OpenAI SDK typed objects, leaving any provider-specific fallback or
+    transformation logic to the client implementation.
+    """
 
     async def chat_completion(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
         """Generate chat completion from the LLM.
@@ -82,26 +98,16 @@ class LLMClientProtocol(Protocol):
         yield  # type: ignore[misc]
         raise StopAsyncIteration  # pragma: no cover
 
-    # --- New Responses API methods ---
-    async def responses(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Call the Responses API (direct /v1/responses or provider equivalent).
+    # --- Responses API methods ---
+    async def responses(self, payload: ResponsesCreatePayload) -> OpenAIResponse:
+        """Execute a Responses API request returning an OpenAI SDK Response object.
 
-        Args:
-            payload (Dict[str, Any]): Raw request payload (OpenAI compatible)
-
-        Returns:
-            Dict[str, Any]: Raw provider response (OpenAI compatible)
+        Implementations may perform capability detection and internally fall back
+        to a chat-based emulation, but MUST return a proper `openai.types.responses.response.Response`.
         """
         ...
 
-    async def responses_stream(self, payload: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], None]:
-        """Stream Responses API events.
-
-        Args:
-            payload (Dict[str, Any]): Raw request payload with stream=True
-
-        Yields:
-            Dict[str, Any]: Streamed response events
-        """
-        yield {}  # type: ignore[misc]
+    async def responses_stream(self, payload: ResponsesCreatePayload) -> AsyncGenerator[ResponseStreamEvent, None]:
+        """Stream Responses API events as OpenAI SDK `ResponseStreamEvent` objects."""
+        yield ResponseStreamEvent(type="response.completed")  # type: ignore[arg-type]
         raise StopAsyncIteration  # pragma: no cover

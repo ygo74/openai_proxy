@@ -9,6 +9,7 @@ from ....infrastructure.db.session import get_db
 from ....infrastructure.db.unit_of_work import SQLUnitOfWork
 from ....application.services.chat_completion_service import ChatCompletionService
 from ....domain.models.autenticated_user import AuthenticatedUser
+from ....domain.models.response import ResponsesCreatePayload
 from ..decorators.decorators import endpoint_handler, track_token_usage
 from ..security.auth import auth_jwt_or_api_key
 from ..utils.override_stream_response import OverrideStreamResponse
@@ -36,32 +37,20 @@ def get_chat_completion_service(db: Session = Depends(get_db)) -> ChatCompletion
 @track_token_usage()
 async def create_response_endpoint(
     request: Request,
-    payload: Dict[str, Any],
+    payload: ResponsesCreatePayload,
     service: ChatCompletionService = Depends(get_chat_completion_service),
     user: AuthenticatedUser = Depends(auth_jwt_or_api_key)
 ) -> Any:
-    """Create a response via /v1/responses (non-stream or stream).
-
-    If payload.stream == true returns SSE stream, else JSON object.
-
-    Args:
-        request (Request): FastAPI request object
-        payload (Dict[str, Any]): Raw incoming JSON body
-        service (ChatCompletionService): injected service
-        user (AuthenticatedUser): authenticated user
-
-    Returns:
-        Any: JSON dict or streaming response
-    """
-    is_stream = bool(payload.get("stream"))
-    if is_stream:
+    # Stream pathway
+    if payload.stream:
         async def event_gen() -> AsyncGenerator[str, None]:
             try:
                 async for evt in service.create_response_stream(payload, user):
-                    # evt already a dict representing event frame for responses stream fallback/ direct
-                    # Format as SSE line(s)
-                    json_str = json.dumps(evt)
-                    yield f"data: {json_str}\r\n\r\n"
+                    try:
+                        evt_dict = evt.model_dump()  # type: ignore[attr-defined]
+                    except Exception:
+                        evt_dict = dict(evt)  # type: ignore[arg-type]
+                    yield f"data: {json.dumps(evt_dict)}\r\n\r\n"
                 yield "data: [DONE]\r\n\r\n"
             except Exception as e:  # noqa: BLE001
                 err_payload = {"error": {"message": str(e), "type": "responses_stream_error"}}
@@ -77,5 +66,9 @@ async def create_response_endpoint(
                 "Content-Type": "text/event-stream; charset=utf-8"
             }
         )
-    # Non streaming
-    return await service.create_response(payload, user)
+    # Non streaming pathway returns SDK Response serialized
+    sdk_resp = await service.create_response(payload, user)
+    try:
+        return sdk_resp.model_dump()  # type: ignore[attr-defined]
+    except Exception:
+        return sdk_resp  # already a dict-like

@@ -8,22 +8,26 @@ def setup_logging() -> None:
     """Setup application logging configuration based on environment variables.
 
     Uses LOG_LEVEL environment variable to control log level.
-    Defaults to INFO if not specified.
+    Defaults to INFO if not specified. Idempotent: calling multiple times just updates levels.
     """
     log_level: str = os.getenv("LOG_LEVEL", "INFO").upper()
 
-    # Validate log level
+    # Resolve numeric level (fallback INFO)
     numeric_level: int = getattr(logging, log_level, logging.INFO)
-    numeric_level = logging.INFO
 
-    # Configure root logger
-    logging.basicConfig(
-        level=numeric_level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=[
-            logging.StreamHandler(sys.stdout)
-        ]
-    )
+    root_logger = logging.getLogger()
+    if not root_logger.handlers:
+        # First-time basic configuration
+        logging.basicConfig(
+            level=numeric_level,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            handlers=[logging.StreamHandler(sys.stdout)],
+        )
+    else:
+        # Update existing handlers' levels
+        root_logger.setLevel(numeric_level)
+        for h in root_logger.handlers:
+            h.setLevel(numeric_level)
 
     # Configure specific loggers
     configure_application_loggers(numeric_level)
@@ -47,6 +51,7 @@ def configure_application_loggers(level: int) -> None:
     for logger_name in app_loggers:
         logger = logging.getLogger(logger_name)
         logger.setLevel(level)
+        # Do NOT disable propagate so root formatting/level apply; keep custom modules adjustable
         logger.propagate = True
 
     # Optionally reduce noise from external libraries in debug mode

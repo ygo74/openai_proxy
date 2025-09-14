@@ -16,6 +16,7 @@ transparent proxy : https://github.com/fangwentong/openai-proxy
 OpenAI:
 
 - schema : https://github.com/openai/openai-openapi/blob/manual_spec/openapi.yaml
+- migration to responses api: https://platform.openai.com/docs/guides/migrate-to-responses
 - sdk : https://github.com/openai/openai-python/blob/main/src/openai/types/chat/chat_completion_chunk.py
 
 # development
@@ -50,9 +51,17 @@ The API will return a Server-Sent Events (SSE) stream that can be consumed by cl
 
 ## Using tools
 
-Tools are supported in the underlying model supports function calls:
+Tools are supported if the underlying model supports function calls:
 - https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/function-calling
 - https://python.langchain.com/docs/how_to/tool_results_pass_to_model/
+
+### Responses API vs Chat Completions API Tool Format
+
+The Responses API uses a different tool format compared to Chat Completions:
+- **Chat Completions**: Uses `tools` array with `{"type": "function", "function": {...}}` format
+- **Responses API**: Uses different tool format - see [OpenAI migration guide](https://platform.openai.com/docs/guides/migrate-to-responses)
+
+When using LangChain with `output_version="responses/v1"`, the library handles the format conversion automatically via `bind_tools()`.
 
 # Azure configuration
 
