@@ -42,7 +42,7 @@ class ResponsesCreatePayload(BaseModel):
 
     # Core inputs ------------------------------------------------------------
     # OpenAI spec: input is a list[ResponseInputItemParam]; keep lenient normalization but strict runtime typing.
-    input: Optional[ResponseInputParam] = Field(
+    input: Optional[Union[str, ResponseInputParam]] = Field(
         None,
         description=(
             "List of input items (messages, tool calls, images, text, etc.). "

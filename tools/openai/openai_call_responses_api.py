@@ -1,0 +1,551 @@
+#!/usr/bin/env python3
+"""Native OpenAI SDK test script for Responses API.
+
+This script tests the /v1/responses endpoint using the native OpenAI SDK
+to validate proxy functionality and compare with LangChain implementation.
+
+Features tested:
+- Basic text responses
+- Multimodal input (images, files)
+- Function calling with tool execution
+- Reasoning with different effort levels
+- Streaming responses
+- Follow-up conversations with previous_response_id
+- Built-in tools (web_search_preview, image_generation)
+
+Usage examples:
+python test_responses_openai_sdk.py --question "What is 2+2?"
+python test_responses_openai_sdk.py --question "What time is it in Paris?" --function-tools --auto-execute
+python test_responses_openai_sdk.py --question "Latest tech news" --web-search --stream
+python test_responses_openai_sdk.py --question "Hi, I'm Alice" --follow-up "What's my name?" --use-previous
+"""
+from __future__ import annotations
+
+import argparse
+import base64
+import json
+import logging
+import os
+import sys
+import time
+from datetime import datetime
+from mimetypes import guess_type
+from typing import Any, Dict, List, Optional, Union
+from datetime import datetime as dt
+
+try:
+    import openai
+    from openai import OpenAI
+    from openai.types.responses import Response
+    from openai.types.responses.response_stream_event import ResponseStreamEvent
+    sdk_available = True
+except ImportError:
+    openai = None  # type: ignore
+    OpenAI = object  # type: ignore
+    Response = object  # type: ignore
+    ResponseStreamEvent = object  # type: ignore
+    sdk_available = False
+
+# Configure logging
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
+logger = logging.getLogger("responses_api_openai_test")
+
+# File type constants
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+PDF_EXTENSIONS = {".pdf"}
+
+# Time zone mapping for function calling
+TIMEZONE_DATA: Dict[str, str] = {
+    "tokyo": "Asia/Tokyo",
+    "san francisco": "America/Los_Angeles",
+    "paris": "Europe/Paris",
+    "london": "Europe/London",
+    "new york": "America/New_York",
+}
+
+
+def get_current_time_tool(location: str) -> str:
+    """Get current time for a given location (for function calling)."""
+    loc = location.lower().strip()
+    for key, tz in TIMEZONE_DATA.items():
+        if key in loc:
+            try:
+                from zoneinfo import ZoneInfo
+                current = dt.now(ZoneInfo(tz)).strftime("%H:%M")
+                return json.dumps({"location": location, "current_time": current})
+            except Exception:
+                break
+    return json.dumps({"location": location, "current_time": "unknown"})
+
+
+# ---------------- Utility Functions ---------------- #
+
+def file_to_data_url(path: str) -> str:
+    """Convert file to data URL for multimodal input."""
+    mime, _ = guess_type(path)
+    if mime is None:
+        mime = "application/octet-stream"
+    with open(path, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode("utf-8")
+    return f"data:{mime};base64,{b64}"
+
+
+def build_input_content(question: str, file_path: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Build input content array for Responses API."""
+    content: List[Dict[str, Any]] = [{"type": "text", "text": question}]
+
+    if file_path and os.path.isfile(file_path):
+        _, ext = os.path.splitext(file_path.lower())
+        data_url = file_to_data_url(file_path)
+
+        if ext in IMAGE_EXTENSIONS:
+            content.append({
+                "type": "input_image",
+                "image_url": data_url,
+                "detail": "auto"
+            })
+        elif ext in PDF_EXTENSIONS:
+            content.append({
+                "type": "input_file",
+                "file_data": data_url,
+                "filename": os.path.basename(file_path)
+            })
+        else:
+            raise ValueError(f"Unsupported file extension: {ext}")
+
+    return content
+
+
+def build_function_tools() -> List[Dict[str, Any]]:
+    """Build function tool definitions for Responses API format."""
+    return [{
+        "type": "function",
+        "function": {
+            "name": "get_current_time",
+            "description": "Get current local time for a given location (city name).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "location": {
+                        "type": "string",
+                        "description": "City or location name (e.g., Paris, Tokyo, New York)"
+                    }
+                },
+                "required": ["location"],
+                "additionalProperties": False
+            }
+        },
+        "strict": True
+    }]
+
+
+def build_builtin_tools(web_search: bool = False, image_gen: bool = False) -> List[Dict[str, Any]]:
+    """Build built-in tool definitions."""
+    tools: List[Dict[str, Any]] = []
+    if web_search:
+        tools.append({"type": "web_search_preview"})
+    if image_gen:
+        tools.append({"type": "image_generation", "quality": "low"})
+    return tools
+
+
+def extract_tool_calls(response: Response) -> List[Dict[str, Any]]:
+    """Extract function tool calls from Response object."""
+    calls: List[Dict[str, Any]] = []
+
+    # Check if response has choices with tool_calls
+    if hasattr(response, 'choices') and response.choices:
+        for choice in response.choices:
+            if hasattr(choice, 'message') and hasattr(choice.message, 'tool_calls'):
+                if choice.message.tool_calls:
+                    for tc in choice.message.tool_calls:
+                        if tc.type == "function":
+                            calls.append({
+                                "id": tc.id,
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments
+                            })
+
+    return calls
+
+
+def execute_function_calls(calls: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+    """Execute function calls locally and return tool_outputs format."""
+    outputs: List[Dict[str, str]] = []
+
+    for call in calls:
+        name = call["name"]
+        raw_args = call["arguments"]
+        call_id = call["id"]
+
+        try:
+            args = json.loads(raw_args) if isinstance(raw_args, str) else {}
+        except json.JSONDecodeError:
+            args = {}
+
+        if name == "get_current_time":
+            location = args.get("location", "Unknown")
+            try:
+                result = get_current_time_tool(location)
+            except Exception as e:
+                result = json.dumps({"error": str(e)})
+        else:
+            result = json.dumps({"error": f"Unknown function: {name}"})
+
+        outputs.append({
+            "tool_call_id": call_id,
+            "output": result
+        })
+
+    return outputs
+
+
+def extract_text_content(response: Response) -> str:
+    """Extract text content from Response object."""
+    if not hasattr(response, 'output') or not response.output:
+        print("not found")
+        return ""
+
+    texts: List[str] = []
+    for item in response.output:
+        print(item)
+        if hasattr(item, 'content'):
+            for content in item.content:
+                if hasattr(content, 'text'):
+                    texts.append(str(content.text))
+
+    return "\n".join(texts)
+
+
+def print_reasoning_info(response: Response) -> None:
+    """Print reasoning information if present."""
+    if hasattr(response, 'reasoning') and response.reasoning:
+        logger.info(f"Reasoning effort: {getattr(response.reasoning, 'effort', 'N/A')}")
+        if hasattr(response.reasoning, 'summary') and response.reasoning.summary:
+            for summary in response.reasoning.summary:
+                if hasattr(summary, 'text'):
+                    logger.info(f"Reasoning summary: {summary.text}")
+
+
+def print_usage_info(response: Response) -> None:
+    """Print token usage information."""
+    if hasattr(response, 'usage') and response.usage:
+        usage = response.usage
+        logger.info(f"Token usage - Input: {getattr(usage, 'input_tokens', 0)}, "
+                   f"Output: {getattr(usage, 'output_tokens', 0)}, "
+                   f"Total: {getattr(usage, 'total_tokens', 0)}")
+
+
+# ---------------- Test Functions ---------------- #
+
+def test_basic_response(client: OpenAI, args: argparse.Namespace) -> Optional[Response]:
+    """Test basic text response functionality."""
+    logger.info("=== Testing Basic Response ===")
+
+    input_content = args.question
+
+    kwargs: Dict[str, Any] = {
+        "model": args.model,
+        "input": input_content,
+        "max_output_tokens": args.max_tokens,
+        "temperature": args.temperature,
+        "stream": False
+    }
+
+    # Add reasoning if specified
+    if args.reasoning_effort:
+        kwargs["reasoning"] = {"effort": args.reasoning_effort}
+        if args.reasoning_summary != "none":
+            kwargs["reasoning"]["generate_summary"] = args.reasoning_summary
+
+    try:
+        response = client.responses.create(**kwargs)
+
+        print(f"\n=== Response ===")
+        print(response.output_text)
+
+        print_reasoning_info(response)
+        print_usage_info(response)
+
+        return response
+
+    except Exception as e:
+        logger.error(f"Basic response test failed: {e}")
+        return None
+
+
+def test_streaming_response(client: OpenAI, args: argparse.Namespace) -> None:
+    """Test streaming response functionality."""
+    logger.info("=== Testing Streaming Response ===")
+
+    input_content = build_input_content(args.question, args.file_path)
+
+    kwargs: Dict[str, Any] = {
+        "model": args.model,
+        "input": input_content,
+        "max_output_tokens": args.max_tokens,
+        "temperature": args.temperature,
+        "stream": True
+    }
+
+    if args.reasoning_effort:
+        kwargs["reasoning"] = {"effort": args.reasoning_effort}
+        if args.reasoning_summary != "none":
+            kwargs["reasoning"]["generate_summary"] = args.reasoning_summary
+
+    try:
+        stream = client.responses.create(**kwargs)
+
+        print(f"\n=== Streaming Response ===")
+        full_content = ""
+
+        for event in stream:
+            if hasattr(event, 'type'):
+                if event.type == "response.text.delta":
+                    if hasattr(event, 'delta') and event.delta:
+                        print(event.delta, end="", flush=True)
+                        full_content += event.delta
+                elif event.type == "response.done":
+                    print("\n[Stream completed]")
+                    if hasattr(event, 'response'):
+                        print_usage_info(event.response)
+
+        print()
+
+    except Exception as e:
+        logger.error(f"Streaming response test failed: {e}")
+
+
+def test_function_calling(client: OpenAI, args: argparse.Namespace) -> Optional[Response]:
+    """Test function calling functionality."""
+    logger.info("=== Testing Function Calling ===")
+
+    input_content = build_input_content(args.question, args.file_path)
+    function_tools = build_function_tools()
+
+    kwargs: Dict[str, Any] = {
+        "model": args.model,
+        "input": input_content,
+        "tools": function_tools,
+        "max_output_tokens": args.max_tokens,
+        "temperature": args.temperature,
+        "stream": False
+    }
+
+    if args.reasoning_effort:
+        kwargs["reasoning"] = {"effort": args.reasoning_effort}
+
+    try:
+        response = client.responses.create(**kwargs)
+
+        print(f"\n=== Function Calling Response ===")
+        print(extract_text_content(response))
+
+        # Check for tool calls
+        tool_calls = extract_tool_calls(response)
+        if tool_calls:
+            logger.info(f"Found {len(tool_calls)} tool calls")
+            for call in tool_calls:
+                logger.info(f"Tool call: {call['name']} with args: {call['arguments']}")
+
+            if args.auto_execute:
+                # Execute tools and get final response
+                tool_outputs = execute_function_calls(tool_calls)
+                logger.info("Executing tool calls and getting final response...")
+
+                follow_kwargs = {
+                    "model": args.model,
+                    "input": [{"type": "text", "text": "Please provide the final answer based on the tool results."}],
+                    "tool_outputs": tool_outputs,
+                    "max_output_tokens": args.max_tokens,
+                    "temperature": args.temperature,
+                    "stream": False
+                }
+
+                if hasattr(response, 'id'):
+                    follow_kwargs["previous_response_id"] = response.id
+
+                if args.reasoning_effort:
+                    follow_kwargs["reasoning"] = {"effort": args.reasoning_effort}
+
+                final_response = client.responses.create(**follow_kwargs)
+
+                print(f"\n=== Final Response After Tool Execution ===")
+                print(extract_text_content(final_response))
+                print_usage_info(final_response)
+
+                return final_response
+        else:
+            logger.info("No tool calls found in response")
+
+        print_usage_info(response)
+        return response
+
+    except Exception as e:
+        logger.error(f"Function calling test failed: {e}")
+        return None
+
+
+def test_builtin_tools(client: OpenAI, args: argparse.Namespace) -> None:
+    """Test built-in tools (web search, image generation)."""
+    logger.info("=== Testing Built-in Tools ===")
+
+    input_content = build_input_content(args.question, args.file_path)
+    builtin_tools = build_builtin_tools(args.web_search, args.image_generation)
+
+    if not builtin_tools:
+        logger.info("No built-in tools specified, skipping test")
+        return
+
+    kwargs: Dict[str, Any] = {
+        "model": args.model,
+        "input": input_content,
+        "tools": builtin_tools,
+        "max_output_tokens": args.max_tokens,
+        "temperature": args.temperature,
+        "stream": False
+    }
+
+    try:
+        response = client.responses.create(**kwargs)
+
+        print(f"\n=== Built-in Tools Response ===")
+        print(extract_text_content(response))
+        print_usage_info(response)
+
+    except Exception as e:
+        logger.error(f"Built-in tools test failed: {e}")
+
+
+def test_follow_up(client: OpenAI, args: argparse.Namespace, previous_response: Optional[Response]) -> None:
+    """Test follow-up conversation functionality."""
+    if not args.follow_up:
+        return
+
+    logger.info("=== Testing Follow-up Conversation ===")
+
+    follow_input = build_input_content(args.follow_up)
+
+    kwargs: Dict[str, Any] = {
+        "model": args.model,
+        "input": follow_input,
+        "max_output_tokens": args.max_tokens,
+        "temperature": args.temperature,
+        "stream": False
+    }
+
+    # Use previous_response_id if available and requested
+    if args.use_previous and previous_response and hasattr(previous_response, 'id'):
+        kwargs["previous_response_id"] = previous_response.id
+        logger.info(f"Using previous_response_id: {previous_response.id}")
+
+    if args.reasoning_effort:
+        kwargs["reasoning"] = {"effort": args.reasoning_effort}
+
+    try:
+        response = client.responses.create(**kwargs)
+
+        print(f"\n=== Follow-up Response ===")
+        print(extract_text_content(response))
+        print_usage_info(response)
+
+    except Exception as e:
+        logger.error(f"Follow-up test failed: {e}")
+
+
+# ---------------- CLI and Main ---------------- #
+
+def parse_args() -> argparse.Namespace:
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description="Native OpenAI SDK Responses API tester")
+
+    # Basic parameters
+    parser.add_argument("--model", default="gpt-4o", help="Model name")
+    parser.add_argument("--question", default="What is 2+2?", help="Primary question/prompt")
+    parser.add_argument("--proxy-url", default="http://localhost:8000", help="Proxy base URL (without /v1)")
+    parser.add_argument("--api-key", default="sk-16AwYoZqNoVKjfMz-Mr8TeuaXk3O6JeLwPdQSAQiF0s", help="API key")
+
+    # Generation parameters
+    parser.add_argument("--max-tokens", type=int, default=1000, help="Maximum output tokens")
+    parser.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature")
+
+    # Multimodal
+    parser.add_argument("--file-path", help="Optional image/PDF file path")
+
+    # Tools
+    parser.add_argument("--function-tools", action="store_true", help="Enable function calling tools")
+    parser.add_argument("--auto-execute", action="store_true", help="Auto-execute function calls")
+    parser.add_argument("--web-search", action="store_true", help="Enable web search tool")
+    parser.add_argument("--image-generation", action="store_true", help="Enable image generation tool")
+
+    # Reasoning
+    parser.add_argument("--reasoning-effort", choices=["low", "medium", "high"], help="Reasoning effort level")
+    parser.add_argument("--reasoning-summary", choices=["concise", "detailed", "auto", "none"], default="none", help="Reasoning summary")
+
+    # Streaming and conversation
+    parser.add_argument("--stream", action="store_true", help="Test streaming responses")
+    parser.add_argument("--follow-up", help="Follow-up question")
+    parser.add_argument("--use-previous", action="store_true", help="Use previous_response_id for follow-up")
+
+    # Debug
+    parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
+
+    return parser.parse_args()
+
+
+def main() -> int:
+    """Main entry point."""
+    if not sdk_available:
+        print("OpenAI SDK not available. Run: pip install openai")
+        return 1
+
+    args = parse_args()
+
+    if args.verbose:
+        logger.setLevel(logging.DEBUG)
+
+    # Initialize OpenAI client pointing to proxy
+    base_url = f"{args.proxy_url.rstrip('/')}/v1"
+    client = OpenAI(
+        api_key=args.api_key,
+        base_url=base_url
+    )
+
+    logger.info(f"Testing Responses API via proxy: {base_url}")
+    logger.info(f"Model: {args.model}, Question: {args.question}")
+
+    # Run tests based on arguments
+    primary_response: Optional[Response] = None
+
+    # Test basic response (always run)
+    primary_response = test_basic_response(client, args)
+
+    # Test streaming if requested
+    if args.stream:
+        test_streaming_response(client, args)
+
+    # Test function calling if requested
+    if args.function_tools:
+        function_response = test_function_calling(client, args)
+        if function_response:
+            primary_response = function_response
+
+    # Test built-in tools if requested
+    if args.web_search or args.image_generation:
+        test_builtin_tools(client, args)
+
+    # Test follow-up if requested
+    if args.follow_up:
+        test_follow_up(client, args, primary_response)
+
+    logger.info("All tests completed")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -339,9 +339,10 @@ def main() -> int:
         logger.debug(f"Response tool_calls: {getattr(ai_msg, 'tool_calls', None)}")
         logger.debug(f"Response additional_kwargs: {getattr(ai_msg, 'additional_kwargs', {})}")
 
-    text_out = _extract_text(ai_msg)
-    print("\n=== Response Text ===\n" + (text_out or str(getattr(ai_msg, "content", ""))))
-    _print_reasoning(ai_msg)
+    if not args.stream:
+        text_out = _extract_text(ai_msg)
+        print("\n=== Response Text ===\n" + (text_out or str(getattr(ai_msg, "content", ""))))
+        _print_reasoning(ai_msg)
 
     if args.follow_up:
         ai_msg2 = _follow_up(llm, ai_msg, args.follow_up, args.use_previous, reasoning)
