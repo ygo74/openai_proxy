@@ -97,7 +97,7 @@ def file_to_data_url(path: str) -> str:
 
 def build_input_content(question: str, file_path: Optional[str] = None) -> List[Dict[str, Any]]:
     """Build input content array for Responses API."""
-    content: List[Dict[str, Any]] = [{"type": "text", "text": question}]
+    content: List[Dict[str, Any]] = [{"type": "input_text", "text": question}]
 
     if file_path and os.path.isfile(file_path):
         _, ext = os.path.splitext(file_path.lower())
@@ -118,7 +118,9 @@ def build_input_content(question: str, file_path: Optional[str] = None) -> List[
         else:
             raise ValueError(f"Unsupported file extension: {ext}")
 
-    return content
+    return [
+        { "role": "user", "content": content }
+    ]
 
 
 def build_function_tools() -> List[Dict[str, Any]]:
@@ -305,18 +307,52 @@ def test_streaming_response(client: OpenAI, args: argparse.Namespace) -> None:
         full_content = ""
 
         for event in stream:
+            if args.verbose:
+                logger.debug(f"Stream event: {event}")
+
             if hasattr(event, 'type'):
-                if event.type == "response.text.delta":
+                event_type = event.type
+
+                # Handle text delta events
+                if event_type == "response.output_text.delta":
                     if hasattr(event, 'delta') and event.delta:
-                        print(event.delta, end="", flush=True)
+                        print(event.delta, end="|", flush=True)
                         full_content += event.delta
-                elif event.type == "response.done":
+
+                # Handle text done events
+                elif event_type == "response.output_text.done":
+                    if hasattr(event, 'text'):
+                        # Sometimes the final text is in the done event
+                        final_text = event.text
+                        if final_text and final_text != full_content:
+                            logger.debug(f"Final text from done event: {len(final_text)} chars")
+
+                # Handle output item done events
+                elif event_type == "response.output_item.done":
+                    logger.debug("Output item completed")
+
+                # Handle response completion
+                elif event_type == "response.completed":
                     print("\n[Stream completed]")
                     if hasattr(event, 'response'):
                         print_usage_info(event.response)
+                        print_reasoning_info(event.response)
 
-        print()
+                # Handle content part events
+                elif event_type == "response.content_part.added":
+                    logger.debug("Content part added")
 
+                elif event_type == "response.content_part.done":
+                    logger.debug("Content part completed")
+
+                # Handle other event types for debugging
+                elif args.verbose:
+                    logger.debug(f"Event type: {event_type}")
+
+            elif hasattr(event, 'status'):
+                logger.debug(f"Event with status: {event.status}")
+
+        print()  # Ensure we end with a newline
     except Exception as e:
         logger.error(f"Streaming response test failed: {e}")
 
