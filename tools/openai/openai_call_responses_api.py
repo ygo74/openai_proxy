@@ -71,6 +71,8 @@ TIMEZONE_DATA: Dict[str, str] = {
 
 def get_current_time_tool(location: str) -> str:
     """Get current time for a given location (for function calling)."""
+
+    logger.info(f"called get_current_time_tool with location: {location}")
     loc = location.lower().strip()
     for key, tz in TIMEZONE_DATA.items():
         if key in loc:
@@ -127,20 +129,18 @@ def build_function_tools() -> List[Dict[str, Any]]:
     """Build function tool definitions for Responses API format."""
     return [{
         "type": "function",
-        "function": {
-            "name": "get_current_time",
-            "description": "Get current local time for a given location (city name).",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "location": {
-                        "type": "string",
-                        "description": "City or location name (e.g., Paris, Tokyo, New York)"
-                    }
+        "name": "get_current_time",
+        "description": "Get current local time for a given location (city name).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "location": {
+                    "type": "string",
+                    "description": "City or location name (e.g., Paris, Tokyo, New York)"
                 },
-                "required": ["location"],
-                "additionalProperties": False
-            }
+            },
+            "required": ["location"],
+            "additionalProperties": False,
         },
         "strict": True
     }]
@@ -156,66 +156,24 @@ def build_builtin_tools(web_search: bool = False, image_gen: bool = False) -> Li
     return tools
 
 
-def extract_tool_calls(response: Response) -> List[Dict[str, Any]]:
-    """Extract function tool calls from Response object."""
-    calls: List[Dict[str, Any]] = []
-
-    # Check if response has choices with tool_calls
-    if hasattr(response, 'choices') and response.choices:
-        for choice in response.choices:
-            if hasattr(choice, 'message') and hasattr(choice.message, 'tool_calls'):
-                if choice.message.tool_calls:
-                    for tc in choice.message.tool_calls:
-                        if tc.type == "function":
-                            calls.append({
-                                "id": tc.id,
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments
-                            })
-
-    return calls
 
 
-def execute_function_calls(calls: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+def execute_function_calls(name, args):
     """Execute function calls locally and return tool_outputs format."""
-    outputs: List[Dict[str, str]] = []
+    if name == "get_current_time":
+        return get_current_time_tool(**args)
 
-    for call in calls:
-        name = call["name"]
-        raw_args = call["arguments"]
-        call_id = call["id"]
-
-        try:
-            args = json.loads(raw_args) if isinstance(raw_args, str) else {}
-        except json.JSONDecodeError:
-            args = {}
-
-        if name == "get_current_time":
-            location = args.get("location", "Unknown")
-            try:
-                result = get_current_time_tool(location)
-            except Exception as e:
-                result = json.dumps({"error": str(e)})
-        else:
-            result = json.dumps({"error": f"Unknown function: {name}"})
-
-        outputs.append({
-            "tool_call_id": call_id,
-            "output": result
-        })
-
-    return outputs
-
+    return None
 
 def extract_text_content(response: Response) -> str:
     """Extract text content from Response object."""
     if not hasattr(response, 'output') or not response.output:
-        print("not found")
+        logger.warn("not found")
         return ""
 
     texts: List[str] = []
     for item in response.output:
-        print(item)
+        logger.info(f"Processing output item: {item}")
         if hasattr(item, 'content'):
             for content in item.content:
                 if hasattr(content, 'text'):
@@ -383,44 +341,37 @@ def test_function_calling(client: OpenAI, args: argparse.Namespace) -> Optional[
         print(extract_text_content(response))
 
         # Check for tool calls
-        tool_calls = extract_tool_calls(response)
-        if tool_calls:
-            logger.info(f"Found {len(tool_calls)} tool calls")
-            for call in tool_calls:
-                logger.info(f"Tool call: {call['name']} with args: {call['arguments']}")
+        if response.tools:
+            logger.info(f"-- tool calls found ---")
 
-            if args.auto_execute:
-                # Execute tools and get final response
-                tool_outputs = execute_function_calls(tool_calls)
-                logger.info("Executing tool calls and getting final response...")
+            input_content += response.output
+            for item in response.output:
+                logger.info(f"Found tool call: {item.name}")
+                if item.type != "function_call":
+                    continue
 
-                follow_kwargs = {
-                    "model": args.model,
-                    "input": [{"type": "text", "text": "Please provide the final answer based on the tool results."}],
-                    "tool_outputs": tool_outputs,
-                    "max_output_tokens": args.max_tokens,
-                    "temperature": args.temperature,
-                    "stream": False
-                }
+                name = item.name
+                arguments = json.loads(item.arguments)  # Use loads() for string, not load() for file
 
-                if hasattr(response, 'id'):
-                    follow_kwargs["previous_response_id"] = response.id
+                logger.info(f"\n--- Executing tool: {name} with arguments: {arguments} ---")
+                result = execute_function_calls(name, arguments)
+                input_content.append({
+                     "type": "function_call_output",
+                     "call_id": item.call_id,
+                     "output": str(result)
+                })
 
-                if args.reasoning_effort:
-                    follow_kwargs["reasoning"] = {"effort": args.reasoning_effort}
+            final_response = client.responses.create(**kwargs)
 
-                final_response = client.responses.create(**follow_kwargs)
+            print(f"\n=== Final Response After Tool Execution ===")
+            print(extract_text_content(final_response))
+            print_usage_info(final_response)
 
-                print(f"\n=== Final Response After Tool Execution ===")
-                print(extract_text_content(final_response))
-                print_usage_info(final_response)
-
-                return final_response
+            return final_response
         else:
             logger.info("No tool calls found in response")
-
-        print_usage_info(response)
-        return response
+            print_usage_info(response)
+            return response
 
     except Exception as e:
         logger.error(f"Function calling test failed: {e}")
@@ -558,22 +509,24 @@ def main() -> int:
     # Run tests based on arguments
     primary_response: Optional[Response] = None
 
-    # Test basic response (always run)
-    primary_response = test_basic_response(client, args)
-
     # Test streaming if requested
     if args.stream:
         test_streaming_response(client, args)
 
     # Test function calling if requested
-    if args.function_tools:
+    elif args.function_tools:
         function_response = test_function_calling(client, args)
         if function_response:
             primary_response = function_response
 
     # Test built-in tools if requested
-    if args.web_search or args.image_generation:
+    elif args.web_search or args.image_generation:
         test_builtin_tools(client, args)
+
+    else:
+        # Test basic response (always run)
+        primary_response = test_basic_response(client, args)
+
 
     # Test follow-up if requested
     if args.follow_up:
@@ -581,7 +534,6 @@ def main() -> int:
 
     logger.info("All tests completed")
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())
