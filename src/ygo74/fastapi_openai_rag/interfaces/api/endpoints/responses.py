@@ -1,5 +1,5 @@
 """OpenAI-compatible Responses API endpoint."""
-from typing import Dict, Any, AsyncGenerator
+from typing import Dict, Any, AsyncGenerator, cast
 import json
 import logging
 from fastapi import APIRouter, Depends, Request
@@ -67,6 +67,16 @@ async def create_response_endpoint(
             }
         )
     # Non streaming pathway returns SDK Response serialized
+    from openai.types.responses.response_input_param import ResponseInputItemParam, ResponseInputParam
+    list_input: ResponseInputParam = []
+    for input in payload.input:
+        if not isinstance(input, dict):
+            raise ValueError("Each item in 'input' must be a dict representing an input item.")
+        if "type" not in input:
+            raise ValueError("Each input item must have a 'type' field.")
+        input_param = cast(ResponseInputItemParam, input)
+        list_input.append(input_param)
+
     sdk_resp = await service.create_response(payload, user)
     try:
         return sdk_resp.model_dump()  # type: ignore[attr-defined]

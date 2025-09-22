@@ -33,18 +33,10 @@ from mimetypes import guess_type
 from typing import Any, Dict, List, Optional, Union
 from datetime import datetime as dt
 
-try:
-    import openai
-    from openai import OpenAI
-    from openai.types.responses import Response
-    from openai.types.responses.response_stream_event import ResponseStreamEvent
-    sdk_available = True
-except ImportError:
-    openai = None  # type: ignore
-    OpenAI = object  # type: ignore
-    Response = object  # type: ignore
-    ResponseStreamEvent = object  # type: ignore
-    sdk_available = False
+import openai
+from openai import OpenAI
+from openai.types.responses import Response
+from openai.types.responses.response_stream_event import ResponseStreamEvent
 
 # Configure logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -86,6 +78,50 @@ def get_current_time_tool(location: str) -> str:
 
 
 # ---------------- Utility Functions ---------------- #
+
+def _handle_stream(stream: Any, args: argparse.Namespace) -> Optional[Response]:
+    """Handle streaming response events consistently."""
+    full_content = ""
+    response: Optional[Response] = None
+    for event in stream:
+        if args.verbose:
+            logger.debug(f"Stream event: {event}")
+
+        if hasattr(event, 'type'):
+            event_type = event.type
+
+            # Handle text delta events
+            if event_type == "response.output_text.delta":
+                if hasattr(event, 'delta') and event.delta:
+                    print(event.delta, end="|", flush=True)
+                    full_content += event.delta
+
+            # Handle text done events
+            elif event_type == "response.output_text.done":
+                if hasattr(event, 'text'):
+                    # Sometimes the final text is in the done event
+                    final_text = event.text
+                    if final_text and final_text != full_content:
+                        logger.debug(f"Final text from done event: {len(final_text)} chars")
+
+            # Handle response completion
+            elif event_type == "response.completed":
+                print("\n[Stream completed]")
+                if hasattr(event, 'response'):
+                    print_usage_info(event.response)
+                    print_reasoning_info(event.response)
+                    response = event.response
+
+            # Handle other event types for debugging
+            elif args.verbose:
+                logger.debug(f"Event type: {event_type}")
+
+        elif hasattr(event, 'status'):
+            logger.debug(f"Event with status: {event.status}")
+
+    print()  # Ensure we end with a newline
+    return response
+
 
 def file_to_data_url(path: str) -> str:
     """Convert file to data URL for multimodal input."""
@@ -158,7 +194,7 @@ def build_builtin_tools(web_search: bool = False, image_gen: bool = False) -> Li
 
 
 
-def execute_function_calls(name, args):
+def execute_function_calls(name: str, args: Dict[str, Any]) -> Optional[Union[str, Dict[str, Any]]]:
     """Execute function calls locally and return tool_outputs format."""
     if name == "get_current_time":
         return get_current_time_tool(**args)
@@ -168,7 +204,7 @@ def execute_function_calls(name, args):
 def extract_text_content(response: Response) -> str:
     """Extract text content from Response object."""
     if not hasattr(response, 'output') or not response.output:
-        logger.warn("not found")
+        logger.warning("not found")
         return ""
 
     texts: List[str] = []
@@ -207,14 +243,18 @@ def test_basic_response(client: OpenAI, args: argparse.Namespace) -> Optional[Re
     """Test basic text response functionality."""
     logger.info("=== Testing Basic Response ===")
 
-    input_content = args.question
+    if not args.file_path:
+        input_content = args.question
+    else:
+        input_content = build_input_content(args.question, args.file_path)
+
 
     kwargs: Dict[str, Any] = {
         "model": args.model,
         "input": input_content,
         "max_output_tokens": args.max_tokens,
         "temperature": args.temperature,
-        "stream": False
+        "stream": args.stream  # Use stream flag from args
     }
 
     # Add reasoning if specified
@@ -224,95 +264,24 @@ def test_basic_response(client: OpenAI, args: argparse.Namespace) -> Optional[Re
             kwargs["reasoning"]["generate_summary"] = args.reasoning_summary
 
     try:
-        response = client.responses.create(**kwargs)
-
-        print(f"\n=== Response ===")
-        print(response.output_text)
-
-        print_reasoning_info(response)
-        print_usage_info(response)
-
-        return response
+        if args.stream:
+            # Handle streaming
+            stream = client.responses.create(**kwargs)
+            print(f"\n=== Handle Response (Streaming) ===")
+            response = _handle_stream(stream, args)
+            return response  # Can't return Response object from streaming
+        else:
+            # Handle non-streaming
+            response = client.responses.create(**kwargs)
+            print(f"\n=== Handle Response (Non-Streaming) ===")
+            print(response.output_text)
+            print_reasoning_info(response)
+            print_usage_info(response)
+            return response
 
     except Exception as e:
         logger.error(f"Basic response test failed: {e}")
         return None
-
-
-def test_streaming_response(client: OpenAI, args: argparse.Namespace) -> None:
-    """Test streaming response functionality."""
-    logger.info("=== Testing Streaming Response ===")
-
-    input_content = build_input_content(args.question, args.file_path)
-
-    kwargs: Dict[str, Any] = {
-        "model": args.model,
-        "input": input_content,
-        "max_output_tokens": args.max_tokens,
-        "temperature": args.temperature,
-        "stream": True
-    }
-
-    if args.reasoning_effort:
-        kwargs["reasoning"] = {"effort": args.reasoning_effort}
-        if args.reasoning_summary != "none":
-            kwargs["reasoning"]["generate_summary"] = args.reasoning_summary
-
-    try:
-        stream = client.responses.create(**kwargs)
-
-        print(f"\n=== Streaming Response ===")
-        full_content = ""
-
-        for event in stream:
-            if args.verbose:
-                logger.debug(f"Stream event: {event}")
-
-            if hasattr(event, 'type'):
-                event_type = event.type
-
-                # Handle text delta events
-                if event_type == "response.output_text.delta":
-                    if hasattr(event, 'delta') and event.delta:
-                        print(event.delta, end="|", flush=True)
-                        full_content += event.delta
-
-                # Handle text done events
-                elif event_type == "response.output_text.done":
-                    if hasattr(event, 'text'):
-                        # Sometimes the final text is in the done event
-                        final_text = event.text
-                        if final_text and final_text != full_content:
-                            logger.debug(f"Final text from done event: {len(final_text)} chars")
-
-                # Handle output item done events
-                elif event_type == "response.output_item.done":
-                    logger.debug("Output item completed")
-
-                # Handle response completion
-                elif event_type == "response.completed":
-                    print("\n[Stream completed]")
-                    if hasattr(event, 'response'):
-                        print_usage_info(event.response)
-                        print_reasoning_info(event.response)
-
-                # Handle content part events
-                elif event_type == "response.content_part.added":
-                    logger.debug("Content part added")
-
-                elif event_type == "response.content_part.done":
-                    logger.debug("Content part completed")
-
-                # Handle other event types for debugging
-                elif args.verbose:
-                    logger.debug(f"Event type: {event_type}")
-
-            elif hasattr(event, 'status'):
-                logger.debug(f"Event with status: {event.status}")
-
-        print()  # Ensure we end with a newline
-    except Exception as e:
-        logger.error(f"Streaming response test failed: {e}")
 
 
 def test_function_calling(client: OpenAI, args: argparse.Namespace) -> Optional[Response]:
@@ -328,15 +297,15 @@ def test_function_calling(client: OpenAI, args: argparse.Namespace) -> Optional[
         "tools": function_tools,
         "max_output_tokens": args.max_tokens,
         "temperature": args.temperature,
-        "stream": False
+        "stream": False  # args.stream  # Use stream flag from args
     }
 
     if args.reasoning_effort:
         kwargs["reasoning"] = {"effort": args.reasoning_effort}
 
     try:
+        # Handle non-streaming function calling
         response = client.responses.create(**kwargs)
-
         print(f"\n=== Function Calling Response ===")
         print(extract_text_content(response))
 
@@ -356,11 +325,12 @@ def test_function_calling(client: OpenAI, args: argparse.Namespace) -> Optional[
                 logger.info(f"\n--- Executing tool: {name} with arguments: {arguments} ---")
                 result = execute_function_calls(name, arguments)
                 input_content.append({
-                     "type": "function_call_output",
-                     "call_id": item.call_id,
-                     "output": str(result)
+                        "type": "function_call_output",
+                        "call_id": item.call_id,
+                        "output": str(result)
                 })
 
+            # print(input_content)
             final_response = client.responses.create(**kwargs)
 
             print(f"\n=== Final Response After Tool Execution ===")
@@ -395,15 +365,21 @@ def test_builtin_tools(client: OpenAI, args: argparse.Namespace) -> None:
         "tools": builtin_tools,
         "max_output_tokens": args.max_tokens,
         "temperature": args.temperature,
-        "stream": False
+        "stream": args.stream  # Use stream flag from args
     }
 
     try:
-        response = client.responses.create(**kwargs)
-
-        print(f"\n=== Built-in Tools Response ===")
-        print(extract_text_content(response))
-        print_usage_info(response)
+        if args.stream:
+            # Handle streaming for built-in tools
+            stream = client.responses.create(**kwargs)
+            print(f"\n=== Built-in Tools Response (Streaming) ===")
+            _handle_stream(stream, args)
+        else:
+            # Handle non-streaming
+            response = client.responses.create(**kwargs)
+            print(f"\n=== Built-in Tools Response ===")
+            print(extract_text_content(response))
+            print_usage_info(response)
 
     except Exception as e:
         logger.error(f"Built-in tools test failed: {e}")
@@ -416,23 +392,34 @@ def test_follow_up(client: OpenAI, args: argparse.Namespace, previous_response: 
 
     logger.info("=== Testing Follow-up Conversation ===")
 
-    follow_input = build_input_content(args.follow_up)
-
     kwargs: Dict[str, Any] = {
         "model": args.model,
-        "input": follow_input,
         "max_output_tokens": args.max_tokens,
         "temperature": args.temperature,
         "stream": False
     }
 
+    # print("===previous response===")
+    # print(previous_response)
+
     # Use previous_response_id if available and requested
     if args.use_previous and previous_response and hasattr(previous_response, 'id'):
         kwargs["previous_response_id"] = previous_response.id
+        kwargs["input"] = build_input_content(args.follow_up)
+
         logger.info(f"Using previous_response_id: {previous_response.id}")
+    else:
+        logger.info("Not using previous_response_id")
+        input_param = build_input_content(args.question, args.file_path)
+        input_param += previous_response.output
+        input_param.extend(build_input_content(args.follow_up))
+        kwargs["input"] = input_param
 
     if args.reasoning_effort:
         kwargs["reasoning"] = {"effort": args.reasoning_effort}
+
+    # print("=== follow-up kwargs ===")
+    # print(kwargs["input"])
 
     try:
         response = client.responses.create(**kwargs)
@@ -485,12 +472,64 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def test_multiturn_conversation(client: OpenAI, args: argparse.Namespace) -> None:
+    context = [
+        { "role": "user", "content": "What is the capital of France?" }
+    ]
+    res1 = client.responses.create(
+        model=args.model,
+        input=context,
+    )
+    print("=== res1 ===")
+    print(res1)
+
+    # from openai.types.responses.response_output_message_param import ResponseOutputMessageParam
+    # from openai.types.responses.response_output_text_param import ResponseOutputTextParam
+
+    # output_content = ResponseOutputTextParam(
+    #         annotations=[],
+    #         text='The capital of France is **Paris**.',
+    #         type='output_text',
+    #         logprobs=None
+    # )
+
+    # print("=== output_content ===")
+    # print(output_content)
+
+
+    # input_content: ResponseOutputMessageParam = ResponseOutputMessageParam(
+    #     id='msg_68cf9c0280dc81908eb018ce3932d391000ddd2d54aa3276',
+    #     content=[output_content],
+    #     role='assistant',
+    #     status='completed',
+    #     type='message'
+    # )
+
+    # print("=== input_content ===")
+    # print(input_content)
+
+    # Append the first response’s output to context
+    # context += [input_content]
+    context += res1.output
+
+    # Add the next user message
+    context += [
+        { "role": "user", "content": "And it's population?" }
+    ]
+
+    print("=== context ===")
+    print(context)
+
+    res2 = client.responses.create(
+        model=args.model,
+        input=context,
+    )
+
+    print("=== res2 ===")
+    print(res2)
+
 def main() -> int:
     """Main entry point."""
-    if not sdk_available:
-        print("OpenAI SDK not available. Run: pip install openai")
-        return 1
-
     args = parse_args()
 
     if args.verbose:
@@ -506,27 +545,24 @@ def main() -> int:
     logger.info(f"Testing Responses API via proxy: {base_url}")
     logger.info(f"Model: {args.model}, Question: {args.question}")
 
+    # return test_multiturn_conversation(client=client, args=args)
+
     # Run tests based on arguments
     primary_response: Optional[Response] = None
 
-    # Test streaming if requested
-    if args.stream:
-        test_streaming_response(client, args)
+    # Test basic response (always run unless other specific tests requested)
+    if not (args.function_tools or args.web_search or args.image_generation):
+        primary_response = test_basic_response(client, args)
 
     # Test function calling if requested
-    elif args.function_tools:
+    if args.function_tools:
         function_response = test_function_calling(client, args)
         if function_response:
             primary_response = function_response
 
     # Test built-in tools if requested
-    elif args.web_search or args.image_generation:
+    if args.web_search or args.image_generation:
         test_builtin_tools(client, args)
-
-    else:
-        # Test basic response (always run)
-        primary_response = test_basic_response(client, args)
-
 
     # Test follow-up if requested
     if args.follow_up:
