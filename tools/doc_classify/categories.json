@@ -1,0 +1,10 @@
+{
+  "Invoice": "Financial document requesting payment for goods or services, typically containing line items, amounts, tax information, payment terms, and vendor/client details.",
+  "Contract": "Legal document outlining an agreement between two or more parties, containing terms, conditions, obligations, rights, signatures, and effective dates.",
+  "Resume": "Professional document summarizing an individual's work experience, skills, education, and qualifications for employment consideration.",
+  "Technical Manual": "Instructional document providing detailed information about operating, maintaining, or repairing specific equipment, software, or systems.",
+  "Medical Record": "Clinical documentation containing patient health information, diagnoses, treatments, medications, and medical history.",
+  "Financial Report": "Document presenting financial performance and position, including balance sheets, income statements, cash flow statements, and analysis.",
+  "Legal Brief": "Document prepared for court proceedings that outlines legal arguments, cites relevant laws and precedents.",
+  "Academic Paper": "Scholarly document presenting original research, analysis, or review, with abstract, methodology, results, discussion, and references."
+}
