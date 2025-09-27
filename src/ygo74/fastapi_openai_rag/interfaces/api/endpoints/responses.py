@@ -77,8 +77,4 @@ async def create_response_endpoint(
     #     input_param = cast(ResponseInputItemParam, input)
     #     list_input.append(input_param)
 
-    sdk_resp = await service.create_response(payload, user)
-    try:
-        return sdk_resp.model_dump()  # type: ignore[attr-defined]
-    except Exception:
-        return sdk_resp  # already a dict-like
+    return await service.create_response(payload, user)

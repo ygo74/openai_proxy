@@ -206,37 +206,65 @@ def _print_reasoning(ai_msg: AIMessage) -> None:  # type: ignore[valid-type]
 def parse_args() -> argparse.Namespace:
     """Parse CLI arguments."""
     p = argparse.ArgumentParser(description="LangChain Responses API tester")
+
+    # Basic parameters
     p.add_argument("--model", default="gpt-4o", help="Model name")
-    p.add_argument("--question", default="What is 3^3?", help="User question / prompt")
+    p.add_argument("--question", default="What is 3^3?", help="Primary question/prompt")
     p.add_argument("--proxy-url", default="http://localhost:8000", help="Proxy base (without /v1)")
-    p.add_argument("--api-key", default="sk-16AwYoZqNoVKjfMz-Mr8TeuaXk3O6JeLwPdQSAQiF0s", help="API key for proxy")
-    p.add_argument("--file-path", dest="file_path", help="Optional image/PDF file path")
-    p.add_argument("--stream", action="store_true", help="Stream output tokens")
-    p.add_argument("--web-search", action="store_true", help="Enable web_search_preview tool")
-    p.add_argument("--image-generation", action="store_true", help="Enable image_generation tool")
-    p.add_argument("--time-tool", action="store_true", help="Enable time retrieval tool (get_current_time)")
-    p.add_argument("--reasoning-effort", choices=["low", "medium", "high"], help="Reasoning effort level")
-    p.add_argument("--reasoning-summary", choices=["concise", "detailed", "auto", "none"], default="none", help="Reasoning summary preference")
-    p.add_argument("--follow-up", help="Optional second user question (continuation)")
-    p.add_argument("--use-previous", action="store_true", help="Use previous_response_id for follow-up")
+    p.add_argument("--api-key", default="sk-16AwYoZqNoVKjfMz-Mr8TeuaXk3O6JeLwPdQSAQiF0s", help="API key")
+
+    # Generation parameters
+    p.add_argument("--max-tokens", type=int, default=1000, help="Maximum output tokens")
     p.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature")
+
+    # Multimodal
+    p.add_argument("--file-path", help="Optional image/PDF file path")
+
+    # Tools
+    p.add_argument("--function-tool", "--time-tool", action="store_true", dest="time_tool",
+                   help="Enable time retrieval tool (get_current_time)")
+    p.add_argument("--auto-execute", action="store_true", help="Auto-execute function calls")
+    p.add_argument("--web-search", action="store_true", help="Enable web search tool")
+    p.add_argument("--image-generation", action="store_true", help="Enable image generation tool")
+
+    # Reasoning
+    p.add_argument("--reasoning-effort", choices=["low", "medium", "high"], help="Reasoning effort level")
+    p.add_argument("--reasoning-summary", choices=["concise", "detailed", "auto", "none"], default="none",
+                   help="Reasoning summary")
+
+    # Streaming and conversation
+    p.add_argument("--stream", action="store_true", help="Stream output tokens")
+    p.add_argument("--follow-up", help="Follow-up question")
+    p.add_argument("--use-previous", action="store_true", help="Use previous_response_id for follow-up")
+
+    # Debug
     p.add_argument("--verbose", action="store_true", help="Enable debug logging")
+
     return p.parse_args()
 
 # ---------------- Main Logic ---------------- #
 
-def _instantiate_llm(args: argparse.Namespace) -> Any:
+def _instantiate_llm(args: argparse.Namespace) -> Any:  # type: ignore[valid-type]
     """Instantiate ChatOpenAI with responses API routing enabled."""
     base_url = f"{args.proxy_url.rstrip('/')}/v1"
-    llm = ChatOpenAI(  # type: ignore
-        model=args.model,
-        api_key=args.api_key,
-        base_url=base_url,
-        temperature=args.temperature,
-        output_version="responses/v1",
-        use_responses_api=True,
-        max_retries=2,
-    )
+
+    # Configure LLM with params matching OpenAI script
+    llm_kwargs = {
+        "model": args.model,
+        "api_key": args.api_key,
+        "base_url": base_url,
+        "temperature": args.temperature,
+        "output_version": "responses/v1",
+        "use_responses_api": True,
+        "max_retries": 2,
+    }
+
+    # Add max tokens if specified
+    if hasattr(args, "max_tokens") and args.max_tokens:
+        llm_kwargs["max_tokens"] = args.max_tokens
+
+    # Initialize LLM
+    llm = ChatOpenAI(**llm_kwargs)  # type: ignore
     return llm
 
 
@@ -254,7 +282,9 @@ def _invoke_once(llm: Any, messages: List[Any], tools: List[Any], reasoning: Opt
 
 
 def _stream_invoke(llm: Any, messages: List[Any], reasoning: Optional[Dict[str, Any]]) -> AIMessage:  # type: ignore[valid-type]
-    """Stream invocation printing token.text() where available."""
+    """Stream invocation printing token.text() where available.
+
+    Returns the final AIMessage (last chunk with content)."""
     final_message: Optional[AIMessage] = None  # type: ignore
     stream_kwargs: Dict[str, Any] = {}
     if reasoning:
@@ -280,81 +310,223 @@ def _follow_up(llm: Any, first_ai: AIMessage, follow_up: str, use_previous: bool
         logger.info(f"Follow-up using previous_response_id={prev_id}")
         return llm.invoke([{"role": "user", "content": follow_up}], previous_response_id=prev_id, reasoning=reasoning)  # type: ignore[attr-defined]
     # Manual message history (less efficient)
+    content = getattr(first_ai, "content", "")
     return llm.invoke([
-        {"role": "user", "content": first_ai.content},  # prior answer as context
+        {"role": "user", "content": content},  # prior answer as context
         {"role": "user", "content": follow_up},
     ], reasoning=reasoning)  # type: ignore[attr-defined]
 
 
+# ---------------- Test Functions ---------------- #
+
+def test_basic_response(llm: Any, args: argparse.Namespace) -> Optional[AIMessage]:  # type: ignore[valid-type]
+    """Test basic text response functionality."""
+    logger.info("=== Testing Basic Response ===")
+
+    content_blocks = _build_content_blocks(args.question, args.file_path)
+    messages = [{"role": "user", "content": content_blocks}]
+    reasoning = _build_reasoning(args.reasoning_effort, args.reasoning_summary)
+
+    try:
+        if args.stream:
+            # Handle streaming
+            print(f"\n=== Basic Response (Streaming) ===")
+            response = _stream_invoke(llm, messages, reasoning)
+            return response
+        else:
+            # Handle non-streaming
+            response = llm.invoke(messages, reasoning=reasoning)  # type: ignore[attr-defined]
+            print(f"\n=== Basic Response (Non-Streaming) ===")
+            text_out = _extract_text(response)
+            print("\n=== Response Text ===\n" + (text_out or str(getattr(response, "content", ""))))
+            _print_reasoning(response)
+
+            # Print token usage if available
+            usage = getattr(response, "response_metadata", {}).get("token_usage") if hasattr(response, "response_metadata") else None  # type: ignore[attr-defined]
+            if usage:
+                logger.info(f"Token usage: {json.dumps(usage)}")
+
+            return response
+
+    except Exception as e:
+        logger.error(f"Basic response test failed: {e}")
+        return None
+
+
+def test_function_calling(llm: Any, args: argparse.Namespace) -> Optional[AIMessage]:  # type: ignore[valid-type]
+    """Test function calling with time tool."""
+    logger.info("=== Testing Function Calling ===")
+
+    content_blocks = _build_content_blocks(args.question, args.file_path)
+    messages = [{"role": "user", "content": content_blocks}]
+    reasoning = _build_reasoning(args.reasoning_effort, args.reasoning_summary)
+    tools = [get_current_time]
+
+    try:
+        # Bind tools to the LLM
+        llm_with_tools = llm.bind_tools(tools)  # type: ignore[attr-defined]
+
+        # Invoke with tools
+        response = llm_with_tools.invoke(messages, reasoning=reasoning)  # type: ignore[attr-defined]
+        print(f"\n=== Function Calling Response ===")
+        text_out = _extract_text(response)
+        print("\n=== Response Text ===\n" + (text_out or str(getattr(response, "content", ""))))
+
+        # Check for tool calls in the response
+        tool_calls = getattr(response, "tool_calls", None)
+        if tool_calls:
+            logger.info(f"-- Tool calls found ---")
+
+            for tool_call in tool_calls:
+                tool_name = tool_call.get("name", "")
+                logger.info(f"Found tool call: {tool_name}")
+
+                if tool_call.get("type") == "function":
+                    arguments = tool_call.get("args", {})
+                    logger.info(f"\n--- Executing tool: {tool_name} with arguments: {arguments} ---")
+
+                    # Execute the tool
+                    if tool_name == "get_current_time":
+                        result = get_current_time.invoke(arguments)  # type: ignore[attr-defined]
+                        print(f"Tool result: {result}")
+
+                        # Create new conversation with tool outputs
+                        tool_messages = []
+                        tool_messages.extend(messages)
+                        tool_messages.append({"role": "assistant", "content": text_out, "tool_calls": tool_calls})
+                        tool_messages.append({"role": "tool", "tool_call_id": tool_call.get("id", ""), "name": tool_name, "content": result})
+
+                        # Get final response with tool outputs
+                        final_response = llm.invoke(tool_messages, reasoning=reasoning)  # type: ignore[attr-defined]
+                        print(f"\n=== Final Response After Tool Execution ===")
+                        final_text = _extract_text(final_response)
+                        print(final_text)
+
+                        return final_response
+
+            return response
+        else:
+            logger.info("No tool calls found in response")
+
+            # Print token usage if available
+            usage = getattr(response, "response_metadata", {}).get("token_usage") if hasattr(response, "response_metadata") else None  # type: ignore[attr-defined]
+            if usage:
+                logger.info(f"Token usage: {json.dumps(usage)}")
+
+            return response
+
+    except Exception as e:
+        logger.error(f"Function calling test failed: {e}")
+        return None
+
+
+def test_builtin_tools(llm: Any, args: argparse.Namespace) -> None:  # type: ignore[valid-type]
+    """Test built-in tools (web search, image generation)."""
+    logger.info("=== Testing Built-in Tools ===")
+
+    content_blocks = _build_content_blocks(args.question, args.file_path)
+    messages = [{"role": "user", "content": content_blocks}]
+    reasoning = _build_reasoning(args.reasoning_effort, args.reasoning_summary)
+
+    built_in_tools = []
+    if args.web_search:
+        built_in_tools.append({"type": "web_search_preview"})
+    if args.image_generation:
+        built_in_tools.append({"type": "image_generation", "quality": "low"})
+
+    if not built_in_tools:
+        logger.info("No built-in tools specified, skipping test")
+        return
+
+    try:
+        # Bind built-in tools
+        llm_with_tools = llm.bind_tools(built_in_tools)  # type: ignore[attr-defined]
+
+        if args.stream:
+            # Handle streaming
+            print(f"\n=== Built-in Tools Response (Streaming) ===")
+            _stream_invoke(llm_with_tools, messages, reasoning)
+        else:
+            # Handle non-streaming
+            response = llm_with_tools.invoke(messages, reasoning=reasoning)  # type: ignore[attr-defined]
+            print(f"\n=== Built-in Tools Response ===")
+            text_out = _extract_text(response)
+            print("\n=== Response Text ===\n" + (text_out or str(getattr(response, "content", ""))))
+
+            # Print token usage if available
+            usage = getattr(response, "response_metadata", {}).get("token_usage") if hasattr(response, "response_metadata") else None  # type: ignore[attr-defined]
+            if usage:
+                logger.info(f"Token usage: {json.dumps(usage)}")
+
+    except Exception as e:
+        logger.error(f"Built-in tools test failed: {e}")
+
+
+def test_follow_up(llm: Any, args: argparse.Namespace, previous_response: Optional[AIMessage]) -> None:  # type: ignore[valid-type]
+    """Test follow-up conversation functionality."""
+    if not args.follow_up or not previous_response:
+        return
+
+    logger.info("=== Testing Follow-up Conversation ===")
+    reasoning = _build_reasoning(args.reasoning_effort, args.reasoning_summary)
+
+    try:
+        response = _follow_up(llm, previous_response, args.follow_up, args.use_previous, reasoning)
+
+        print(f"\n=== Follow-up Response ===")
+        text_out = _extract_text(response)
+        print("\n=== Response Text ===\n" + (text_out or str(getattr(response, "content", ""))))
+        _print_reasoning(response)
+
+        # Print token usage if available
+        usage = getattr(response, "response_metadata", {}).get("token_usage") if hasattr(response, "response_metadata") else None  # type: ignore[attr-defined]
+        if usage:
+            logger.info(f"Token usage: {json.dumps(usage)}")
+
+    except Exception as e:
+        logger.error(f"Follow-up test failed: {e}")
+
+
 def main() -> int:
-    """Entry point."""
+    """Main entry point."""
     if not langchain_available:
         print("LangChain not installed. pip install langchain-openai")
         return 1
+
     args = parse_args()
+
     if args.verbose:
         logger.setLevel(logging.DEBUG)
 
-    logger.info(
-        "Model=%s Stream=%s WebSearch=%s ImageGen=%s ReasoningEffort=%s FollowUp=%s",  # noqa: E501
-        args.model, args.stream, args.web_search, args.image_generation, args.reasoning_effort, bool(args.follow_up)
-    )
-
+    # Initialize LLM client pointing to proxy
+    base_url = f"{args.proxy_url.rstrip('/')}/v1"
     llm = _instantiate_llm(args)
 
-    tools = _build_tool_definitions(args.web_search, args.image_generation, args.time_tool)
-    reasoning = _build_reasoning(args.reasoning_effort, args.reasoning_summary)
-    content_blocks = _build_content_blocks(args.question, args.file_path)
-    messages = [HumanMessage(content=content_blocks)]
-    ai_msg = _invoke_once(llm, messages, tools, reasoning, args.stream)
-    print("\n--- Full Response ---")
-    print(ai_msg)
+    logger.info(f"Testing Responses API via proxy: {base_url}")
+    logger.info(f"Model: {args.model}, Question: {args.question}")
 
-    # Automatic tool execution cycle (only if requested and first response had calls)
-    if ai_msg.tool_calls:
-        print("\n--- Detected Tool Calls ---")
-        executed_tools = False
-        if isinstance(ai_msg.content, list):
-            for item in ai_msg.tool_calls:
-                print(f"Tool call: {item['name']} with args: {item['args']}")
-                if item.get("type") == "tool_call" and item.get("name") == "get_current_time":
-                    messages.append(ai_msg)
-                    selected_tool = {"get_current_time": get_current_time}[item.get("name", "").lower()]
-                    tool_msg = selected_tool.invoke(item)
-                    print("Tool message:")
-                    print(tool_msg)
-                    messages.append(tool_msg)
-                    executed_tools = True
+    # Run tests based on arguments
+    primary_response = None
 
-        if executed_tools:
-            print("\n--- Re-invoking with Tool Outputs ---")
-            print("Updated content blocks:")
-            print(messages)
-            ai_msg = _invoke_once(llm, messages, tools, reasoning, args.stream)
+    # Test basic response (always run unless other specific tests requested)
+    if not (args.time_tool or args.web_search or args.image_generation):
+        primary_response = test_basic_response(llm, args)
 
-    else:
-        logger.info("No tool calls found in the response")
-        # Print debug info about the response structure
-        logger.debug(f"Response content type: {type(getattr(ai_msg, 'content', None))}")
-        logger.debug(f"Response tool_calls: {getattr(ai_msg, 'tool_calls', None)}")
-        logger.debug(f"Response additional_kwargs: {getattr(ai_msg, 'additional_kwargs', {})}")
+    # Test function calling if requested
+    if args.time_tool:
+        function_response = test_function_calling(llm, args)
+        if function_response:
+            primary_response = function_response
 
-    if not args.stream:
-        text_out = _extract_text(ai_msg)
-        print("\n=== Response Text ===\n" + (text_out or str(getattr(ai_msg, "content", ""))))
-        _print_reasoning(ai_msg)
+    # Test built-in tools if requested
+    if args.web_search or args.image_generation:
+        test_builtin_tools(llm, args)
 
-    if args.follow_up:
-        ai_msg2 = _follow_up(llm, ai_msg, args.follow_up, args.use_previous, reasoning)
-        print("\n=== Follow-Up Text ===\n" + _extract_text(ai_msg2))
-        _print_reasoning(ai_msg2)
+    # Test follow-up if requested
+    if args.follow_up and primary_response:
+        test_follow_up(llm, args, primary_response)
 
-
-    # Token usage metadata
-    usage = getattr(ai_msg, "response_metadata", {}).get("token_usage") if hasattr(ai_msg, "response_metadata") else None  # type: ignore[attr-defined]
-    if usage:
-        logger.info(f"Token usage: {json.dumps(usage)}")
-
+    logger.info("All tests completed")
     return 0
 
 
