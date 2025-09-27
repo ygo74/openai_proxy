@@ -42,8 +42,8 @@ async def chat_endpoint(request: Request, user: AuthenticatedUser = Depends(auth
 ## 🤖 LLM Client Architecture
 
 **Protocol-based design**: All LLM clients implement `LLMClientProtocol`
-- `OpenAIProxyClient` - Generic OpenAI-compatible providers
-- `AzureOpenAIProxyClient` - Azure-specific with API versioning
+- `OpenAIClient` - Generic OpenAI-compatible providers
+- `AzureOpenAIClient` - Azure-specific with API versioning
 - Client factory creates appropriate client based on `LlmModel.provider`
 
 **Smart routing**: Clients auto-convert completions↔chat completions based on model capabilities

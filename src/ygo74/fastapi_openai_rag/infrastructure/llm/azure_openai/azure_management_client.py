@@ -5,8 +5,8 @@ import logging
 from typing import Dict, Any, List, Optional, Union, Type, cast
 from types import TracebackType
 from .azure_auth_client import AzureAuthClient
-from .http_client_factory import HttpClientFactory
-from .retry_handler import with_enterprise_retry  # Ajout de l'import du décorateur
+from ..http_client_factory import HttpClientFactory
+from ..retry_handler import with_enterprise_retry  # Ajout de l'import du décorateur
 
 logger = logging.getLogger(__name__)
 

@@ -3,21 +3,21 @@ import pytest
 from unittest.mock import Mock, AsyncMock, patch
 from datetime import datetime, timezone
 
-from src.ygo74.fastapi_openai_rag.infrastructure.llm.azure_openai_proxy_client import AzureOpenAIProxyClient
+from src.ygo74.fastapi_openai_rag.infrastructure.llm.azure_openai.azure_openai_proxy_client import AzureOpenAIClient
 from src.ygo74.fastapi_openai_rag.infrastructure.llm.client_factory import EnterpriseConfig
 from src.ygo74.fastapi_openai_rag.domain.models.llm import LLMProvider
 from src.ygo74.fastapi_openai_rag.domain.models.chat_completion import ChatCompletionRequest, ChatMessage
 from src.ygo74.fastapi_openai_rag.domain.models.completion import CompletionRequest
 
 
-class TestAzureOpenAIProxyClient:
-    """Test AzureOpenAIProxyClient class."""
+class TestAzureOpenAIClient:
+    """Test AzureOpenAIClient class."""
 
     def test_azure_openai_proxy_client_init_default_config(self):
         """Test Azure OpenAI proxy client initialization with default config."""
         # arrange & act
         with patch('src.ygo74.fastapi_openai_rag.infrastructure.llm.azure_openai_proxy_client.HttpClientFactory'):
-            client = AzureOpenAIProxyClient(
+            client = AzureOpenAIClient(
                 api_key="test-key",
                 base_url="https://test.openai.azure.com",
                 api_version="2024-06-01"
@@ -38,7 +38,7 @@ class TestAzureOpenAIProxyClient:
 
         # act
         with patch('src.ygo74.fastapi_openai_rag.infrastructure.llm.azure_openai_proxy_client.HttpClientFactory'):
-            client = AzureOpenAIProxyClient(
+            client = AzureOpenAIClient(
                 api_key="test-key",
                 base_url="https://test.openai.azure.com/",  # with trailing slash
                 api_version="2024-06-01",
@@ -57,7 +57,7 @@ class TestAzureOpenAIProxyClient:
         """Test URL building for Azure OpenAI API."""
         # arrange
         with patch('src.ygo74.fastapi_openai_rag.infrastructure.llm.azure_openai_proxy_client.HttpClientFactory'):
-            client = AzureOpenAIProxyClient(
+            client = AzureOpenAIClient(
                 api_key="test-key",
                 base_url="https://test.openai.azure.com",
                 api_version="2024-06-01"
@@ -74,7 +74,7 @@ class TestAzureOpenAIProxyClient:
         """Test headers generation for Azure OpenAI API."""
         # arrange
         with patch('src.ygo74.fastapi_openai_rag.infrastructure.llm.azure_openai_proxy_client.HttpClientFactory'):
-            client = AzureOpenAIProxyClient(
+            client = AzureOpenAIClient(
                 api_key="test-key",
                 base_url="https://test.openai.azure.com",
                 api_version="2024-06-01"
@@ -97,7 +97,7 @@ class TestAzureOpenAIProxyClient:
         with patch('src.ygo74.fastapi_openai_rag.infrastructure.llm.azure_openai_proxy_client.HttpClientFactory') as mock_factory:
             mock_factory.create_async_client.return_value = mock_http_client
 
-            client = AzureOpenAIProxyClient(
+            client = AzureOpenAIClient(
                 api_key="test-key",
                 base_url="https://test.openai.azure.com",
                 api_version="2024-06-01"
@@ -119,7 +119,7 @@ class TestAzureOpenAIProxyClient:
             mock_factory.create_async_client.return_value = mock_http_client
 
             # act
-            async with AzureOpenAIProxyClient(
+            async with AzureOpenAIClient(
                 api_key="test-key",
                 base_url="https://test.openai.azure.com",
                 api_version="2024-06-01"

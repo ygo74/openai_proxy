@@ -539,7 +539,8 @@ def main() -> int:
     base_url = f"{args.proxy_url.rstrip('/')}/v1"
     client = OpenAI(
         api_key=args.api_key,
-        base_url=base_url
+        base_url=base_url,
+        max_retries=0
     )
 
     logger.info(f"Testing Responses API via proxy: {base_url}")

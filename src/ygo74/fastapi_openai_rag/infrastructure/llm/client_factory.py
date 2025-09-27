@@ -4,12 +4,12 @@ from typing import Dict, Optional, Union
 from ...domain.models.llm import LLMProvider
 from ...domain.models.llm_model import LlmModel
 from ...domain.protocols.llm_client import LLMClientProtocol
-from .openai_proxy_client import OpenAIProxyClient
-from .azure_openai_proxy_client import AzureOpenAIProxyClient
-from .unique_proxy_client import UniqueProxyClient
+from .openai.openai_proxy_client import OpenAIClient
+from .azure_openai.azure_openai_proxy_client import AzureOpenAIClient
+from .unique.unique_proxy_client import UniqueProxyClient
 from ...domain.models.configuration import AzureModelConfig, ModelConfig, UniqueModelConfig
-from .azure_auth_client import AzureAuthClient
-from .azure_management_client import AzureManagementClient
+from .azure_openai.azure_auth_client import AzureAuthClient
+from .azure_openai.azure_management_client import AzureManagementClient
 from .retry_handler import LLMRetryHandler
 from .enterprise_config import EnterpriseConfig
 import httpx
@@ -72,21 +72,19 @@ class LLMClientFactory:
                     logger.warning(f"Failed to create Azure Management client: {e}")
 
             logger.debug(f"Creating Azure OpenAI proxy client for {provider} at {model.url} with API version {model_config.api_version}")
-            return AzureOpenAIProxyClient(
+            return AzureOpenAIClient(
                 api_key=model_config.api_key,
                 base_url=model.url,
                 api_version=model_config.api_version,
-                provider=provider,
                 management_client=management_client,
                 enterprise_config=enterprise_config
             )
 
         elif provider == LLMProvider.OPENAI:
             logger.debug(f"Creating OpenAI proxy client for {provider} at {model.url}")
-            return OpenAIProxyClient(
+            return OpenAIClient(
                 api_key=model_config.api_key,
                 base_url=model.url,
-                provider=provider,
                 enterprise_config=enterprise_config
             )
 
@@ -105,7 +103,6 @@ class LLMClientFactory:
                 company_id=model_config.company_id,
                 user_id=model_config.user_id,
                 base_url=model.url or model_config.base_url,
-                provider=provider,
                 enterprise_config=enterprise_config
             )
 

@@ -1,29 +1,30 @@
-"""Azure OpenAI proxy client for Azure-specific API calls."""
+"""Base OpenAI client with shared functionality for standard and Azure implementations."""
 import httpx
 import json
 import time
 import uuid
-from typing import Dict, Any, Optional, AsyncGenerator, AsyncIterator, List, cast, get_args, get_origin  # noqa: F401
+from typing import Dict, Any, Optional, AsyncGenerator, List, Type, Union, cast, get_args, get_origin
 from datetime import datetime, timezone
+from types import TracebackType
 from pydantic import BaseModel
 
-from ...domain.models.chat_completion import (
-    ChatCompletionRequest, ChatCompletionResponse, ChatCompletionChoice,ChatCompletionStreamChoice,
-    ChatCompletionStreamResponse, ChatMessage
+from ....domain.models.chat_completion import (
+    ChatCompletionRequest, ChatCompletionResponse, ChatCompletionChoice, ChatCompletionStreamChoice,
+    ChatCompletionStreamResponse, ChatMessage, ChatMessageRole
 )
-from ...domain.models.completion import (
+from ....domain.models.completion import (
     CompletionRequest, CompletionResponse, CompletionChoice
 )
-from ...domain.models.llm import LLMProvider, TokenUsage
-from ...domain.protocols.llm_client import LLMClientProtocol
-from ...domain.models.response import ResponsesCreatePayload
+from ....domain.models.llm import LLMProvider, TokenUsage
+from ....domain.protocols.llm_client import LLMClientProtocol
+from ....domain.models.response import ResponsesCreatePayload
+
 from openai.types.responses.response import Response as OpenAIResponse
 from openai.types.responses.response_stream_event import ResponseStreamEvent
 
-from .azure_management_client import AzureManagementClient
-from .http_client_factory import HttpClientFactory
-from .retry_handler import with_enterprise_retry, LLMRetryHandler
-from .enterprise_config import EnterpriseConfig
+from ..http_client_factory import HttpClientFactory
+from ..retry_handler import with_enterprise_retry, LLMRetryHandler
+from ..enterprise_config import EnterpriseConfig
 import logging
 
 logger = logging.getLogger(__name__)
@@ -44,27 +45,27 @@ class _ResponseStreamEventFallback(BaseModel):
     delta: Optional[str] = None
     obfuscation: Optional[str] = None
 
-class AzureOpenAIProxyClient(LLMClientProtocol):
-    """Azure OpenAI proxy client with API versioning support and retry resilience."""
+class BaseOpenAIClient(LLMClientProtocol):
+    """Base OpenAI client with shared functionality for all OpenAI-compatible providers."""
 
-    def __init__(self, api_key: str, base_url: str, api_version: str, provider: LLMProvider = LLMProvider.AZURE,
-                 management_client: Optional[AzureManagementClient] = None,
-                 enterprise_config: Optional[EnterpriseConfig] = None):
-        """Initialize Azure OpenAI proxy client with enterprise configuration.
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str,
+        provider: LLMProvider,
+        enterprise_config: Optional[EnterpriseConfig] = None
+    ):
+        """Initialize base OpenAI client with enterprise configuration.
 
         Args:
             api_key (str): API key for authentication
-            base_url (str): Base URL for the Azure OpenAI API
-            api_version (str): Azure API version (e.g., "2024-06-01")
-            provider (LLMProvider): Provider type (defaults to AZURE)
-            management_client (Optional[AzureManagementClient]): Optional management client for deployment listing
+            base_url (str): Base URL for the API
+            provider (LLMProvider): Provider type
             enterprise_config (Optional[EnterpriseConfig]): Enterprise configuration
         """
         self.api_key = api_key
         self.base_url = base_url.rstrip('/')
-        self.api_version = api_version
         self.provider = provider
-        self.management_client = management_client
 
         # Use default enterprise config if none provided
         if enterprise_config is None:
@@ -84,7 +85,7 @@ class AzureOpenAIProxyClient(LLMClientProtocol):
             client_key_file=enterprise_config.client_key_file
         )
 
-        logger.debug(f"AzureOpenAIProxyClient initialized for {provider} at {base_url} with API version {api_version}, retry enabled: {enterprise_config.enable_retry}")
+        logger.debug(f"BaseOpenAIClient initialized for {provider} at {base_url}")
 
         self._stream_validation_error_count: int = 0  # limit noisy logs
         self._has_model_validate: bool = callable(getattr(ResponseStreamEvent, 'model_validate', None))
@@ -108,7 +109,7 @@ class AzureOpenAIProxyClient(LLMClientProtocol):
         headers = self._get_headers()
         payload = self._prepare_completion_payload(request)
 
-        logger.debug(f"Making Azure text completion request to {url}")
+        logger.debug(f"Making text completion request to {url}")
         logger.debug(f"Request payload: {payload}")
 
         try:
@@ -126,14 +127,14 @@ class AzureOpenAIProxyClient(LLMClientProtocol):
             return self._parse_completion_response(response_data, latency_ms)
 
         except httpx.HTTPStatusError as e:
-            error_details = self._parse_azure_error(e)
-            logger.error(f"Azure HTTP error in text completion: {error_details}")
-            raise httpx.HTTPError(f"Azure OpenAI API error: {error_details}")
+            error_details = self._parse_error(e)
+            logger.error(f"HTTP error in text completion: {error_details}")
+            raise httpx.HTTPError(f"API error: {error_details}")
         except httpx.HTTPError as e:
-            logger.error(f"HTTP error in Azure text completion: {str(e)}")
+            logger.error(f"HTTP error in text completion: {str(e)}")
             raise
         except Exception as e:
-            logger.error(f"Unexpected error in Azure text completion: {str(e)}")
+            logger.error(f"Unexpected error in text completion: {str(e)}")
             raise
 
     async def _completion_via_chat(self, request: CompletionRequest) -> CompletionResponse:
@@ -145,8 +146,6 @@ class AzureOpenAIProxyClient(LLMClientProtocol):
         Returns:
             CompletionResponse: Generated response converted from chat completion
         """
-        from ...domain.models.chat_completion import ChatCompletionRequest, ChatMessage
-
         messages: List[ChatMessage] = []
         # Prompt normalization
         if isinstance(request.prompt, str):
@@ -214,10 +213,9 @@ class AzureOpenAIProxyClient(LLMClientProtocol):
             raw_response=getattr(chat_response, 'raw_response', {})
         )
 
-
     @with_enterprise_retry
     async def chat_completion(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
-        """Create chat completion via Azure OpenAI API with retry resilience.
+        """Create chat completion via API with retry resilience.
 
         Args:
             request (ChatCompletionRequest): Chat completion request
@@ -234,7 +232,7 @@ class AzureOpenAIProxyClient(LLMClientProtocol):
         headers = self._get_headers()
         payload = self._prepare_chat_payload(request)
 
-        logger.debug(f"Making Azure chat completion request to {url}")
+        logger.debug(f"Making chat completion request to {url}")
 
         try:
             response = await self._client.post(
@@ -251,14 +249,14 @@ class AzureOpenAIProxyClient(LLMClientProtocol):
             return self._parse_chat_response(response_data, latency_ms)
 
         except httpx.HTTPStatusError as e:
-            error_details = self._parse_azure_error(e)
-            logger.error(f"Azure HTTP error in chat completion: {error_details}")
-            raise httpx.HTTPError(f"Azure OpenAI API error: {error_details}")
+            error_details = self._parse_error(e)
+            logger.error(f"HTTP error in chat completion: {error_details}")
+            raise httpx.HTTPError(f"API error: {error_details}")
         except httpx.HTTPError as e:
-            logger.error(f"HTTP error in Azure chat completion: {str(e)}")
+            logger.error(f"HTTP error in chat completion: {str(e)}")
             raise
         except Exception as e:
-            logger.error(f"Unexpected error in Azure chat completion: {str(e)}")
+            logger.error(f"Unexpected error in chat completion: {str(e)}")
             raise
 
     @with_enterprise_retry
@@ -277,7 +275,7 @@ class AzureOpenAIProxyClient(LLMClientProtocol):
         payload = self._prepare_chat_payload(request)
         payload["stream"] = True
 
-        logger.debug(f"Starting Azure streaming chat completion to {url}")
+        logger.debug(f"Starting streaming chat completion to {url}")
         logger.debug(f"Stream request payload: {payload}")
         logger.debug(f"Stream request headers: {headers}")
 
@@ -290,7 +288,7 @@ class AzureOpenAIProxyClient(LLMClientProtocol):
         )
 
     async def chat_completion_stream(self, request: ChatCompletionRequest) -> AsyncGenerator[ChatCompletionStreamResponse, None]:
-        """Stream chat completion via Azure OpenAI API.
+        """Stream chat completion via API.
 
         Args:
             request (ChatCompletionRequest): Chat completion request
@@ -305,9 +303,6 @@ class AzureOpenAIProxyClient(LLMClientProtocol):
             # Process the stream without retry
             async with stream_ctx as res:
                 res.raise_for_status()
-
-                # Les en-têtes sont gérés au niveau de OverrideStreamResponse et pas ici
-                # car nous ne retournons pas directement la réponse HTTP, mais des objets ChatCompletionStreamResponse
 
                 async for line in res.aiter_lines():
                     # Skip empty lines
@@ -338,13 +333,13 @@ class AzureOpenAIProxyClient(LLMClientProtocol):
                         continue
 
         except httpx.HTTPStatusError as e:
-            error_details = self._parse_azure_error(e)
-            logger.error(f"Azure HTTP error in streaming chat completion: {error_details}")
-            raise httpx.HTTPError(f"Azure OpenAI API error: {error_details}")
+            error_details = self._parse_error(e)
+            logger.error(f"HTTP error in streaming chat completion: {error_details}")
+            raise httpx.HTTPError(f"API error: {error_details}")
 
     @with_enterprise_retry
     async def list_models(self) -> List[Dict[str, Any]]:
-        """List available models from Azure OpenAI API with retry resilience.
+        """List available models from API with retry resilience.
 
         Returns:
             List[Dict[str, Any]]: List of available models
@@ -352,10 +347,10 @@ class AzureOpenAIProxyClient(LLMClientProtocol):
         Raises:
             httpx.HTTPError: If API request fails after all retries
         """
-        url = f"{self.base_url}/openai/models?api-version={self.api_version}"
+        url = self._build_models_url()
         headers = self._get_headers()
 
-        logger.debug(f"Fetching available Azure models from {url}")
+        logger.debug(f"Fetching available models from {url}")
 
         try:
             response = await self._client.get(
@@ -368,80 +363,97 @@ class AzureOpenAIProxyClient(LLMClientProtocol):
             response_data = response.json()
             models = response_data.get("data", [])
 
-            logger.debug(f"Found {len(models)} available Azure models")
+            logger.debug(f"Found {len(models)} available models")
             return models
 
         except httpx.HTTPError as e:
-            logger.error(f"HTTP error fetching Azure models: {str(e)}")
+            logger.error(f"HTTP error fetching models: {str(e)}")
             raise
         except Exception as e:
-            logger.error(f"Unexpected error fetching Azure models: {str(e)}")
+            logger.error(f"Unexpected error fetching models: {str(e)}")
             raise
 
-    @with_enterprise_retry
     async def list_deployments(self) -> List[Dict[str, Any]]:
-        """List deployed models from Azure using Management API or fallback to models endpoint with retry.
+        """List deployed models (equivalent to list_models for standard OpenAI).
 
         Returns:
-            List[Dict[str, Any]]: List of deployed models with deployment info
+            List[Dict[str, Any]]: List of deployed models
 
         Raises:
-            httpx.HTTPError: If API request fails after all retries
+            httpx.HTTPError: If API request fails
         """
-        # If management client is available, use it for true deployment listing
-        if self.management_client:
-            try:
-                return await self.management_client.list_deployments()
-            except Exception as e:
-                logger.warning(f"Failed to get deployments from Management API, falling back to models endpoint: {e}")
+        # Default implementation - override in Azure client
+        try:
+            models = await self.list_models()
+        except httpx.HTTPError as e:
+            logger.error(f"HTTP error fetching models for deployments: {str(e)}")
+            raise
 
-        # Fallback to the standard models endpoint with retry
-        return await self.list_models()
+        # Transform to match deployment format for consistency
+        deployments = []
+        for model in models:
+            deployment = model.copy()
+            deployment["deployment_id"] = model.get("id", "")
+            deployment["deployment_status"] = "succeeded"  # Assume available
+            deployments.append(deployment)
+
+        return deployments
 
     @with_enterprise_retry
     async def responses(self, payload: ResponsesCreatePayload) -> OpenAIResponse:
-        """Execute Azure Responses API call and return OpenAI SDK Response.
+        """Execute Responses API call.
 
         Args:
-            payload (ResponsesCreatePayload): Validated request payload
+            payload (ResponsesCreatePayload): API request payload
 
         Returns:
-            OpenAIResponse: Parsed OpenAI Response object
+            Dict[str, Any]: Raw API response
         """
-        deployment: str = payload.model
-        if not deployment:
-            raise ValueError("ResponsesCreatePayload.model must be set for Azure responses API")
-        url = f"{self.base_url}/openai/v1/responses"
+        url = self._build_responses_url()
         headers = self._get_headers()
-        body = payload.to_openai_kwargs()
-        # Azure endpoint may not require removing model; keep for compatibility
         # Ensure stream disabled for non streaming route
+        body = payload.to_openai_kwargs()
         body["stream"] = False
-        logger.debug(f"Azure responses() call -> url={url} keys={list(body.keys())}")
+
+        logger.debug(f"responses() call -> url={url} keys={list(body.keys())}")
+
         try:
             res = await self._client.post(url=url, headers=headers, json=body, timeout=120.0)
             res.raise_for_status()
             data = res.json()
-            return OpenAIResponse.model_validate(data)  # type: ignore[attr-defined]
+            try:
+                return OpenAIResponse.model_validate(data)  # type: ignore[attr-defined]
+            except AttributeError:
+                # Fallback if model_validate not available
+                return data
 
         except httpx.HTTPStatusError as e:
-            err = self._parse_azure_error(e)
-            logger.error(f"Azure HTTP error in responses: {err}")
-            raise httpx.HTTPError(f"Azure OpenAI API error: {err}")
-        except Exception:
+            err = self._parse_error(e)
+            logger.error(f"HTTP error in responses: {err}")
+            raise httpx.HTTPError(f"API error: {err}")
+        except Exception as e:
+            logger.error(f"Unexpected error in responses API: {e}")
             raise
 
     @with_enterprise_retry
-    async def _establish_responses_stream_connection(self, payload: ResponsesCreatePayload):  # type: ignore[override]
-        """Establish streaming connection (typed payload variant)."""
-        deployment: str = payload.model
-        if not deployment:
-            raise ValueError("ResponsesCreatePayload.model must be set for Azure responses streaming")
-        url = f"{self.base_url}/openai/v1/responses"
+    async def _establish_responses_stream_connection(self, payload: ResponsesCreatePayload):
+        """Establish streaming connection for responses API with retry capability.
+
+        Args:
+            payload (ResponsesCreatePayload): Request payload
+
+        Returns:
+            httpx.AsyncClient.stream: HTTP streaming connection
+        """
+        url = self._build_responses_url()
         headers = self._get_headers()
+
+        # Ensure stream is enabled
         body = payload.to_openai_kwargs()
         body["stream"] = True
-        logger.debug(f"Azure responses_stream() opening stream -> url={url}")
+
+        logger.debug(f"responses_stream() opening stream -> url={url}")
+
         return self._client.stream(
             "POST",
             url=url,
@@ -450,16 +462,14 @@ class AzureOpenAIProxyClient(LLMClientProtocol):
             timeout=120.0
         )
 
-    async def responses_stream(self, payload: ResponsesCreatePayload) -> AsyncGenerator[ResponseStreamEvent, None]:  # type: ignore[override]
-        """Stream Azure Responses API events with minimal normalization and diagnostic logging.
+    async def responses_stream(self, payload: Dict[str, Any]) -> AsyncGenerator[ResponseStreamEvent, None]:
+        """Stream responses API events with normalization and diagnostic logging.
 
-        Enhancements:
-        - Handle SSE style separate 'event:' header lines (store then apply to next data JSON)
-        - Only parse JSON on 'data:' lines (reduces noise)
-        - Attach missing 'type' from preceding event header if absent in JSON
-        - Normalize created_at -> created (within nested response)
-        - Log at DEBUG only first few validation errors with full Pydantic details
-        - Suppress repetitive non-JSON skip logs
+        Args:
+            payload (Dict[str, Any]): Request payload with model and inputs
+
+        Yields:
+            ResponseStreamEvent: Normalized streaming response events
         """
         try:
             stream_ctx = await self._establish_responses_stream_connection(payload)
@@ -531,10 +541,11 @@ class AzureOpenAIProxyClient(LLMClientProtocol):
                         # Non data / non event lines ignored silently (avoid spam)
                         continue
         except httpx.HTTPStatusError as e:
-            err = self._parse_azure_error(e)
-            logger.error(f"Azure HTTP error in responses stream: {err}")
-            raise httpx.HTTPError(f"Azure OpenAI API error: {err}")
-        except Exception:
+            err = self._parse_error(e)
+            logger.error(f"HTTP error in responses stream: {err}")
+            raise httpx.HTTPError(f"API error: {err}")
+        except Exception as e:
+            logger.error(f"Unexpected error in responses stream: {e}")
             raise
 
     def _build_event_variant_map(self) -> Dict[str, Any]:
@@ -638,11 +649,14 @@ class AzureOpenAIProxyClient(LLMClientProtocol):
             logger.debug("_build_event_variant_map: no variants discovered; using fallback model only")
         return mapping
 
-    def _build_stream_event(self, evt: Dict[str, Any]) -> ResponseStreamEvent:  # type: ignore[override]
+    def _build_stream_event(self, evt: Dict[str, Any]) -> ResponseStreamEvent:
         """Instantiate proper ResponseStreamEvent variant based on 'type' field.
 
-        Adjusted: proactively inject empty logprobs list for text delta/done events when Azure omits it
-        instead of relying on exception handling.
+        Args:
+            evt: Raw event dictionary
+
+        Returns:
+            ResponseStreamEvent: Instantiated event object
         """
         if isinstance(evt.get('response'), dict):
             r = evt['response']
@@ -676,208 +690,53 @@ class AzureOpenAIProxyClient(LLMClientProtocol):
             filtered['type'] = evt_type or 'unknown'
         return _ResponseStreamEventFallback(**filtered)  # type: ignore[return-value]
 
-    def _build_url(self, endpoint: str, deployment_name: str) -> str:
-        """Build Azure OpenAI API URL with deployment and API version.
+    def _prepare_stream_event(self, evt: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize and enrich raw event dict prior to model parsing.
 
         Args:
-            endpoint (str): API endpoint (e.g., "chat/completions")
-            deployment_name (str): Azure deployment name
+            evt: Raw event dictionary
 
         Returns:
-            str: Complete API URL
+            Dict[str, Any]: Normalized event dictionary
         """
-        return f"{self.base_url}/openai/deployments/{deployment_name}/{endpoint}?api-version={self.api_version}"
-
-    def _get_headers(self) -> Dict[str, str]:
-        """Get headers for Azure OpenAI API requests.
-
-        Returns:
-            Dict[str, str]: Request headers
-        """
-        return {
-            "api-key": self.api_key,
-            "Content-Type": "application/json",
-            "User-Agent": "fastapi-openai-rag/1.0.0"
-        }
-
-    def _prepare_chat_payload(self, request: ChatCompletionRequest) -> Dict[str, Any]:
-        """Prepare chat completion payload for Azure API.
-
-        Args:
-            request (ChatCompletionRequest): Domain request
-
-        Returns:
-            Dict[str, Any]: API payload
-        """
-        payload = request.model_dump(exclude_none=True)
-
-        # Remove model from payload as it's in the URL for Azure
-        payload.pop("model", None)
-
-        if "messages" in payload:
-            payload["messages"] = [
-                msg.model_dump(exclude_none=True) for msg in request.messages
-            ]
-
-        return payload
-
-    def _prepare_completion_payload(self, request: CompletionRequest) -> Dict[str, Any]:
-        """Prepare text completion payload for Azure API.
-
-        Args:
-            request (CompletionRequest): Domain request
-
-        Returns:
-            Dict[str, Any]: API payload
-        """
-        payload = request.model_dump(exclude_none=True)
-
-        # Remove model from payload as it's in the URL for Azure
-        payload.pop("model", None)
-
-        # Azure-specific adjustments
-        # Remove parameters that Azure doesn't support or handle differently
-        unsupported_params = ["best_of", "suffix", "echo", "logit_bias"]
-        for param in unsupported_params:
-            payload.pop(param, None)
-
-        # Ensure prompt is properly formatted
-        if "prompt" in payload:
-            if isinstance(payload["prompt"], list):
-                payload["prompt"] = "\n".join(str(p) for p in payload["prompt"])  # type: ignore[list-item]
-
-        # Adjust logprobs parameter - Azure may have different limits
-        if "logprobs" in payload and payload["logprobs"] is not None:
-            # Azure supports logprobs but may have different limits
-            payload["logprobs"] = min(payload["logprobs"], 5)
-
-        # Ensure stop sequences are properly formatted
-        if "stop" in payload and payload["stop"] is not None:
-            if isinstance(payload["stop"], str):
-                # Convert single string to array
-                payload["stop"] = [payload["stop"]]
-            elif isinstance(payload["stop"], list):
-                # Limit to maximum 4 stop sequences for Azure
-                payload["stop"] = payload["stop"][:4]
-
-        # Set reasonable defaults for Azure - use higher default for max_tokens
-        if "max_tokens" not in payload or payload["max_tokens"] is None:
-            payload["max_tokens"] = 1000  # Higher default for better responses
-            logger.debug("No max_tokens specified, using default: 1000")
-
-        # Ensure temperature is within Azure limits
-        if "temperature" in payload and payload["temperature"] is not None:
-            payload["temperature"] = max(0.0, min(2.0, payload["temperature"]))
-
-        # Ensure top_p is within limits
-        if "top_p" in payload and payload["top_p"] is not None:
-            payload["top_p"] = max(0.0, min(1.0, payload["top_p"]))
-
-        # Ensure n is within Azure limits
-        if "n" in payload and payload["n"] is not None:
-            payload["n"] = max(1, min(128, payload["n"]))
-
-        # Ensure penalties are within limits
-        for penalty_field in ["presence_penalty", "frequency_penalty"]:
-            if penalty_field in payload and payload[penalty_field] is not None:
-                payload[penalty_field] = max(-2.0, min(2.0, payload[penalty_field]))
-
-        logger.debug(f"Prepared Azure completion payload: {payload}")
-        return payload
-
-    def _parse_chat_response(self, response_data: Dict[str, Any], latency_ms: float) -> ChatCompletionResponse:
-        """Parse Azure chat completion response."""
-        choices: List[ChatCompletionChoice] = []
-        for choice_data in response_data.get("choices", []):
-            message_data = choice_data.get("message", {})
-            message = ChatMessage(
-                role=message_data.get("role"),
-                content=message_data.get("content"),
-                function_call=message_data.get("function_call"),
-                tool_calls=message_data.get("tool_calls")
-            )
-
-            choice = ChatCompletionChoice(
-                index=choice_data.get("index", 0),
-                message=message,
-                finish_reason=choice_data.get("finish_reason")
-            )
-            choices.append(choice)
-
-        usage_data = response_data.get("usage", {})
-        usage = TokenUsage(
-            prompt_tokens=usage_data.get("prompt_tokens", 0),
-            completion_tokens=usage_data.get("completion_tokens", 0),
-            total_tokens=usage_data.get("total_tokens", 0)
-        )
-
-        return ChatCompletionResponse(
-            id=response_data.get("id", str(uuid.uuid4())),
-            object=response_data.get("object", "chat.completion"),
-            created=response_data.get("created", int(time.time())),
-            model=response_data.get("model", ""),
-            system_fingerprint=response_data.get("system_fingerprint"),
-            choices=choices,
-            usage=usage,
-            provider=self.provider,
-            latency_ms=latency_ms,
-            timestamp=datetime.now(timezone.utc),
-            raw_response=response_data
-        )
-
-    def _parse_completion_response(self, response_data: Dict[str, Any], latency_ms: float) -> CompletionResponse:
-        """Parse Azure text completion response."""
-        choices: List[CompletionChoice] = []
-        for choice_data in response_data.get("choices", []):
-            choice = CompletionChoice(
-                text=choice_data.get("text", ""),
-                index=choice_data.get("index", 0),
-                logprobs=choice_data.get("logprobs"),
-                finish_reason=choice_data.get("finish_reason")
-            )
-            choices.append(choice)
-
-        usage_data = response_data.get("usage", {})
-        usage = TokenUsage(
-            prompt_tokens=usage_data.get("prompt_tokens", 0),
-            completion_tokens=usage_data.get("completion_tokens", 0),
-            total_tokens=usage_data.get("total_tokens", 0)
-        )
-
-        return CompletionResponse(
-            id=response_data.get("id", str(uuid.uuid4())),
-            object=response_data.get("object", "text_completion"),
-            created=response_data.get("created", int(time.time())),
-            model=response_data.get("model", ""),
-            system_fingerprint=response_data.get("system_fingerprint"),
-            choices=choices,
-            usage=usage,
-            provider=self.provider,
-            latency_ms=latency_ms,
-            timestamp=datetime.now(timezone.utc),
-            raw_response=response_data
-        )
+        evt_type: str = str(evt.get('type', ''))
+        resp_obj = evt.get('response')
+        if isinstance(resp_obj, dict) and 'created_at' in resp_obj and 'created' not in resp_obj:
+            new_resp_dict = cast(Dict[str, Any], resp_obj)
+            # Preserve original map and just add created
+            if 'created' not in new_resp_dict:
+                new_resp_dict['created'] = new_resp_dict['created_at']
+            evt = {**evt, 'response': new_resp_dict}
+        if evt_type == 'response.output_text.delta' and 'delta' not in evt:
+            evt = {**evt, 'delta': ''}
+        return evt
 
     def _parse_stream_chunk(self, chunk_data: Dict[str, Any]) -> ChatCompletionStreamResponse:
-        """Parse Azure streaming response chunk."""
-        choices: List[ChatCompletionStreamChoice] = []  # fixed generic syntax
+        """Parse streaming response chunk.
+
+        Args:
+            chunk_data (Dict[str, Any]): Raw chunk data
+
+        Returns:
+            ChatCompletionStreamResponse: Parsed streaming response chunk
+        """
+        # Extract choices data from the chunk
+        choices: List[ChatCompletionStreamChoice] = []
         for choice_data in chunk_data.get("choices", []):
             # Extract the delta content from the choice
-            delta: Dict[str, Any] = choice_data.get("delta", {})
+            delta = choice_data.get("delta", {})
 
             # Log the actual content for debugging
             logger.debug(f"Stream chunk delta content: {delta}")
 
-            # Assigner une valeur par défaut pour le rôle si elle est None
-            role = delta.get("role")
-            if role is None:
-                # Dans les chunks de streaming Azure, le rôle est souvent défini uniquement
-                # dans le premier chunk et est généralement "assistant" pour les chunks suivants
-                role = "assistant"
+            # Assign a default value for role if None
+            role = delta.get("role") or "assistant"
+            if isinstance(role, str) and role not in {r.value for r in ChatMessageRole}:  # type: ignore[attr-defined]
+                role = ChatMessageRole.ASSISTANT
 
             # Create a message object from the delta
-            message = ChatMessage(  # type: ignore[arg-type]
-                role=role_str,  # type: ignore[arg-type]  # casting role string to ChatMessageRole
+            message = ChatMessage(
+                role=role,  # type: ignore[arg-type]
                 content=delta.get("content", ""),
                 function_call=delta.get("function_call"),
                 tool_calls=delta.get("tool_calls")
@@ -900,12 +759,109 @@ class AzureOpenAIProxyClient(LLMClientProtocol):
             choices=choices,
             provider=self.provider,
             raw_response=chunk_data,
-            latency_ms=None,  # Ces valeurs seront définies plus tard dans le service
+            latency_ms=None,  # Will be set later in the service
             timestamp=datetime.now(timezone.utc)
         )
 
-    def _parse_azure_error(self, error: httpx.HTTPStatusError) -> str:
-        """Parse Azure OpenAI error response.
+    def _parse_chat_response(self, response_data: Dict[str, Any], latency_ms: float) -> ChatCompletionResponse:
+        """Parse chat completion response.
+
+        Args:
+            response_data (Dict[str, Any]): Raw API response
+            latency_ms (float): Request latency
+
+        Returns:
+            ChatCompletionResponse: Domain model response
+        """
+        # Extract choices
+        choices: List[ChatCompletionChoice] = []
+        for choice_data in response_data.get("choices", []):
+            message_data = choice_data.get("message", {})
+            role_raw = message_data.get("role") or "assistant"
+            if isinstance(role_raw, str) and role_raw not in {r.value for r in ChatMessageRole}:  # type: ignore[attr-defined]
+                role_raw = ChatMessageRole.ASSISTANT
+
+            message = ChatMessage(
+                role=role_raw,  # type: ignore[arg-type]
+                content=message_data.get("content"),
+                function_call=message_data.get("function_call"),
+                tool_calls=message_data.get("tool_calls")
+            )
+
+            choice = ChatCompletionChoice(
+                index=choice_data.get("index", 0),
+                message=message,
+                finish_reason=choice_data.get("finish_reason")
+            )
+            choices.append(choice)
+
+        # Extract usage
+        usage_data = response_data.get("usage", {})
+        usage = TokenUsage(
+            prompt_tokens=usage_data.get("prompt_tokens", 0),
+            completion_tokens=usage_data.get("completion_tokens", 0),
+            total_tokens=usage_data.get("total_tokens", 0)
+        )
+
+        return ChatCompletionResponse(
+            id=response_data.get("id", str(uuid.uuid4())),
+            object=response_data.get("object", "chat.completion"),
+            created=response_data.get("created", int(time.time())),
+            model=response_data.get("model", ""),
+            system_fingerprint=response_data.get("system_fingerprint"),
+            choices=choices,
+            usage=usage,
+            provider=self.provider,
+            latency_ms=latency_ms,
+            timestamp=datetime.now(timezone.utc),
+            raw_response=response_data
+        )
+
+    def _parse_completion_response(self, response_data: Dict[str, Any], latency_ms: float) -> CompletionResponse:
+        """Parse text completion response.
+
+        Args:
+            response_data (Dict[str, Any]): Raw API response
+            latency_ms (float): Request latency
+
+        Returns:
+            CompletionResponse: Domain model response
+        """
+        # Extract choices
+        choices: List[CompletionChoice] = []
+        for choice_data in response_data.get("choices", []):
+            choice = CompletionChoice(
+                text=choice_data.get("text", ""),
+                index=choice_data.get("index", 0),
+                logprobs=choice_data.get("logprobs"),
+                finish_reason=choice_data.get("finish_reason")
+            )
+            choices.append(choice)
+
+        # Extract usage
+        usage_data = response_data.get("usage", {})
+        usage = TokenUsage(
+            prompt_tokens=usage_data.get("prompt_tokens", 0),
+            completion_tokens=usage_data.get("completion_tokens", 0),
+            total_tokens=usage_data.get("total_tokens", 0)
+        )
+
+        return CompletionResponse(
+            id=response_data.get("id", str(uuid.uuid4())),
+            object=response_data.get("object", "text_completion"),
+            created=response_data.get("created", int(time.time())),
+            model=response_data.get("model", ""),
+            system_fingerprint=response_data.get("system_fingerprint"),
+            choices=choices,
+            usage=usage,
+            provider=self.provider,
+            latency_ms=latency_ms,
+            timestamp=datetime.now(timezone.utc),
+            raw_response=response_data
+        )
+
+    def _parse_error(self, error: httpx.HTTPStatusError) -> str:
+        """Parse API error response.
 
         Args:
             error (httpx.HTTPStatusError): HTTP status error
@@ -915,7 +871,7 @@ class AzureOpenAIProxyClient(LLMClientProtocol):
         """
         try:
             error_body = error.response.text
-            logger.debug(f"Raw Azure error response: {error_body}")
+            logger.debug(f"Raw API error response: {error_body}")
 
             # Try to parse JSON error response
             if error_body:
@@ -925,7 +881,8 @@ class AzureOpenAIProxyClient(LLMClientProtocol):
                         error_info = error_data["error"]
                         code = error_info.get("code", "Unknown")
                         message = error_info.get("message", "No message provided")
-                        return f"Code: {code}, Message: {message}"
+                        error_type = error_info.get("type", "Unknown")
+                        return f"Type: {error_type}, Code: {code}, Message: {message}"
                 except Exception:
                     # Fallback to raw text if JSON parsing fails
                     return f"Status: {error.response.status_code}, Body: {error_body[:500]}"
@@ -933,34 +890,99 @@ class AzureOpenAIProxyClient(LLMClientProtocol):
             return f"HTTP {error.response.status_code}: {error.response.reason_phrase}"
 
         except Exception as e:
-            logger.warning(f"Failed to parse Azure error: {e}")
+            logger.warning(f"Failed to parse API error: {e}")
             return f"HTTP {error.response.status_code}: {str(error)}"
+
+    def _get_headers(self) -> Dict[str, str]:
+        """Get headers for API requests.
+
+        Returns:
+            Dict[str, str]: Request headers
+        """
+        return {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "fastapi-openai-rag/1.0.0"
+        }
+
+    def _build_url(self, endpoint: str, model: str) -> str:
+        """Build API URL for endpoints.
+
+        Args:
+            endpoint (str): API endpoint (e.g., "chat/completions")
+            model (str): Model name/ID
+
+        Returns:
+            str: Complete API URL
+        """
+        # Default implementation for standard OpenAI
+        return f"{self.base_url}/{endpoint}"
+
+    def _build_models_url(self) -> str:
+        """Build URL for models endpoint.
+
+        Returns:
+            str: Models API URL
+        """
+        # Default implementation for standard OpenAI
+        return f"{self.base_url}/models"
+
+    def _build_responses_url(self) -> str:
+        """Build URL for responses endpoint.
+
+        Returns:
+            str: Responses API URL
+        """
+        # Default implementation for standard OpenAI
+        return f"{self.base_url}/responses"
+
+    def _prepare_chat_payload(self, request: ChatCompletionRequest) -> Dict[str, Any]:
+        """Prepare chat completion payload.
+
+        Args:
+            request (ChatCompletionRequest): Domain request
+
+        Returns:
+            Dict[str, Any]: API payload
+        """
+        # Convert to dict and filter None values
+        payload = request.model_dump(exclude_none=True)
+
+        # Convert messages to API format
+        if "messages" in payload:
+            payload["messages"] = [
+                msg.model_dump(exclude_none=True) for msg in request.messages
+            ]
+
+        return payload
+
+    def _prepare_completion_payload(self, request: CompletionRequest) -> Dict[str, Any]:
+        """Prepare text completion payload.
+
+        Args:
+            request (CompletionRequest): Domain request
+
+        Returns:
+            Dict[str, Any]: API payload
+        """
+        return request.model_dump(exclude_none=True)
 
     async def close(self) -> None:
         """Close the HTTP client and cleanup resources."""
         if hasattr(self, '_client') and self._client:
             await self._client.aclose()
-            logger.debug(f"Azure OpenAI proxy client closed for {self.provider} with API version {self.api_version}")
+            logger.debug(f"Client closed for {self.provider}")
 
     async def __aenter__(self):
         """Async context manager entry."""
         return self
 
-    async def __aexit__(self, exc_type: Optional[type], exc_val: Optional[BaseException], exc_tb: Optional[Any]):
-        """Async context manager exit with automatic cleanup."""
+    async def __aexit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType]
+    ) -> Optional[bool]:
+        """Async context manager exit."""
         await self.close()
-
-    def _prepare_stream_event(self, evt: Dict[str, Any]) -> Dict[str, Any]:
-        """Normalize and enrich raw Azure event dict prior to model parsing."""
-        # Removed unnecessary isinstance guard (parameter already typed Dict[str, Any])
-        evt_type: str = str(evt.get('type', ''))
-        resp_obj = evt.get('response')
-        if isinstance(resp_obj, dict) and 'created_at' in resp_obj and 'created' not in resp_obj:
-            new_resp_dict = cast(Dict[str, Any], resp_obj)
-            # Preserve original map and just add created
-            if 'created' not in new_resp_dict:
-                new_resp_dict['created'] = new_resp_dict['created_at']
-            evt = {**evt, 'response': new_resp_dict}
-        if evt_type == 'response.output_text.delta' and 'delta' not in evt:
-            evt = {**evt, 'delta': ''}
-        return evt
+        return None

@@ -8,18 +8,18 @@ from datetime import datetime, timezone
 import unique_sdk
 from unique_sdk import ChatCompletion, Integrated
 
-from ...domain.models.chat_completion import (
+from ....domain.models.chat_completion import (
     ChatCompletionRequest, ChatCompletionResponse, ChatCompletionChoice, ChatCompletionStreamChoice,
     ChatCompletionStreamResponse, ChatMessage
 )
-from ...domain.models.completion import (
+from ....domain.models.completion import (
     CompletionRequest, CompletionResponse, CompletionChoice
 )
-from ...domain.models.llm import LLMProvider, TokenUsage
-from ...domain.protocols.llm_client import LLMClientProtocol
-from .http_client_factory import HttpClientFactory
-from .retry_handler import with_enterprise_retry, LLMRetryHandler
-from .enterprise_config import EnterpriseConfig
+from ....domain.models.llm import LLMProvider, TokenUsage
+from ....domain.protocols.llm_client import LLMClientProtocol
+from ..http_client_factory import HttpClientFactory
+from ..retry_handler import with_enterprise_retry, LLMRetryHandler
+from ..enterprise_config import EnterpriseConfig
 import logging
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,6 @@ class UniqueProxyClient(LLMClientProtocol):
     def __init__(self, api_key: str, app_id: str,company_id: str,
                  user_id: str,
                  base_url: str,
-                 provider: LLMProvider = LLMProvider.UNIQUE,
                  enterprise_config: Optional[EnterpriseConfig] = None):
         """Initialize Unique proxy client with enterprise configuration.
 
@@ -47,7 +46,7 @@ class UniqueProxyClient(LLMClientProtocol):
         self.company_id = company_id
         self.user_id = user_id
         self.base_url = base_url
-        self.provider = provider
+        self.provider = LLMProvider.UNIQUE
 
         # Use default enterprise config if none provided
         if enterprise_config is None:
