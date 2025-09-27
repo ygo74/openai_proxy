@@ -1,6 +1,5 @@
 """Chat completion service for handling OpenAI-compatible requests."""
 import time
-import uuid
 from typing import Dict, Any, Optional, List, AsyncGenerator
 from datetime import datetime, timezone
 
@@ -29,6 +28,9 @@ from openai.types.responses.response import Response as OpenAIResponse
 from openai.types.responses.response_stream_event import ResponseStreamEvent
 import logging
 
+from ..services.model_service import ModelService
+from ..services.token_tracking_service import TokenTrackingService
+
 logger = logging.getLogger(__name__)
 
 class ChatCompletionService:
@@ -41,6 +43,8 @@ class ChatCompletionService:
             uow (UnitOfWork): Unit of Work for transaction management
         """
         self._uow = uow
+        self._model_service = ModelService(uow)
+        self._token_tracking = TokenTrackingService(uow)
         self._client_cache: Dict[str, LLMClientProtocol] = {}
         logger.debug("ChatCompletionService initialized")
 
@@ -73,15 +77,27 @@ class ChatCompletionService:
 
         # Measure request time and execute
         start_time = time.time()
+        endpoint = "/v1/chat/completions"
+
         try:
-            response = await client.chat_completion(request_with_provider)
-            latency_ms = (time.time() - start_time) * 1000
+            # Use metrics tracking context manager if available
+            with self._token_tracking.track_request_in_progress(model.name):
+                # Make API request
+                response = await client.chat_completion(request_with_provider)
+
+            # Track token usage
+            self._token_tracking.track_completion(
+                response=response,
+                user=user,
+                endpoint=endpoint,
+                start_time=start_time
+            )
 
             # Update response with timing info
-            response.latency_ms = latency_ms
+            response.latency_ms = (time.time() - start_time) * 1000
             response.timestamp = datetime.now(timezone.utc)
 
-            logger.info(f"Chat completion successful in {latency_ms:.2f}ms")
+            logger.info(f"Chat completion successful in {response.latency_ms:.2f}ms")
             return response
 
         except Exception as e:
@@ -214,7 +230,29 @@ class ChatCompletionService:
             raise ValidationError("model is required in responses payload")
         model = await self._get_and_validate_model(model_name, user)
         client = self._get_or_create_client(model)
-        return await client.responses(payload)
+
+        start_time = time.time()
+        endpoint = "/v1/responses"
+
+        try:
+            # Use metrics tracking context manager if available
+            with self._token_tracking.track_request_in_progress(model_name):
+                # Make API request
+                response = await client.responses(payload)
+
+            # Track token usage
+            self._token_tracking.track_completion(
+                response=response,
+                user=user,
+                endpoint=endpoint,
+                start_time=start_time
+            )
+
+            return response
+
+        except Exception as e:
+            logger.error(f"Error in responses API: {str(e)}", exc_info=True)
+            raise
 
     async def create_response_stream(self, payload: ResponsesCreatePayload, user: AuthenticatedUser) -> AsyncGenerator[ResponseStreamEvent, None]:
         """Stream Responses API events (OpenAI SDK ResponseStreamEvent objects).
@@ -231,8 +269,33 @@ class ChatCompletionService:
             raise ValidationError("model is required in responses payload")
         model = await self._get_and_validate_model(model_name, user)
         client = self._get_or_create_client(model)
-        async for evt in client.responses_stream(payload):
-            yield evt
+
+        start_time = time.time()
+        endpoint = "/v1/responses"
+
+        # Ensure streaming is enabled
+        payload.stream = True
+
+        try:
+            # Use metrics tracking context manager if available
+            with self._token_tracking.track_request_in_progress(model_name):
+                # Stream API responses
+                async for event in client.responses_stream(payload):
+                    # Check if this event contains usage data and track it if so
+                    self._token_tracking.track_stream_completion(
+                        event=event,
+                        user=user,
+                        endpoint=endpoint,
+                        model=model_name,
+                        start_time=start_time
+                    )
+
+                    # Pass the event along
+                    yield event
+
+        except Exception as e:
+            logger.error(f"Error in responses stream: {str(e)}", exc_info=True)
+            raise
 
     async def _get_and_validate_model(self, model_name: str, user: AuthenticatedUser) -> LlmModel:
         """Get and validate model from database, checking user authorization.

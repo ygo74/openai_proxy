@@ -10,7 +10,7 @@ from ....infrastructure.db.unit_of_work import SQLUnitOfWork
 from ....application.services.chat_completion_service import ChatCompletionService
 from ....domain.models.autenticated_user import AuthenticatedUser
 from ....domain.models.response import ResponsesCreatePayload
-from ..decorators.decorators import endpoint_handler, track_token_usage
+from ..decorators.decorators import endpoint_handler
 from ..security.auth import auth_jwt_or_api_key
 from ..utils.override_stream_response import OverrideStreamResponse
 
@@ -34,17 +34,17 @@ def get_chat_completion_service(db: Session = Depends(get_db)) -> ChatCompletion
 
 @router.post("/responses")
 @endpoint_handler("create_response")
-@track_token_usage()
 async def create_response_endpoint(
     request: Request,
     payload: ResponsesCreatePayload,
     service: ChatCompletionService = Depends(get_chat_completion_service),
     user: AuthenticatedUser = Depends(auth_jwt_or_api_key)
 ) -> Any:
-    # Stream pathway
+    # Stream pathway - token tracking is handled in the service
     if payload.stream:
         async def event_gen() -> AsyncGenerator[str, None]:
             try:
+                # Stream processing is now handled directly by the service
                 async for evt in service.create_response_stream(payload, user):
                     try:
                         evt_dict = evt.model_dump()  # type: ignore[attr-defined]
@@ -66,15 +66,6 @@ async def create_response_endpoint(
                 "Content-Type": "text/event-stream; charset=utf-8"
             }
         )
-    # Non streaming pathway returns SDK Response serialized
-    # from openai.types.responses.response_input_param import ResponseInputItemParam, ResponseInputParam
-    # list_input: ResponseInputParam = []
-    # for input in payload.input:
-    #     if not isinstance(input, dict):
-    #         raise ValueError("Each item in 'input' must be a dict representing an input item.")
-    #     if "type" not in input:
-    #         raise ValueError("Each input item must have a 'type' field.")
-    #     input_param = cast(ResponseInputItemParam, input)
-    #     list_input.append(input_param)
-
-    return await service.create_response(payload, user)
+    # Non streaming pathway - token tracking is handled in the service
+    else:
+        return await service.create_response(payload, user)
