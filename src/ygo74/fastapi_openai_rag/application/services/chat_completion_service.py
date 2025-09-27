@@ -1,13 +1,13 @@
 """Chat completion service for handling OpenAI-compatible requests."""
 import time
-import uuid
 from typing import Dict, Any, Optional, List, AsyncGenerator
 from datetime import datetime, timezone
 
 from ...domain.models.autenticated_user import AuthenticatedUser
 from ...domain.models.chat_completion import (
     ChatCompletionRequest, ChatCompletionResponse, ChatCompletionChoice,
-    ChatMessage, ChatMessageRole
+    ChatMessage, ChatMessageRole, ChatCompletionStreamResponse,
+    MessageContentText, MessageContentImageURL, MessageContentPart
 )
 from ...domain.models.completion import (
     CompletionRequest, CompletionResponse, CompletionChoice
@@ -23,7 +23,13 @@ from ...infrastructure.db.repositories.model_repository import SQLModelRepositor
 from ...infrastructure.db.repositories.group_repository import SQLGroupRepository
 from ...infrastructure.llm.client_factory import LLMClientFactory
 from .config_service import config_service
+from ...domain.models.response import ResponsesCreatePayload
+from openai.types.responses.response import Response as OpenAIResponse
+from openai.types.responses.response_stream_event import ResponseStreamEvent
 import logging
+
+from ..services.model_service import ModelService
+from ..services.token_tracking_service import TokenTrackingService
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +43,8 @@ class ChatCompletionService:
             uow (UnitOfWork): Unit of Work for transaction management
         """
         self._uow = uow
+        self._model_service = ModelService(uow)
+        self._token_tracking = TokenTrackingService(uow)
         self._client_cache: Dict[str, LLMClientProtocol] = {}
         logger.debug("ChatCompletionService initialized")
 
@@ -69,15 +77,27 @@ class ChatCompletionService:
 
         # Measure request time and execute
         start_time = time.time()
+        endpoint = "/v1/chat/completions"
+
         try:
-            response = await client.chat_completion(request_with_provider)
-            latency_ms = (time.time() - start_time) * 1000
+            # Use metrics tracking context manager if available
+            with self._token_tracking.track_request_in_progress(model.name):
+                # Make API request
+                response = await client.chat_completion(request_with_provider)
+
+            # Track token usage
+            self._token_tracking.track_completion(
+                response=response,
+                user=user,
+                endpoint=endpoint,
+                start_time=start_time
+            )
 
             # Update response with timing info
-            response.latency_ms = latency_ms
+            response.latency_ms = (time.time() - start_time) * 1000
             response.timestamp = datetime.now(timezone.utc)
 
-            logger.info(f"Chat completion successful in {latency_ms:.2f}ms")
+            logger.info(f"Chat completion successful in {response.latency_ms:.2f}ms")
             return response
 
         except Exception as e:
@@ -146,7 +166,7 @@ class ChatCompletionService:
             logger.error(f"Error in text completion: {str(e)}")
             raise
 
-    async def create_chat_completion_stream(self, request: ChatCompletionRequest, user: AuthenticatedUser) -> AsyncGenerator[ChatCompletionResponse, None]:
+    async def create_chat_completion_stream(self, request: ChatCompletionRequest, user: AuthenticatedUser) -> AsyncGenerator[ChatCompletionStreamResponse, None]:
         """Create a streaming chat completion.
 
         Args:
@@ -193,6 +213,88 @@ class ChatCompletionService:
 
         except Exception as e:
             logger.error(f"Error in streaming chat completion: {str(e)}")
+            raise
+
+    async def create_response(self, payload: ResponsesCreatePayload, user: AuthenticatedUser) -> OpenAIResponse:
+        """Execute a Responses API request and return the OpenAI SDK Response object.
+
+        Args:
+            payload (ResponsesCreatePayload): Validated request payload
+            user (AuthenticatedUser): Authenticated user
+
+        Returns:
+            OpenAIResponse: OpenAI SDK typed response object
+        """
+        model_name = payload.model
+        if not model_name:
+            raise ValidationError("model is required in responses payload")
+        model = await self._get_and_validate_model(model_name, user)
+        client = self._get_or_create_client(model)
+
+        start_time = time.time()
+        endpoint = "/v1/responses"
+
+        try:
+            # Use metrics tracking context manager if available
+            with self._token_tracking.track_request_in_progress(model_name):
+                # Make API request
+                response = await client.responses(payload)
+
+            # Track token usage
+            self._token_tracking.track_completion(
+                response=response,
+                user=user,
+                endpoint=endpoint,
+                start_time=start_time
+            )
+
+            return response
+
+        except Exception as e:
+            logger.error(f"Error in responses API: {str(e)}", exc_info=True)
+            raise
+
+    async def create_response_stream(self, payload: ResponsesCreatePayload, user: AuthenticatedUser) -> AsyncGenerator[ResponseStreamEvent, None]:
+        """Stream Responses API events (OpenAI SDK ResponseStreamEvent objects).
+
+        Args:
+            payload (ResponsesCreatePayload): Validated request payload with stream True
+            user (AuthenticatedUser): Authenticated user
+
+        Yields:
+            ResponseStreamEvent: OpenAI SDK streaming event objects
+        """
+        model_name = payload.model
+        if not model_name:
+            raise ValidationError("model is required in responses payload")
+        model = await self._get_and_validate_model(model_name, user)
+        client = self._get_or_create_client(model)
+
+        start_time = time.time()
+        endpoint = "/v1/responses"
+
+        # Ensure streaming is enabled
+        payload.stream = True
+
+        try:
+            # Use metrics tracking context manager if available
+            with self._token_tracking.track_request_in_progress(model_name):
+                # Stream API responses
+                async for event in client.responses_stream(payload):
+                    # Check if this event contains usage data and track it if so
+                    self._token_tracking.track_stream_completion(
+                        event=event,
+                        user=user,
+                        endpoint=endpoint,
+                        model=model_name,
+                        start_time=start_time
+                    )
+
+                    # Pass the event along
+                    yield event
+
+        except Exception as e:
+            logger.error(f"Error in responses stream: {str(e)}", exc_info=True)
             raise
 
     async def _get_and_validate_model(self, model_name: str, user: AuthenticatedUser) -> LlmModel:
@@ -347,8 +449,23 @@ class ChatCompletionService:
         """Convert a ChatCompletionResponse to a CompletionResponse for fallback cases."""
         choices: List[CompletionChoice] = []
         for chat_choice in chat_response.choices:
+            content = chat_choice.message.content
+            if isinstance(content, list):
+                flat_parts: List[str] = []
+                for p in content:
+                    if isinstance(p, dict):
+                        flat_parts.append(str(p.get("text") or p.get("content") or ""))
+                    else:
+                        try:
+                            d = p.model_dump()
+                            flat_parts.append(str(d.get("text") or ""))
+                        except Exception:
+                            pass
+                content_text = "".join(flat_parts)
+            else:
+                content_text = content or ""
             choices.append(CompletionChoice(
-                text=chat_choice.message.content or "",
+                text=content_text,
                 index=chat_choice.index,
                 logprobs=None,
                 finish_reason=chat_choice.finish_reason
@@ -367,6 +484,74 @@ class ChatCompletionService:
             timestamp=chat_response.timestamp,
             raw_response=chat_response.raw_response
         )
+
+    def _responses_payload_to_chat_request(self, payload: Dict[str, Any], force_stream: bool = False) -> ChatCompletionRequest:
+        """Deprecated: chat fallback now handled by client. Retained for backward compatibility (unused)."""
+        input_items = payload.get("input") or []
+        instructions = payload.get("instructions")
+        parts: List[MessageContentPart] = []
+        for item in input_items:
+            if not isinstance(item, dict):
+                continue
+            itype = item.get("type")
+            if itype == "input_text":
+                parts.append(MessageContentText(type="text", text=item.get("text", "")))
+            elif itype == "input_image":
+                url = item.get("image_url") or item.get("url") or item.get("source")
+                if url:
+                    parts.append(MessageContentImageURL(type="image_url", image_url={"url": url}))
+        messages: List[ChatMessage] = []
+        if instructions:
+            messages.append(ChatMessage(role=ChatMessageRole.SYSTEM, content=instructions))
+        if len(parts) == 1:
+            messages.append(ChatMessage(role=ChatMessageRole.USER, content=parts[0].model_dump()))
+        else:
+            messages.append(ChatMessage(role=ChatMessageRole.USER, content=parts))
+        return ChatCompletionRequest(
+            model=payload.get("model"),
+            messages=messages,
+            max_tokens=payload.get("max_output_tokens") or payload.get("max_tokens"),
+            temperature=payload.get("temperature"),
+            stream=force_stream or bool(payload.get("stream")),
+            top_logprobs=None
+        )
+
+    def _chat_response_to_responses(self, chat_resp: ChatCompletionResponse) -> Dict[str, Any]:
+        """Deprecated: conversion handled by client layer now. Kept for legacy compatibility."""
+        def _flatten(choice: ChatCompletionChoice) -> str:
+            content = choice.message.content
+            if isinstance(content, list):
+                # Extract text fields from parts
+                texts: List[str] = []
+                for p in content:
+                    if isinstance(p, dict):
+                        texts.append(str(p.get("text") or p.get("content") or ""))
+                    else:
+                        try:
+                            d = p.model_dump()
+                            texts.append(str(d.get("text") or ""))
+                        except Exception:
+                            texts.append("")
+                return "".join(texts)
+            return content or ""
+        text = "".join([_flatten(c) for c in chat_resp.choices])
+        return {
+            "id": chat_resp.id,
+            "object": "response",
+            "model": chat_resp.model,
+            "created": chat_resp.created,
+            "output": [
+                {
+                    "id": f"{chat_resp.id}-msg0",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {"type": "output_text", "text": text}
+                    ]
+                }
+            ],
+            "usage": chat_resp.usage.model_dump(),
+        }
 
     def get_models_for_user(self, user: AuthenticatedUser) -> List[LlmModel]:
         """Get models accessible to user based on group membership.

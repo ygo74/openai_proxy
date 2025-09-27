@@ -16,7 +16,9 @@ transparent proxy : https://github.com/fangwentong/openai-proxy
 OpenAI:
 
 - schema : https://github.com/openai/openai-openapi/blob/manual_spec/openapi.yaml
+- migration to responses api: https://platform.openai.com/docs/guides/migrate-to-responses
 - sdk : https://github.com/openai/openai-python/blob/main/src/openai/types/chat/chat_completion_chunk.py
+- responses API: https://platform.openai.com/docs/api-reference/responses
 
 # development
 
@@ -50,9 +52,53 @@ The API will return a Server-Sent Events (SSE) stream that can be consumed by cl
 
 ## Using tools
 
-Tools are supported in the underlying model supports function calls:
+Tools are supported if the underlying model supports function calls:
 - https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/function-calling
 - https://python.langchain.com/docs/how_to/tool_results_pass_to_model/
+
+### Responses API vs Chat Completions API Tool Format
+
+The Responses API uses a different tool format compared to Chat Completions:
+- **Chat Completions**: Uses `tools` array with `{"type": "function", "function": {...}}` format
+- **Responses API**: Uses different tool format - see [OpenAI migration guide](https://platform.openai.com/docs/guides/migrate-to-responses)
+
+When using LangChain with `output_version="responses/v1"`, the library handles the format conversion automatically via `bind_tools()`.
+
+## Testing Responses API
+
+Two test scripts are provided to validate Responses API functionality:
+
+### LangChain Test Script
+```bash
+# Basic test with LangChain
+python tools/langchain/langchain_call_responses_api.py --question "What is 2+2?" --model gpt-4o
+
+# Function calling with auto-execution
+python tools/langchain/langchain_call_responses_api.py --question "What time is it in Paris?" --model gpt-4o --time-tool --auto-tools
+
+# Streaming with reasoning
+python tools/langchain/langchain_call_responses_api.py --question "Explain quantum computing" --model gpt-4o --stream --reasoning-effort medium
+```
+
+### Native OpenAI SDK Test Script
+```bash
+# Basic test with native SDK
+python tools/test_responses_openai_sdk.py --question "What is 2+2?" --model gpt-4o
+
+# Function calling with auto-execution
+python tools/test_responses_openai_sdk.py --question "What time is it in Tokyo?" --model gpt-4o --function-tools --auto-execute
+
+# Web search with streaming
+python tools/test_responses_openai_sdk.py --question "Latest AI news" --model gpt-4o --web-search --stream
+
+# Multimodal with reasoning
+python tools/test_responses_openai_sdk.py --question "Describe this image" --file-path ./image.png --reasoning-effort high --reasoning-summary detailed
+
+# Follow-up conversation
+python tools/test_responses_openai_sdk.py --question "Hi, I'm Bob" --follow-up "What's my name?" --use-previous
+```
+
+The native SDK script tests all Responses API features directly without LangChain abstraction.
 
 # Azure configuration
 

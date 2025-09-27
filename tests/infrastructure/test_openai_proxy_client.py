@@ -3,14 +3,14 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 
-from src.ygo74.fastapi_openai_rag.infrastructure.llm.openai_proxy_client import OpenAIProxyClient
+from src.ygo74.fastapi_openai_rag.infrastructure.llm.openai.openai_proxy_client import OpenAIClient
 from src.ygo74.fastapi_openai_rag.domain.models.llm import LLMProvider
 
 
 @pytest.fixture
 def openai_client():
     """Create OpenAI proxy client for testing."""
-    return OpenAIProxyClient(
+    return OpenAIClient(
         api_key="test-key",
         base_url="https://api.openai.com/v1",
         provider=LLMProvider.OPENAI
@@ -68,7 +68,7 @@ async def test_openai_proxy_client_list_models_http_error(openai_client):
 async def test_openai_proxy_client_close():
     """Test OpenAI proxy client close method."""
     # arrange
-    client = OpenAIProxyClient("test-key", "https://api.openai.com/v1", LLMProvider.OPENAI)
+    client = OpenAIClient("test-key", "https://api.openai.com/v1", LLMProvider.OPENAI)
     client._client = AsyncMock()
 
     # act
@@ -82,7 +82,7 @@ async def test_openai_proxy_client_close():
 async def test_openai_proxy_client_context_manager():
     """Test OpenAI proxy client async context manager."""
     # arrange
-    client = OpenAIProxyClient("test-key", "https://api.openai.com/v1", LLMProvider.OPENAI)
+    client = OpenAIClient("test-key", "https://api.openai.com/v1", LLMProvider.OPENAI)
     client._client = AsyncMock()
 
     # act
@@ -97,7 +97,7 @@ async def test_openai_proxy_client_context_manager():
 async def test_openai_proxy_client_close_without_client():
     """Test OpenAI proxy client close method when _client is None."""
     # arrange
-    client = OpenAIProxyClient("test-key", "https://api.openai.com/v1", LLMProvider.OPENAI)
+    client = OpenAIClient("test-key", "https://api.openai.com/v1", LLMProvider.OPENAI)
     client._client = None
 
     # act (should not raise exception)

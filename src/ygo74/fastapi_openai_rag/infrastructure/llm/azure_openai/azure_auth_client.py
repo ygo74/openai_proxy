@@ -4,8 +4,8 @@ import ssl
 import logging
 from typing import Optional, Union
 from datetime import datetime, timedelta
-from .http_client_factory import HttpClientFactory
-from .retry_handler import with_enterprise_retry
+from ..http_client_factory import HttpClientFactory
+from ..retry_handler import with_enterprise_retry
 
 logger = logging.getLogger(__name__)
 

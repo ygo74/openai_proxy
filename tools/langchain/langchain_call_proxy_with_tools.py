@@ -80,15 +80,28 @@ def main():
 
     print("First API call: Ask the model to use the function")
     ai_msg = llm_with_tools.invoke(messages)
+
+    print("messages so far:")
+    print(messages)
+
+    print("AI message received:")
+    print(ai_msg)
+
     # print(ai_msg.tool_calls)
     messages.append(ai_msg)
+
+    print("message with added AI response:")
+    print(messages)
 
     print("Handle tool calls")
     for tool_call in ai_msg.tool_calls:
         selected_tool = {"get_current_time": get_current_time}[tool_call["name"].lower()]
         tool_msg = selected_tool.invoke(tool_call)
+        print("Tool message:")
+        print(tool_msg)
         messages.append(tool_msg)
 
+    print("messages with tool response:")
     print(messages)
 
     print("Second API call: Give the final answer")

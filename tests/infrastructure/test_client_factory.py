@@ -86,7 +86,7 @@ class TestLLMClientFactory:
         )
 
         # act
-        with patch('src.ygo74.fastapi_openai_rag.infrastructure.llm.client_factory.AzureOpenAIProxyClient') as mock_client:
+        with patch('src.ygo74.fastapi_openai_rag.infrastructure.llm.client_factory.AzureOpenAIClient') as mock_client:
             client = LLMClientFactory.create_client(model, model_config)
 
         # assert
@@ -120,7 +120,7 @@ class TestLLMClientFactory:
 
 
         # act
-        with patch('src.ygo74.fastapi_openai_rag.infrastructure.llm.client_factory.OpenAIProxyClient') as mock_client:
+        with patch('src.ygo74.fastapi_openai_rag.infrastructure.llm.client_factory.OpenAIClient') as mock_client:
             client = LLMClientFactory.create_client(model, model_config)
 
         # assert
