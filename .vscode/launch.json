@@ -92,12 +92,12 @@
             "type": "python",
             "request": "attach",
             "connect": {
-              "host": "localhost",
-              "port": 5678
+                "host": "localhost",
+                "port": 5678
             },
             "justMyCode": false
-          },
-          {
+        },
+        {
             "name": "RAG Client CLI Debug",
             "type": "python",
             "request": "launch",
@@ -113,6 +113,23 @@
                 "LOG_LEVEL": "DEBUG"
             },
             "python": "${workspaceFolder}/venv/fastapi_client/Scripts/python.exe",
+            "justMyCode": false,
+            "stopOnEntry": false
+        },
+        {
+            "name": "Debug Chat Completions API Test (Stream)",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/tools/openai/openai_call_chat_completions.py",
+            "args": [
+                "--stream"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}",
+                "LOG_LEVEL": "DEBUG"
+            },
             "justMyCode": false,
             "stopOnEntry": false
         }

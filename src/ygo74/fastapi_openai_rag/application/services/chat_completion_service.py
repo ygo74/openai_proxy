@@ -26,6 +26,9 @@ from .config_service import config_service
 from ...domain.models.response import ResponsesCreatePayload
 from openai.types.responses.response import Response as OpenAIResponse
 from openai.types.responses.response_stream_event import ResponseStreamEvent
+from openai.types.chat.chat_completion import ChatCompletion as OpenAIChatCompletion
+from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+from openai.types.completion import Completion as OpenAICompletion
 import logging
 
 from ..services.model_service import ModelService
@@ -48,7 +51,7 @@ class ChatCompletionService:
         self._client_cache: Dict[str, LLMClientProtocol] = {}
         logger.debug("ChatCompletionService initialized")
 
-    async def create_chat_completion(self, request: ChatCompletionRequest, user: AuthenticatedUser) -> ChatCompletionResponse:
+    async def create_chat_completion(self, request: ChatCompletionRequest, user: AuthenticatedUser) -> OpenAIChatCompletion:
         """Create a chat completion.
 
         Args:
@@ -56,7 +59,7 @@ class ChatCompletionService:
             user (AuthenticatedUser): Authenticated user with group memberships
 
         Returns:
-            ChatCompletionResponse: Generated chat completion
+            OpenAIChatCompletion: Generated chat completion
 
         Raises:
             EntityNotFoundError: If model not found
@@ -93,18 +96,13 @@ class ChatCompletionService:
                 start_time=start_time
             )
 
-            # Update response with timing info
-            response.latency_ms = (time.time() - start_time) * 1000
-            response.timestamp = datetime.now(timezone.utc)
-
-            logger.info(f"Chat completion successful in {response.latency_ms:.2f}ms")
             return response
 
         except Exception as e:
             logger.error(f"Error in chat completion: {str(e)}")
             raise
 
-    async def create_completion(self, request: CompletionRequest, user: AuthenticatedUser) -> CompletionResponse:
+    async def create_completion(self, request: CompletionRequest, user: AuthenticatedUser) -> OpenAICompletion:
         """Create a text completion.
 
         Args:
@@ -149,24 +147,35 @@ class ChatCompletionService:
         ])
 
         start_time = time.time()
+        endpoint = "/v1/completions"
         try:
             if supports_completions or not supports_chat:
                 # Direct call (or no chat fallback available)
-                response = await client.completion(request_with_provider)
+                with self._token_tracking.track_request_in_progress(request.model):
+                    response = await client.completion(request_with_provider)
+
+                # Track token usage
+                self._token_tracking.track_completion(
+                    response=response,
+                    user=user,
+                    endpoint=endpoint,
+                    start_time=start_time
+                )
+
             else:
                 logger.info("Model lacks 'completions' capability; falling back to chat completion conversion")
                 response = await self._completion_via_chat_fallback(request_with_provider, client, model)
 
             latency_ms = (time.time() - start_time) * 1000
-            response.latency_ms = latency_ms
-            response.timestamp = datetime.now(timezone.utc)
+
             logger.info(f"Text completion successful in {latency_ms:.2f}ms (fallback={not supports_completions and supports_chat})")
             return response
+
         except Exception as e:
             logger.error(f"Error in text completion: {str(e)}")
             raise
 
-    async def create_chat_completion_stream(self, request: ChatCompletionRequest, user: AuthenticatedUser) -> AsyncGenerator[ChatCompletionStreamResponse, None]:
+    async def create_chat_completion_stream(self, request: ChatCompletionRequest, user: AuthenticatedUser) -> AsyncGenerator[ChatCompletionChunk, None]:
         """Create a streaming chat completion.
 
         Args:
@@ -174,7 +183,7 @@ class ChatCompletionService:
             user (AuthenticatedUser): Authenticated user with group memberships
 
         Yields:
-            ChatCompletionResponse: Streaming chunks of the response
+            ChatCompletionChunk: Streaming chunks of the response
 
         Raises:
             EntityNotFoundError: If model not found
@@ -198,16 +207,21 @@ class ChatCompletionService:
 
         # Start timing
         start_time = time.time()
+        endpoint = "/v1/ChatCompletion"
 
         try:
-            # Ne pas utiliser await ici car chat_completion_stream retourne déjà un générateur asynchrone
-            # et non une coroutine à attendre
-            async for chunk in client.chat_completion_stream(request_with_provider):
-                # Add timing information
-                chunk.latency_ms = (time.time() - start_time) * 1000
-                chunk.timestamp = datetime.now(timezone.utc)
+            with self._token_tracking.track_request_in_progress(request.model):
+                async for event in client.chat_completion_stream(request_with_provider):
+                    # Check if this event contains usage data and track it if so
+                    self._token_tracking.track_stream_completion(
+                        event=event,
+                        user=user,
+                        endpoint=endpoint,
+                        model=request.model,
+                        start_time=start_time
+                    )
 
-                yield chunk
+                    yield event
 
             logger.info(f"Streaming chat completion finished in {(time.time() - start_time) * 1000:.2f}ms")
 
@@ -403,7 +417,7 @@ class ChatCompletionService:
         request_dict['model'] = model.name
         return CompletionRequest(**request_dict)
 
-    async def _completion_via_chat_fallback(self, request: CompletionRequest, client: LLMClientProtocol, model: LlmModel) -> CompletionResponse:
+    async def _completion_via_chat_fallback(self, request: CompletionRequest, client: LLMClientProtocol, model: LlmModel) -> OpenAICompletion:
         """Execute a completion request via chat fallback based on model capabilities.
 
         Args:
@@ -445,7 +459,7 @@ class ChatCompletionService:
         chat_response = await client.chat_completion(chat_request)
         return self._convert_chat_to_completion_response(chat_response, model)
 
-    def _convert_chat_to_completion_response(self, chat_response: ChatCompletionResponse, model: LlmModel) -> CompletionResponse:
+    def _convert_chat_to_completion_response(self, chat_response: ChatCompletionResponse, model: LlmModel) -> OpenAICompletion:
         """Convert a ChatCompletionResponse to a CompletionResponse for fallback cases."""
         choices: List[CompletionChoice] = []
         for chat_choice in chat_response.choices:
@@ -471,18 +485,14 @@ class ChatCompletionService:
                 finish_reason=chat_choice.finish_reason
             ))
 
-        return CompletionResponse(
+        return OpenAICompletion(
             id=chat_response.id,
             object="text_completion",
             created=chat_response.created,
             model=chat_response.model,
             system_fingerprint=chat_response.system_fingerprint,
             choices=choices,
-            usage=chat_response.usage,
-            provider=chat_response.provider,
-            latency_ms=chat_response.latency_ms,
-            timestamp=chat_response.timestamp,
-            raw_response=chat_response.raw_response
+            usage=chat_response.usage
         )
 
     def _responses_payload_to_chat_request(self, payload: Dict[str, Any], force_stream: bool = False) -> ChatCompletionRequest:

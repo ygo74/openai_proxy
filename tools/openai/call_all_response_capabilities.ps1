@@ -59,8 +59,7 @@ if ($TestFunctionCalling -and $TestFollowUp) {
        --question "what time is it at paris" `
        --model $model `
        --function-tool `
-       --follow-up "dans combien de temps il est minuit?" `
-       --use-previous
+       --follow-up "dans combien de temps il est minuit?"
 }
 
 # Call function with follow-up using previous response id

@@ -18,6 +18,9 @@ from ..security.auth import auth_jwt_or_api_key
 from .models import map_model_list_to_response, ModelResponse
 from ..utils.override_stream_response import OverrideStreamResponse
 from ..utils.json_encoder import DateTimeEncoder
+from openai.types.chat.chat_completion import ChatCompletion as OpenAIChatCompletion
+from openai.types.completion import Completion as OpenAICompletion
+
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -37,7 +40,7 @@ def get_chat_completion_service(db: Session = Depends(get_db)) -> ChatCompletion
     uow = SQLUnitOfWork(session_factory)
     return ChatCompletionService(uow)
 
-@router.post("/completions", response_model=CompletionResponse)
+@router.post("/completions", response_model=OpenAICompletion)
 @endpoint_handler("create_completion")
 @track_token_usage()  # Track token usage automatically
 async def create_completion(
@@ -45,7 +48,7 @@ async def create_completion(
     completion_request: CompletionRequest,
     service: ChatCompletionService = Depends(get_chat_completion_service),
     user: AuthenticatedUser = Depends(auth_jwt_or_api_key)
-) -> CompletionResponse:
+) -> Any:  # Return type is either OpenAICompletion or OverrideStreamResponse
     """Create a text completion.
 
     Compatible with OpenAI's /v1/completions endpoint.
@@ -57,20 +60,18 @@ async def create_completion(
         user (AuthenticatedUser): Authenticated user with group memberships
 
     Returns:
-        CompletionResponse: Generated text completion
+        OpenAICompletion: Generated text completion or StreamingResponse
     """
     response = await service.create_completion(completion_request, user=user)
     return response
 
-@router.post("/chat/completions", response_model=ChatCompletionResponse)
-@endpoint_handler("create_chat_completion")
-@track_token_usage()  # Track token usage automatically
+@router.post("/chat/completions", response_model=OpenAIChatCompletion)
 async def create_chat_completion(
     request: Request,
     chat_completion_request: ChatCompletionRequest,
     service: ChatCompletionService = Depends(get_chat_completion_service),
     user: AuthenticatedUser = Depends(auth_jwt_or_api_key)
-) -> Any:  # Return type is either ChatCompletionResponse or OverrideStreamResponse
+) -> Any:  # Return type is either OpenAIChatCompletion or OverrideStreamResponse
     """Create a chat completion.
 
     Compatible with OpenAI's /v1/chat/completions endpoint.
@@ -82,7 +83,7 @@ async def create_chat_completion(
         user (AuthenticatedUser): Authenticated user with group memberships
 
     Returns:
-        ChatCompletionResponse: Generated chat completion or StreamingResponse
+        OpenAIChatCompletion: Generated chat completion or StreamingResponse
     """
     if chat_completion_request.stream:
         # Return streaming response

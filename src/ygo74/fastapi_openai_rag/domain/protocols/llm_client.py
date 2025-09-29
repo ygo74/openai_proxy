@@ -3,16 +3,17 @@ from typing import AsyncGenerator, Protocol, List, Dict, Any, Optional, Type
 from types import TracebackType
 
 from ..models.chat_completion import (
-    ChatCompletionRequest,
-    ChatCompletionResponse,
-    ChatCompletionStreamResponse,
+    ChatCompletionRequest
 )
 from ..models.completion import CompletionRequest, CompletionResponse
-from ..models.response import ResponsesCreatePayload  # NEW
+from ..models.response import ResponsesCreatePayload
 
 # OpenAI SDK response types
 from openai.types.responses.response import Response as OpenAIResponse
 from openai.types.responses.response_stream_event import ResponseStreamEvent
+from openai.types.chat.chat_completion import ChatCompletion as OpenAIChatCompletion
+from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+from openai.types.completion import Completion as OpenAICompletion
 
 class LLMClientProtocol(Protocol):
     """Protocol for LLM client implementations.
@@ -23,7 +24,7 @@ class LLMClientProtocol(Protocol):
     transformation logic to the client implementation.
     """
 
-    async def chat_completion(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
+    async def chat_completion(self, request: ChatCompletionRequest) -> OpenAIChatCompletion:
         """Generate chat completion from the LLM.
 
         Args:
@@ -34,7 +35,19 @@ class LLMClientProtocol(Protocol):
         """
         ...
 
-    async def completion(self, request: CompletionRequest) -> CompletionResponse:
+    async def chat_completion_stream(self, request: ChatCompletionRequest) -> AsyncGenerator[ChatCompletionChunk, None]:
+        """Stream chat completion via Azure OpenAI API with retry for connection establishment.
+
+        Args:
+            request (ChatCompletionRequest): Chat completion request
+
+        Yields:
+            ChatCompletionChunk: Streaming response chunks
+        """
+        yield  # type: ignore[misc]
+        raise StopAsyncIteration  # pragma: no cover
+
+    async def completion(self, request: CompletionRequest) -> OpenAICompletion:
         """Generate text completion from the LLM.
 
         Args:
@@ -44,6 +57,32 @@ class LLMClientProtocol(Protocol):
             CompletionResponse: Generated response with metadata
         """
         ...
+
+    async def completion_stream(self, request: CompletionRequest) -> AsyncGenerator[OpenAICompletion, None]:
+        """Stream text completion from the LLM.
+
+        Args:
+            request (CompletionRequest): Text completion request
+
+        Yields:
+            OpenAICompletion: Streaming response chunks
+        """
+        yield  # type: ignore[misc]
+        raise StopAsyncIteration  # pragma: no cover
+
+    # --- Responses API methods ---
+    async def responses(self, payload: ResponsesCreatePayload) -> OpenAIResponse:
+        """Execute a Responses API request returning an OpenAI SDK Response object.
+
+        Implementations may perform capability detection and internally fall back
+        to a chat-based emulation, but MUST return a proper `openai.types.responses.response.Response`.
+        """
+        ...
+
+    async def responses_stream(self, payload: ResponsesCreatePayload) -> AsyncGenerator[ResponseStreamEvent, None]:
+        """Stream Responses API events as OpenAI SDK `ResponseStreamEvent` objects."""
+        yield ResponseStreamEvent(type="response.completed")  # type: ignore[arg-type]
+        raise StopAsyncIteration  # pragma: no cover
 
     async def list_models(self) -> List[Dict[str, Any]]:
         """List available models from the LLM provider.
@@ -85,29 +124,3 @@ class LLMClientProtocol(Protocol):
         """Async context manager exit with automatic cleanup."""
         await self.close()
         return None
-
-    async def chat_completion_stream(self, request: ChatCompletionRequest) -> AsyncGenerator[ChatCompletionStreamResponse, None]:
-        """Stream chat completion via Azure OpenAI API with retry for connection establishment.
-
-        Args:
-            request (ChatCompletionRequest): Chat completion request
-
-        Yields:
-            ChatCompletionStreamResponse: Streaming response chunks
-        """
-        yield  # type: ignore[misc]
-        raise StopAsyncIteration  # pragma: no cover
-
-    # --- Responses API methods ---
-    async def responses(self, payload: ResponsesCreatePayload) -> OpenAIResponse:
-        """Execute a Responses API request returning an OpenAI SDK Response object.
-
-        Implementations may perform capability detection and internally fall back
-        to a chat-based emulation, but MUST return a proper `openai.types.responses.response.Response`.
-        """
-        ...
-
-    async def responses_stream(self, payload: ResponsesCreatePayload) -> AsyncGenerator[ResponseStreamEvent, None]:
-        """Stream Responses API events as OpenAI SDK `ResponseStreamEvent` objects."""
-        yield ResponseStreamEvent(type="response.completed")  # type: ignore[arg-type]
-        raise StopAsyncIteration  # pragma: no cover

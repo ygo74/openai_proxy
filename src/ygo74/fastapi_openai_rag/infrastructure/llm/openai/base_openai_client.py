@@ -21,6 +21,9 @@ from ....domain.models.response import ResponsesCreatePayload
 
 from openai.types.responses.response import Response as OpenAIResponse
 from openai.types.responses.response_stream_event import ResponseStreamEvent
+from openai.types.chat.chat_completion import ChatCompletion as OpenAIChatCompletion
+from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+from openai.types.completion import Completion as OpenAICompletion
 
 from ..http_client_factory import HttpClientFactory
 from ..retry_handler import with_enterprise_retry, LLMRetryHandler
@@ -94,14 +97,14 @@ class BaseOpenAIClient(LLMClientProtocol):
         logger.debug("Stream event variant map size=%d", len(self._event_variant_map))
 
     @with_enterprise_retry
-    async def completion(self, request: CompletionRequest) -> CompletionResponse:
+    async def completion(self, request: CompletionRequest) -> OpenAICompletion:
         """Direct completion via completions endpoint with automatic retry.
 
         Args:
             request (CompletionRequest): Text completion request
 
         Returns:
-            CompletionResponse: Generated response
+            OpenAICompletion: Generated response
         """
         start_time = time.time()
         url = self._build_url("completions", request.model)
@@ -121,10 +124,13 @@ class BaseOpenAIClient(LLMClientProtocol):
             )
             response.raise_for_status()
 
-            response_data = response.json()
-            latency_ms = (time.time() - start_time) * 1000
+            data = response.json()
+            try:
+                return OpenAICompletion.model_validate(data)  # type: ignore[attr-defined]
+            except AttributeError:
+                # Fallback if model_validate not available
+                return data
 
-            return self._parse_completion_response(response_data, latency_ms)
 
         except httpx.HTTPStatusError as e:
             error_details = self._parse_error(e)
@@ -137,84 +143,83 @@ class BaseOpenAIClient(LLMClientProtocol):
             logger.error(f"Unexpected error in text completion: {str(e)}")
             raise
 
-    async def _completion_via_chat(self, request: CompletionRequest) -> CompletionResponse:
-        """Convert completion request to chat completion for models that don't support completions.
+
+    @with_enterprise_retry
+    async def _establish_completion_stream_connection(self, request: CompletionRequest):
+        """Establish streaming connection for completions endpoint with retry.
 
         Args:
             request (CompletionRequest): Text completion request
 
         Returns:
-            CompletionResponse: Generated response converted from chat completion
+            httpx.AsyncClient.stream: HTTP streaming response
         """
-        messages: List[ChatMessage] = []
-        # Prompt normalization
-        if isinstance(request.prompt, str):
-            content: str = request.prompt
-        elif isinstance(request.prompt, list):  # type: ignore[unreachable]
-            content = "\n".join(str(p) for p in request.prompt)
-        else:
-            content = str(request.prompt)
-        messages.append(ChatMessage(role="user", content=content))  # type: ignore[arg-type]
+        url = self._build_url("completions", request.model)
+        headers = self._get_headers()
 
-        max_tokens: int = request.max_tokens if request.max_tokens is not None else 1000
-        if request.max_tokens is None:
-            logger.debug("No max_tokens specified, using default: %d", max_tokens)
+        payload = self._prepare_completion_payload(request)
+        payload["stream"] = True
 
-        chat_request = ChatCompletionRequest(
-            model=request.model,
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=request.temperature,
-            top_p=request.top_p,
-            n=request.n,
-            stream=request.stream,
-            stop=request.stop,
-            presence_penalty=request.presence_penalty,
-            frequency_penalty=request.frequency_penalty,
-            user=request.user,
-            seed=request.seed,
-            top_logprobs=None,  # ensure required param if present in model
+        logger.debug(f"Starting streaming text completion to {url}")
+        logger.debug(f"Stream request payload: {payload}")
+        logger.debug(f"Stream request headers: {headers}")
+
+        return self._client.stream(
+            "POST",
+            url=url,
+            headers=headers,
+            json=payload,
+            timeout=120.0
         )
-        # Make chat completion request
-        chat_response = await self.chat_completion(chat_request)
 
-        # Convert chat response back to completion response
-        return self._convert_chat_to_completion_response(chat_response)
-
-    def _convert_chat_to_completion_response(self, chat_response: ChatCompletionResponse) -> CompletionResponse:
-        """Convert chat completion response to completion response.
+    async def completion_stream(self, request: CompletionRequest) -> AsyncGenerator[OpenAICompletion, None]:
+        """Stream text completion via completions endpoint.
 
         Args:
-            chat_response: Chat completion response
+            request (CompletionRequest): Text completion request
 
-        Returns:
-            CompletionResponse: Converted completion response
+        Yields:
+            OpenAICompletion: Streaming response chunks
         """
-        # Add explicit typing for linter clarity
-        choices: List[CompletionChoice] = []
-        for chat_choice in chat_response.choices:  # type: ignore[attr-defined]
-            choice = CompletionChoice(
-                text=getattr(chat_choice.message, 'content', '') or "",
-                index=getattr(chat_choice, 'index', 0),
-                logprobs=None,
-                finish_reason=getattr(chat_choice, 'finish_reason', None)
-            )
-            choices.append(choice)
-        return CompletionResponse(
-            id=getattr(chat_response, 'id', str(uuid.uuid4())),
-            object="text_completion",
-            created=getattr(chat_response, 'created', int(time.time())),
-            model=getattr(chat_response, 'model', ''),
-            system_fingerprint=getattr(chat_response, 'system_fingerprint', None),
-            choices=choices,
-            usage=cast(TokenUsage, getattr(chat_response, 'usage', None)) if getattr(chat_response, 'usage', None) else None,  # type: ignore[arg-type]
-            latency_ms=cast(float, getattr(chat_response, 'latency_ms', None)) if getattr(chat_response, 'latency_ms', None) else None,  # type: ignore[arg-type]
-            timestamp=getattr(chat_response, 'timestamp', datetime.now(timezone.utc)),
-            raw_response=getattr(chat_response, 'raw_response', {})
-        )
+        try:
+            # Get streaming connection with retry
+            stream_ctx = await self._establish_completion_stream_connection(request)
+
+            # Process the stream without retry
+            async with stream_ctx as res:
+                res.raise_for_status()
+                async for line in res.aiter_lines():
+                    # Skip empty lines
+                    if not line.strip():
+                        continue
+
+                    # Strip "data: " prefix if present (for SSE format)
+                    line = line.strip()
+                    if line.startswith('data: '):
+                        line = line[6:]  # Remove 'data: ' prefix
+
+                    # Check for the [DONE] message that indicates end of stream
+                    if line == '[DONE]':
+                        break
+
+                    try:
+                        # Parse the JSON data into a dictionary
+                        chunk_data = json.loads(line)
+
+                        yield OpenAICompletion.model_validate(chunk_data)  # type: ignore[attr-defined]
+
+                    except json.JSONDecodeError:
+                        logger.warning(f"Failed to parse response chunk: {line}")
+                        continue
+
+
+        except httpx.HTTPStatusError as e:
+            error_details = self._parse_error(e)
+            logger.error(f"HTTP error in streaming completion: {error_details}")
+            raise httpx.HTTPError(f"API error: {error_details}")
 
     @with_enterprise_retry
-    async def chat_completion(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
+    async def chat_completion(self, request: ChatCompletionRequest) -> OpenAIChatCompletion:
         """Create chat completion via API with retry resilience.
 
         Args:
@@ -243,10 +248,13 @@ class BaseOpenAIClient(LLMClientProtocol):
             )
             response.raise_for_status()
 
-            response_data = response.json()
-            latency_ms = (time.time() - start_time) * 1000
+            data = response.json()
+            try:
+                return OpenAIChatCompletion.model_validate(data)  # type: ignore[attr-defined]
+            except AttributeError:
+                # Fallback if model_validate not available
+                return data
 
-            return self._parse_chat_response(response_data, latency_ms)
 
         except httpx.HTTPStatusError as e:
             error_details = self._parse_error(e)
@@ -287,14 +295,14 @@ class BaseOpenAIClient(LLMClientProtocol):
             timeout=120.0
         )
 
-    async def chat_completion_stream(self, request: ChatCompletionRequest) -> AsyncGenerator[ChatCompletionStreamResponse, None]:
+    async def chat_completion_stream(self, request: ChatCompletionRequest) -> AsyncGenerator[ChatCompletionChunk, None]:
         """Stream chat completion via API.
 
         Args:
             request (ChatCompletionRequest): Chat completion request
 
         Yields:
-            ChatCompletionStreamResponse: Streaming response chunks
+            ChatCompletionChunk: Streaming response chunks
         """
         try:
             # Get streaming connection with retry
@@ -321,9 +329,11 @@ class BaseOpenAIClient(LLMClientProtocol):
                     try:
                         # Parse the JSON data into a dictionary
                         chunk_data = json.loads(line)
+                        if chunk_data["object"] != "chat.completion.chunk":
+                            chunk_data["object"] = "chat.completion.chunk"
 
-                        # Convert to ChatCompletionStreamResponse
-                        stream_response = self._parse_stream_chunk(chunk_data)
+                        # Convert to ChatCompletionChunk
+                        stream_response = ChatCompletionChunk.model_validate(chunk_data)
 
                         # Yield the parsed response object
                         yield stream_response
@@ -507,10 +517,10 @@ class BaseOpenAIClient(LLMClientProtocol):
                             evt_raw['type'] = pending_event_type
                         pending_event_type = None
                         # Normalize
-                        evt_dict = self._prepare_stream_event(evt_raw)
+                        evt_dict = self._prepare_response_stream_event(evt_raw)
                         # Validate/Coerce once (version-tolerant)
                         try:
-                            evt_obj = self._build_stream_event(evt_dict)
+                            evt_obj = self._build_response_stream_event(evt_dict)
                             yield evt_obj
                         except Exception as e:  # noqa: BLE001
                             from pydantic import ValidationError
@@ -649,7 +659,7 @@ class BaseOpenAIClient(LLMClientProtocol):
             logger.debug("_build_event_variant_map: no variants discovered; using fallback model only")
         return mapping
 
-    def _build_stream_event(self, evt: Dict[str, Any]) -> ResponseStreamEvent:
+    def _build_response_stream_event(self, evt: Dict[str, Any]) -> ResponseStreamEvent:
         """Instantiate proper ResponseStreamEvent variant based on 'type' field.
 
         Args:
@@ -690,7 +700,7 @@ class BaseOpenAIClient(LLMClientProtocol):
             filtered['type'] = evt_type or 'unknown'
         return _ResponseStreamEventFallback(**filtered)  # type: ignore[return-value]
 
-    def _prepare_stream_event(self, evt: Dict[str, Any]) -> Dict[str, Any]:
+    def _prepare_response_stream_event(self, evt: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize and enrich raw event dict prior to model parsing.
 
         Args:
@@ -710,155 +720,6 @@ class BaseOpenAIClient(LLMClientProtocol):
         if evt_type == 'response.output_text.delta' and 'delta' not in evt:
             evt = {**evt, 'delta': ''}
         return evt
-
-    def _parse_stream_chunk(self, chunk_data: Dict[str, Any]) -> ChatCompletionStreamResponse:
-        """Parse streaming response chunk.
-
-        Args:
-            chunk_data (Dict[str, Any]): Raw chunk data
-
-        Returns:
-            ChatCompletionStreamResponse: Parsed streaming response chunk
-        """
-        # Extract choices data from the chunk
-        choices: List[ChatCompletionStreamChoice] = []
-        for choice_data in chunk_data.get("choices", []):
-            # Extract the delta content from the choice
-            delta = choice_data.get("delta", {})
-
-            # Log the actual content for debugging
-            logger.debug(f"Stream chunk delta content: {delta}")
-
-            # Assign a default value for role if None
-            role = delta.get("role") or "assistant"
-            if isinstance(role, str) and role not in {r.value for r in ChatMessageRole}:  # type: ignore[attr-defined]
-                role = ChatMessageRole.ASSISTANT
-
-            # Create a message object from the delta
-            message = ChatMessage(
-                role=role,  # type: ignore[arg-type]
-                content=delta.get("content", ""),
-                function_call=delta.get("function_call"),
-                tool_calls=delta.get("tool_calls")
-            )
-
-            choice = ChatCompletionStreamChoice(
-                index=choice_data.get("index", 0),
-                delta=message,
-                finish_reason=choice_data.get("finish_reason")
-            )
-            choices.append(choice)
-
-        # Create the response with all required fields
-        return ChatCompletionStreamResponse(
-            id=chunk_data.get("id", str(uuid.uuid4())),
-            object=chunk_data.get("object", "chat.completion.chunk"),
-            created=chunk_data.get("created", int(time.time())),
-            model=chunk_data.get("model", "unknown"),
-            system_fingerprint=chunk_data.get("system_fingerprint"),
-            choices=choices,
-            provider=self.provider,
-            raw_response=chunk_data,
-            latency_ms=None,  # Will be set later in the service
-            timestamp=datetime.now(timezone.utc)
-        )
-
-    def _parse_chat_response(self, response_data: Dict[str, Any], latency_ms: float) -> ChatCompletionResponse:
-        """Parse chat completion response.
-
-        Args:
-            response_data (Dict[str, Any]): Raw API response
-            latency_ms (float): Request latency
-
-        Returns:
-            ChatCompletionResponse: Domain model response
-        """
-        # Extract choices
-        choices: List[ChatCompletionChoice] = []
-        for choice_data in response_data.get("choices", []):
-            message_data = choice_data.get("message", {})
-            role_raw = message_data.get("role") or "assistant"
-            if isinstance(role_raw, str) and role_raw not in {r.value for r in ChatMessageRole}:  # type: ignore[attr-defined]
-                role_raw = ChatMessageRole.ASSISTANT
-
-            message = ChatMessage(
-                role=role_raw,  # type: ignore[arg-type]
-                content=message_data.get("content"),
-                function_call=message_data.get("function_call"),
-                tool_calls=message_data.get("tool_calls")
-            )
-
-            choice = ChatCompletionChoice(
-                index=choice_data.get("index", 0),
-                message=message,
-                finish_reason=choice_data.get("finish_reason")
-            )
-            choices.append(choice)
-
-        # Extract usage
-        usage_data = response_data.get("usage", {})
-        usage = TokenUsage(
-            prompt_tokens=usage_data.get("prompt_tokens", 0),
-            completion_tokens=usage_data.get("completion_tokens", 0),
-            total_tokens=usage_data.get("total_tokens", 0)
-        )
-
-        return ChatCompletionResponse(
-            id=response_data.get("id", str(uuid.uuid4())),
-            object=response_data.get("object", "chat.completion"),
-            created=response_data.get("created", int(time.time())),
-            model=response_data.get("model", ""),
-            system_fingerprint=response_data.get("system_fingerprint"),
-            choices=choices,
-            usage=usage,
-            provider=self.provider,
-            latency_ms=latency_ms,
-            timestamp=datetime.now(timezone.utc),
-            raw_response=response_data
-        )
-
-    def _parse_completion_response(self, response_data: Dict[str, Any], latency_ms: float) -> CompletionResponse:
-        """Parse text completion response.
-
-        Args:
-            response_data (Dict[str, Any]): Raw API response
-            latency_ms (float): Request latency
-
-        Returns:
-            CompletionResponse: Domain model response
-        """
-        # Extract choices
-        choices: List[CompletionChoice] = []
-        for choice_data in response_data.get("choices", []):
-            choice = CompletionChoice(
-                text=choice_data.get("text", ""),
-                index=choice_data.get("index", 0),
-                logprobs=choice_data.get("logprobs"),
-                finish_reason=choice_data.get("finish_reason")
-            )
-            choices.append(choice)
-
-        # Extract usage
-        usage_data = response_data.get("usage", {})
-        usage = TokenUsage(
-            prompt_tokens=usage_data.get("prompt_tokens", 0),
-            completion_tokens=usage_data.get("completion_tokens", 0),
-            total_tokens=usage_data.get("total_tokens", 0)
-        )
-
-        return CompletionResponse(
-            id=response_data.get("id", str(uuid.uuid4())),
-            object=response_data.get("object", "text_completion"),
-            created=response_data.get("created", int(time.time())),
-            model=response_data.get("model", ""),
-            system_fingerprint=response_data.get("system_fingerprint"),
-            choices=choices,
-            usage=usage,
-            provider=self.provider,
-            latency_ms=latency_ms,
-            timestamp=datetime.now(timezone.utc),
-            raw_response=response_data
-        )
 
     def _parse_error(self, error: httpx.HTTPStatusError) -> str:
         """Parse API error response.
