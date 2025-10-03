@@ -26,9 +26,17 @@ from .config_service import config_service
 from ...domain.models.response import ResponsesCreatePayload
 from openai.types.responses.response import Response as OpenAIResponse
 from openai.types.responses.response_stream_event import ResponseStreamEvent
-from openai.types.chat.chat_completion import ChatCompletion as OpenAIChatCompletion
+from openai.types.chat.chat_completion import (
+    ChatCompletion as OpenAIChatCompletion
+)
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from openai.types.completion import Completion as OpenAICompletion
+from openai.types.completion_choice import CompletionChoice as OpenAICompletionChoice
+from openai.types.completion_usage import (
+    CompletionUsage as OpenAICompletionUsage,
+    CompletionTokensDetails as OpenAICompletionTokensDetails,
+    PromptTokensDetails as OpenAIPromptTokensDetails
+)
 import logging
 
 from ..services.model_service import ModelService
@@ -50,57 +58,6 @@ class ChatCompletionService:
         self._token_tracking = TokenTrackingService(uow)
         self._client_cache: Dict[str, LLMClientProtocol] = {}
         logger.debug("ChatCompletionService initialized")
-
-    async def create_chat_completion(self, request: ChatCompletionRequest, user: AuthenticatedUser) -> OpenAIChatCompletion:
-        """Create a chat completion.
-
-        Args:
-            request (ChatCompletionRequest): Chat completion request
-            user (AuthenticatedUser): Authenticated user with group memberships
-
-        Returns:
-            OpenAIChatCompletion: Generated chat completion
-
-        Raises:
-            EntityNotFoundError: If model not found
-            ValidationError: If model not approved or validation fails
-            PermissionError: If user is not authorized to access the model
-            RuntimeError: If provider client not configured
-        """
-        logger.info(f"Creating chat completion with model {request.model}")
-
-        # Validate and get model, checking authorization
-        model = await self._get_and_validate_model(request.model, user)
-
-        # Get or create client for this model
-        client = self._get_or_create_client(model)
-
-        # Update request with provider info
-        request_with_provider = self._prepare_chat_request(request, model)
-
-        # Measure request time and execute
-        start_time = time.time()
-        endpoint = "/v1/chat/completions"
-
-        try:
-            # Use metrics tracking context manager if available
-            with self._token_tracking.track_request_in_progress(model.name):
-                # Make API request
-                response = await client.chat_completion(request_with_provider)
-
-            # Track token usage
-            self._token_tracking.track_completion(
-                response=response,
-                user=user,
-                endpoint=endpoint,
-                start_time=start_time
-            )
-
-            return response
-
-        except Exception as e:
-            logger.error(f"Error in chat completion: {str(e)}")
-            raise
 
     async def create_completion(self, request: CompletionRequest, user: AuthenticatedUser) -> OpenAICompletion:
         """Create a text completion.
@@ -173,6 +130,124 @@ class ChatCompletionService:
 
         except Exception as e:
             logger.error(f"Error in text completion: {str(e)}")
+            raise
+
+    async def create_completion_stream(self, request: CompletionRequest, user: AuthenticatedUser) -> AsyncGenerator[OpenAICompletion, None]:
+        """Create a streaming text completion.
+
+        Args:
+            request (CompletionRequest): Text completion request
+            user (AuthenticatedUser): Authenticated user with group memberships
+
+        Yields:
+            OpenAICompletionChoice: Streaming chunks of the response
+
+        Raises:
+            EntityNotFoundError: If model not found
+            ValidationError: If model not approved or validation fails
+            PermissionError: If user is not authorized to access the model
+            RuntimeError: If provider client not configured
+        """
+        logger.info(f"Creating streaming text completion with model {request.model}")
+
+        # Validate and get model, checking authorization
+        model = await self._get_and_validate_model(request.model, user)
+
+        # Get or create client for this model
+        client = self._get_or_create_client(model)
+
+        # Update request with provider info
+        request_with_provider = self._prepare_completion_request(request, model)
+
+        # Ensure we're requesting a stream
+        request_with_provider.stream = True
+
+        # Capability introspection
+        capabilities = model.capabilities or {}
+        def _as_bool(val: Any) -> bool:
+            return val is True or (isinstance(val, str) and val.lower() == "true")
+        supports_completions = any(_as_bool(capabilities.get(k)) for k in [
+            "completions", "completion", "text_completion"
+        ])
+        supports_chat = any(_as_bool(capabilities.get(k)) for k in [
+            "chat_completions", "chatCompletion", "chat", "chat_completion"
+        ])
+
+        if not supports_completions and supports_chat:
+            raise ValidationError("Model does not support streaming text completions")
+
+        start_time = time.time()
+        endpoint = "/v1/completions"
+
+        try:
+            with self._token_tracking.track_request_in_progress(request.model):
+                async for event in client.completion_stream(request_with_provider):
+                    # Check if this event contains usage data and track it if so
+                    self._token_tracking.track_stream_completion(
+                        event=event,
+                        user=user,
+                        endpoint=endpoint,
+                        model=request.model,
+                        start_time=start_time
+                    )
+
+                    yield event
+
+            logger.info(f"Streaming text completion finished in {(time.time() - start_time) * 1000:.2f}ms")
+
+        except Exception as e:
+            logger.error(f"Error in streaming text completion: {str(e)}")
+            raise
+
+    async def create_chat_completion(self, request: ChatCompletionRequest, user: AuthenticatedUser) -> OpenAIChatCompletion:
+        """Create a chat completion.
+
+        Args:
+            request (ChatCompletionRequest): Chat completion request
+            user (AuthenticatedUser): Authenticated user with group memberships
+
+        Returns:
+            OpenAIChatCompletion: Generated chat completion
+
+        Raises:
+            EntityNotFoundError: If model not found
+            ValidationError: If model not approved or validation fails
+            PermissionError: If user is not authorized to access the model
+            RuntimeError: If provider client not configured
+        """
+        logger.info(f"Creating chat completion with model {request.model}")
+
+        # Validate and get model, checking authorization
+        model = await self._get_and_validate_model(request.model, user)
+
+        # Get or create client for this model
+        client = self._get_or_create_client(model)
+
+        # Update request with provider info
+        request_with_provider = self._prepare_chat_request(request, model)
+
+        # Measure request time and execute
+        start_time = time.time()
+        endpoint = "/v1/chat/completions"
+
+        try:
+            # Use metrics tracking context manager if available
+            with self._token_tracking.track_request_in_progress(model.name):
+                # Make API request
+                response = await client.chat_completion(request_with_provider)
+
+            # Track token usage
+            self._token_tracking.track_completion(
+                response=response,
+                user=user,
+                endpoint=endpoint,
+                start_time=start_time
+            )
+
+            return response
+
+        except Exception as e:
+            logger.error(f"Error in chat completion: {str(e)}")
             raise
 
     async def create_chat_completion_stream(self, request: ChatCompletionRequest, user: AuthenticatedUser) -> AsyncGenerator[ChatCompletionChunk, None]:
@@ -453,36 +528,41 @@ class ChatCompletionService:
             presence_penalty=request.presence_penalty,
             frequency_penalty=request.frequency_penalty,
             user=request.user,
-            seed=request.seed
+            seed=request.seed,
+            logit_bias=request.logit_bias,
+            top_logprobs=request.logprobs if request.logprobs and request.logprobs > 0 else None
         )
 
         chat_response = await client.chat_completion(chat_request)
         return self._convert_chat_to_completion_response(chat_response, model)
 
-    def _convert_chat_to_completion_response(self, chat_response: ChatCompletionResponse, model: LlmModel) -> OpenAICompletion:
-        """Convert a ChatCompletionResponse to a CompletionResponse for fallback cases."""
-        choices: List[CompletionChoice] = []
+    def _convert_chat_to_completion_response(self, chat_response: OpenAIChatCompletion, model: LlmModel) -> OpenAICompletion:
+        """Convert a ChatCompletionResponse to a CompletionResponse for fallback cases.
+        Args:
+            chat_response (OpenAIChatCompletion): Chat completion response
+            model (LlmModel): Model entity (for metadata)
+
+        Returns:
+            OpenAICompletion: Converted completion response
+
+        """
+
+        # Convert ChatCompletionResponse to CompletionResponse
+        choices: List[OpenAICompletionChoice] = []
         for chat_choice in chat_response.choices:
             content = chat_choice.message.content
-            if isinstance(content, list):
-                flat_parts: List[str] = []
-                for p in content:
-                    if isinstance(p, dict):
-                        flat_parts.append(str(p.get("text") or p.get("content") or ""))
-                    else:
-                        try:
-                            d = p.model_dump()
-                            flat_parts.append(str(d.get("text") or ""))
-                        except Exception:
-                            pass
-                content_text = "".join(flat_parts)
-            else:
-                content_text = content or ""
-            choices.append(CompletionChoice(
+            content_text = content or ""
+
+            finish_reason:str = chat_choice.finish_reason or "stop"
+            # Only allow valid finish_reason values
+            if finish_reason not in ["stop", "length", "content_filter"]:
+                finish_reason = "stop"
+
+            choices.append(OpenAICompletionChoice(
                 text=content_text,
                 index=chat_choice.index,
                 logprobs=None,
-                finish_reason=chat_choice.finish_reason
+                finish_reason=finish_reason
             ))
 
         return OpenAICompletion(

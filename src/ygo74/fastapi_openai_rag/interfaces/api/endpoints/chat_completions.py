@@ -1,5 +1,5 @@
 """OpenAI-compatible chat completions endpoints."""
-from typing import List, Dict, Any, Union
+from typing import List, Dict, Any, Union, AsyncGenerator
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 import logging
@@ -41,8 +41,6 @@ def get_chat_completion_service(db: Session = Depends(get_db)) -> ChatCompletion
     return ChatCompletionService(uow)
 
 @router.post("/completions", response_model=OpenAICompletion)
-@endpoint_handler("create_completion")
-@track_token_usage()  # Track token usage automatically
 async def create_completion(
     request: Request,
     completion_request: CompletionRequest,
@@ -62,6 +60,32 @@ async def create_completion(
     Returns:
         OpenAICompletion: Generated text completion or StreamingResponse
     """
+    if completion_request.stream:
+        async def event_gen() -> AsyncGenerator[str, None]:
+            try:
+                # Stream processing is now handled directly by the service
+                async for evt in service.create_response_stream(completion_request, user):
+                    try:
+                        evt_dict = evt.model_dump()  # type: ignore[attr-defined]
+                    except Exception:
+                        evt_dict = dict(evt)  # type: ignore[arg-type]
+                    yield f"data: {json.dumps(evt_dict)}\r\n\r\n"
+                yield "data: [DONE]\r\n\r\n"
+            except Exception as e:  # noqa: BLE001
+                err_payload = {"error": {"message": str(e), "type": "responses_stream_error"}}
+                yield f"data: {json.dumps(err_payload)}\r\n\r\n"
+                yield "data: [DONE]\r\n\r\n"
+        return OverrideStreamResponse(
+            event_gen(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+                "Content-Type": "text/event-stream; charset=utf-8"
+            }
+        )
+
     response = await service.create_completion(completion_request, user=user)
     return response
 
