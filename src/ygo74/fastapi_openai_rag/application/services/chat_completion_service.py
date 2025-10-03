@@ -173,25 +173,39 @@ class ChatCompletionService:
             "chat_completions", "chatCompletion", "chat", "chat_completion"
         ])
 
-        if not supports_completions and supports_chat:
-            raise ValidationError("Model does not support streaming text completions")
-
         start_time = time.time()
         endpoint = "/v1/completions"
 
         try:
             with self._token_tracking.track_request_in_progress(request.model):
-                async for event in client.completion_stream(request_with_provider):
-                    # Check if this event contains usage data and track it if so
-                    self._token_tracking.track_stream_completion(
-                        event=event,
-                        user=user,
-                        endpoint=endpoint,
-                        model=request.model,
-                        start_time=start_time
-                    )
+                # Use fallback if needed
+                if supports_completions or not supports_chat:
+                    # Direct completion stream call
+                    async for event in client.completion_stream(request_with_provider):
+                        # Check if this event contains usage data and track it if so
+                        self._token_tracking.track_stream_completion(
+                            event=event,
+                            user=user,
+                            endpoint=endpoint,
+                            model=request.model,
+                            start_time=start_time
+                        )
 
-                    yield event
+                        yield event
+                else:
+                    # Fallback to chat completion stream
+                    logger.info("Model lacks 'completions' streaming capability; falling back to chat completion stream conversion")
+                    async for chat_event in self._completion_stream_via_chat_fallback(request_with_provider, client, model):
+                        # Track token usage for chat fallback
+                        self._token_tracking.track_stream_completion(
+                            event=chat_event,
+                            user=user,
+                            endpoint=endpoint,
+                            model=request.model,
+                            start_time=start_time
+                        )
+
+                        yield chat_event
 
             logger.info(f"Streaming text completion finished in {(time.time() - start_time) * 1000:.2f}ms")
 
@@ -654,3 +668,116 @@ class ChatCompletionService:
         """
         logger.debug(f"Getting models for user : {user.username}")
         return user.models
+
+    async def _completion_stream_via_chat_fallback(self, request: CompletionRequest, client: LLMClientProtocol, model: LlmModel) -> AsyncGenerator[OpenAICompletion, None]:
+        """Execute a streaming completion request via chat fallback based on model capabilities.
+
+        Args:
+            request (CompletionRequest): Original completion request (with provider model name applied)
+            client (LLMClientProtocol): LLM client
+            model (LlmModel): Model entity (for metadata)
+
+        Yields:
+            OpenAICompletion: Converted completion events from chat completion stream
+        """
+        # Build chat messages from request prompt
+        if isinstance(request.prompt, str):
+            content = request.prompt
+        elif isinstance(request.prompt, list):
+            content = "\n".join(str(p) for p in request.prompt)
+        else:
+            content = str(request.prompt)
+
+        chat_messages = [ChatMessage(role=ChatMessageRole.USER, content=content)]
+
+        # Choose max_tokens fallback
+        max_tokens = request.max_tokens if request.max_tokens is not None else 1000
+
+        chat_request = ChatCompletionRequest(
+            model=request.model,  # already replaced by provider name
+            messages=chat_messages,
+            max_tokens=max_tokens,
+            temperature=request.temperature,
+            top_p=request.top_p,
+            n=request.n,
+            stream=True,  # ensure streaming is enabled
+            stop=request.stop,
+            presence_penalty=request.presence_penalty,
+            frequency_penalty=request.frequency_penalty,
+            user=request.user,
+            seed=request.seed,
+            logit_bias=request.logit_bias,
+            top_logprobs=request.logprobs if request.logprobs and request.logprobs > 0 else None
+        )
+
+        # Generate a unique ID for this completion
+        completion_id = f"cmpl-fallback-{int(time.time())}"
+        created_timestamp = int(time.time())
+        cumulative_text: List[str] = [""] * request.n
+
+        # Process chat completion stream and convert each chunk to completion format
+        async for chat_chunk in client.chat_completion_stream(chat_request):
+            completion_chunk = self._convert_chat_chunk_to_completion_chunk(
+                chat_chunk,
+                completion_id,
+                created_timestamp,
+                model.name,
+                cumulative_text
+            )
+            yield completion_chunk
+
+    def _convert_chat_chunk_to_completion_chunk(self,
+                                               chat_chunk: ChatCompletionChunk,
+                                               completion_id: str,
+                                               created_timestamp: int,
+                                               model_name: str,
+                                               cumulative_text: List[str]) -> OpenAICompletion:
+        """Convert a ChatCompletionChunk to a CompletionResponse for stream fallback.
+
+        Args:
+            chat_chunk (ChatCompletionChunk): Chat completion chunk
+            completion_id (str): Consistent ID for the completion
+            created_timestamp (int): Consistent creation timestamp
+            model_name (str): Model name for the response
+            cumulative_text (List[str]): List to track cumulative text for each choice
+
+        Returns:
+            OpenAICompletion: Converted completion chunk
+        """
+        choices: List[OpenAICompletionChoice] = []
+
+        # Process each choice in the chat chunk
+        for choice in chat_chunk.choices:
+            index = choice.index
+            delta_content = choice.delta.content or ""
+
+            # Update cumulative text for this choice
+            if index < len(cumulative_text):
+                cumulative_text[index] += delta_content
+
+            # Create completion choice
+            finish_reason = choice.finish_reason
+            if not finish_reason:
+                finish_reason = "content_filter"
+            elif finish_reason and finish_reason not in ["stop", "length", "content_filter"]:
+                finish_reason = "stop"
+
+            choices.append(OpenAICompletionChoice(
+                text=delta_content,  # For streaming, we only send the delta text
+                index=index,
+                logprobs=None,
+                finish_reason=finish_reason
+            ))
+
+        # track usage
+        usage = chat_chunk.usage
+
+        # Create completion response
+        return OpenAICompletion(
+            id=completion_id,
+            object="text_completion",
+            created=created_timestamp,
+            model=model_name,
+            choices=choices,
+            usage=usage
+        )

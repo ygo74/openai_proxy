@@ -64,7 +64,7 @@ async def create_completion(
         async def event_gen() -> AsyncGenerator[str, None]:
             try:
                 # Stream processing is now handled directly by the service
-                async for evt in service.create_response_stream(completion_request, user):
+                async for evt in service.create_completion_stream(completion_request, user):
                     try:
                         evt_dict = evt.model_dump()  # type: ignore[attr-defined]
                     except Exception:
