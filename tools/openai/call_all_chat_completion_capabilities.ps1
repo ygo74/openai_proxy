@@ -20,31 +20,30 @@ if ($TestStreaming) {
         --stream
 }
 
+# Question on images
+if ($TestFileUpload) {
+    python .\tools\openai\openai_call_chat_completions.py `
+       --question "describe this file" `
+       --model $model `
+       --image-path "C:\Users\Administrator\Pictures\226px-Jenkins_logo.svg.png"
+}
+
+
 # Question on images with streaming
 if ($TestFileUpload -and $TestStreaming) {
     python .\tools\openai\openai_call_chat_completions.py `
        --question "describe this file" `
        --model $model `
-       --file-path "C:\Users\Administrator\Pictures\226px-Jenkins_logo.svg.png" `
+       --image-path "C:\Users\Administrator\Pictures\226px-Jenkins_logo.svg.png" `
        --stream
 }
 
-# Question on images with streaming
-if ($TestFileUpload -and $TestStreaming) {
-    python .\tools\openai\openai_call_chat_completions.py `
-       --question "describe this file" `
-       --model $model `
-       --file-path "C:\Users\Administrator\Pictures\226px-Jenkins_logo.svg.png"
-}
-
-
-# Question with previous response id
+# Question with previous response
 if ($TestFollowUp) {
     python .\tools\openai\openai_call_chat_completions.py `
       --question "peux tu traduire en français: The following example demonstrates how to use the fictitious MCP server to query information about the Azure REST API. This allows the model to retrieve and reason over repository content in real time." `
       --model $model `
-      --follow-up "et en espagnol" `
-      --use-previous
+      --follow-up "et en espagnol"
 }
 
 # Call function

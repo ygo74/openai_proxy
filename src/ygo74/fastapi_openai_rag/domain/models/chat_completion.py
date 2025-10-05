@@ -149,7 +149,8 @@ class ChatCompletionRequest(BaseModel):
         Returns:
             dict: Modified input data with stream_options set.
         """
-        values["stream_options"] = ChatCompletionStreamOptionsParam(include_usage=True)
+        if "stream" in values and values["stream"]:
+            values["stream_options"] = ChatCompletionStreamOptionsParam(include_usage=True)
         return values
 
 

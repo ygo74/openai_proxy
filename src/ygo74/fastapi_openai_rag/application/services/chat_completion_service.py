@@ -1,26 +1,22 @@
 """Chat completion service for handling OpenAI-compatible requests."""
 import time
-from typing import Dict, Any, Optional, List, AsyncGenerator
-from datetime import datetime, timezone
+from typing import Dict, Any, List, AsyncGenerator
 
 from ...domain.models.autenticated_user import AuthenticatedUser
 from ...domain.models.chat_completion import (
-    ChatCompletionRequest, ChatCompletionResponse, ChatCompletionChoice,
-    ChatMessage, ChatMessageRole, ChatCompletionStreamResponse,
-    MessageContentText, MessageContentImageURL, MessageContentPart
+    ChatCompletionRequest,
+    ChatMessage, ChatMessageRole
 )
 from ...domain.models.completion import (
-    CompletionRequest, CompletionResponse, CompletionChoice
+    CompletionRequest
 )
-from ...domain.models.llm import LLMProvider, TokenUsage
-from ...domain.models.llm_model import LlmModel, LlmModelStatus
+from ...domain.models.llm_model import LlmModel
 from ...domain.unit_of_work import UnitOfWork
 from ...domain.repositories.model_repository import IModelRepository
 from ...domain.exceptions.entity_not_found_exception import EntityNotFoundError
 from ...domain.exceptions.validation_error import ValidationError
 from ...domain.protocols.llm_client import LLMClientProtocol
 from ...infrastructure.db.repositories.model_repository import SQLModelRepository
-from ...infrastructure.db.repositories.group_repository import SQLGroupRepository
 from ...infrastructure.llm.client_factory import LLMClientFactory
 from .config_service import config_service
 from ...domain.models.response import ResponsesCreatePayload
@@ -32,11 +28,6 @@ from openai.types.chat.chat_completion import (
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from openai.types.completion import Completion as OpenAICompletion
 from openai.types.completion_choice import CompletionChoice as OpenAICompletionChoice
-from openai.types.completion_usage import (
-    CompletionUsage as OpenAICompletionUsage,
-    CompletionTokensDetails as OpenAICompletionTokensDetails,
-    PromptTokensDetails as OpenAIPromptTokensDetails
-)
 import logging
 
 from ..services.model_service import ModelService
@@ -520,7 +511,7 @@ class ChatCompletionService:
         # Build chat messages from prompt
         if isinstance(request.prompt, str):
             content = request.prompt
-        elif isinstance(request.prompt, list):
+        elif isinstance(request.prompt, list): # type: ignore
             content = "\n".join(str(p) for p in request.prompt)
         else:
             content = str(request.prompt)
@@ -589,74 +580,6 @@ class ChatCompletionService:
             usage=chat_response.usage
         )
 
-    def _responses_payload_to_chat_request(self, payload: Dict[str, Any], force_stream: bool = False) -> ChatCompletionRequest:
-        """Deprecated: chat fallback now handled by client. Retained for backward compatibility (unused)."""
-        input_items = payload.get("input") or []
-        instructions = payload.get("instructions")
-        parts: List[MessageContentPart] = []
-        for item in input_items:
-            if not isinstance(item, dict):
-                continue
-            itype = item.get("type")
-            if itype == "input_text":
-                parts.append(MessageContentText(type="text", text=item.get("text", "")))
-            elif itype == "input_image":
-                url = item.get("image_url") or item.get("url") or item.get("source")
-                if url:
-                    parts.append(MessageContentImageURL(type="image_url", image_url={"url": url}))
-        messages: List[ChatMessage] = []
-        if instructions:
-            messages.append(ChatMessage(role=ChatMessageRole.SYSTEM, content=instructions))
-        if len(parts) == 1:
-            messages.append(ChatMessage(role=ChatMessageRole.USER, content=parts[0].model_dump()))
-        else:
-            messages.append(ChatMessage(role=ChatMessageRole.USER, content=parts))
-        return ChatCompletionRequest(
-            model=payload.get("model"),
-            messages=messages,
-            max_tokens=payload.get("max_output_tokens") or payload.get("max_tokens"),
-            temperature=payload.get("temperature"),
-            stream=force_stream or bool(payload.get("stream")),
-            top_logprobs=None
-        )
-
-    def _chat_response_to_responses(self, chat_resp: ChatCompletionResponse) -> Dict[str, Any]:
-        """Deprecated: conversion handled by client layer now. Kept for legacy compatibility."""
-        def _flatten(choice: ChatCompletionChoice) -> str:
-            content = choice.message.content
-            if isinstance(content, list):
-                # Extract text fields from parts
-                texts: List[str] = []
-                for p in content:
-                    if isinstance(p, dict):
-                        texts.append(str(p.get("text") or p.get("content") or ""))
-                    else:
-                        try:
-                            d = p.model_dump()
-                            texts.append(str(d.get("text") or ""))
-                        except Exception:
-                            texts.append("")
-                return "".join(texts)
-            return content or ""
-        text = "".join([_flatten(c) for c in chat_resp.choices])
-        return {
-            "id": chat_resp.id,
-            "object": "response",
-            "model": chat_resp.model,
-            "created": chat_resp.created,
-            "output": [
-                {
-                    "id": f"{chat_resp.id}-msg0",
-                    "type": "message",
-                    "role": "assistant",
-                    "content": [
-                        {"type": "output_text", "text": text}
-                    ]
-                }
-            ],
-            "usage": chat_resp.usage.model_dump(),
-        }
-
     def get_models_for_user(self, user: AuthenticatedUser) -> List[LlmModel]:
         """Get models accessible to user based on group membership.
 
@@ -683,7 +606,7 @@ class ChatCompletionService:
         # Build chat messages from request prompt
         if isinstance(request.prompt, str):
             content = request.prompt
-        elif isinstance(request.prompt, list):
+        elif isinstance(request.prompt, list):  # type: ignore
             content = "\n".join(str(p) for p in request.prompt)
         else:
             content = str(request.prompt)
@@ -713,7 +636,8 @@ class ChatCompletionService:
         # Generate a unique ID for this completion
         completion_id = f"cmpl-fallback-{int(time.time())}"
         created_timestamp = int(time.time())
-        cumulative_text: List[str] = [""] * request.n
+        n_choices: int = request.n if request.n is not None else 1
+        cumulative_text: List[str] = [""] * n_choices
 
         # Process chat completion stream and convert each chunk to completion format
         async for chat_chunk in client.chat_completion_stream(chat_request):
