@@ -10,3 +10,5 @@ config.json
 *langchain_call_azure_openai*
 *call_azure_openai*
 unique/**
+
+backends/tempo/tempo_data/**

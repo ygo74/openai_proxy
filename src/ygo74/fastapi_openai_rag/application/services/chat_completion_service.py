@@ -178,7 +178,7 @@ class ChatCompletionService:
                             response=event,
                             user=user,
                             endpoint=endpoint,
-                            model=request.model,
+                            model=model.name,
                             start_time=start_time
                         )
 
@@ -192,7 +192,7 @@ class ChatCompletionService:
                             response=chat_event,
                             user=user,
                             endpoint=endpoint,
-                            model=request.model,
+                            model=model.name,
                             start_time=start_time
                         )
 
@@ -246,6 +246,7 @@ class ChatCompletionService:
                 response=response,
                 user=user,
                 endpoint=endpoint,
+                model=model.name,
                 start_time=start_time
             )
 
@@ -297,7 +298,7 @@ class ChatCompletionService:
                         chunk=chunk,
                         user=user,
                         endpoint=endpoint,
-                        model=request.model,
+                        model=model.name,
                         start_time=start_time
                     )
 
@@ -339,6 +340,7 @@ class ChatCompletionService:
                 response=response,
                 user=user,
                 endpoint=endpoint,
+                model=model.name,
                 start_time=start_time
             )
 
@@ -380,7 +382,7 @@ class ChatCompletionService:
                         event=event,
                         user=user,
                         endpoint=endpoint,
-                        model=model_name,
+                        model=model.name,
                         start_time=start_time
                     )
 
