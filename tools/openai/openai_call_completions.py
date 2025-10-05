@@ -29,6 +29,7 @@ from openai import OpenAI
 from openai.types.completion import Completion, CompletionChoice
 from openai.types.completion_choice import CompletionChoice
 from openai.types.completion_usage import CompletionUsage
+from openai._streaming import Stream
 
 # Configure logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -42,12 +43,12 @@ logger = logging.getLogger("completions_api_openai_test")
 
 # ---------------- Utility Functions ---------------- #
 
-def _handle_stream(stream: Any, args: argparse.Namespace) -> None:
+def _handle_stream(stream: Stream[Completion], args: argparse.Namespace) -> Optional[Completion]:
     """Handle streaming completion chunks consistently."""
-    full_content = ""
     choice_texts = [""] * args.n  # Initialize array for each choice's text
-
+    response: Optional[Completion] = None
     for chunk in stream:
+        response = chunk  # Keep updating to the latest chunk
         if args.verbose:
             logger.debug(f"Stream chunk: {chunk}")
 
@@ -57,7 +58,7 @@ def _handle_stream(stream: Any, args: argparse.Namespace) -> None:
             if choice.text:
                 if index < len(choice_texts):
                     choice_texts[index] += choice.text
-                    print(f"[{index}] {choice.text}", end="|", flush=True)
+                    print(f"{choice.text}", end="|", flush=True)
 
     print()  # Ensure we end with a newline
 
@@ -67,6 +68,7 @@ def _handle_stream(stream: Any, args: argparse.Namespace) -> None:
             print(f"\n=== Final text for choice {i} ===")
             print(text)
 
+    return response
 
 def read_prompt_file(file_path: str) -> List[str]:
     """Read prompts from a file, one prompt per line."""
@@ -77,9 +79,9 @@ def read_prompt_file(file_path: str) -> List[str]:
         return [line.strip() for line in file if line.strip()]
 
 
-def print_usage_info(completion: Completion) -> None:
+def print_usage_info(completion: Optional[Completion]) -> None:
     """Print token usage information."""
-    if hasattr(completion, 'usage') and completion.usage:
+    if completion and hasattr(completion, 'usage') and completion.usage:
         usage = completion.usage
         logger.info(f"Token usage - Prompt: {usage.prompt_tokens}, "
                    f"Completion: {usage.completion_tokens}, "
@@ -125,15 +127,17 @@ def test_basic_completion(client: OpenAI, args: argparse.Namespace) -> Optional[
         if args.stream:
             # Handle streaming
             logger.info("Starting streaming request...")
-            stream = client.completions.create(**kwargs)
+            stream: Stream[Completion] = client.completions.create(**kwargs)  # type: ignore
             print(f"\n=== Completion (Streaming) ===")
-            _handle_stream(stream, args)
-            return None
+            streamed_completion: Optional[Completion] = _handle_stream(stream, args)  # type: ignore
+            print_usage_info(streamed_completion)
+            return streamed_completion
         else:
             # Handle non-streaming
             logger.info("Starting non-streaming request...")
-            completion = client.completions.create(**kwargs)
+            completion: Optional[Completion] = client.completions.create(**kwargs)  # type: ignore
             print(f"\n=== Completion (Non-Streaming) ===")
+
 
             # Print each choice with its index
             for i, choice in enumerate(completion.choices):

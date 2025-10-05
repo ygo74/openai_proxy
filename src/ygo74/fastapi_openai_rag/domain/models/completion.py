@@ -1,8 +1,7 @@
 """Domain models for OpenAI Completion API."""
 from datetime import datetime
 from typing import Dict, Any, Optional, List, Union
-from enum import Enum
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from .llm import TokenUsage, LLMProvider
 
 from openai.types.chat.chat_completion_stream_options_param import ChatCompletionStreamOptionsParam
@@ -47,6 +46,20 @@ class CompletionRequest(BaseModel):
     temperature: Optional[float] = Field(1.0, ge=0, le=2)
     top_p: Optional[float] = Field(1.0, ge=0, le=1)
     user: Optional[str] = None
+
+    @model_validator(mode="before")
+    def _validate_stream_options(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        """Always request usage information to monitor the number of tokens.
+
+        Args:
+            values (dict): Raw input data.
+
+        Returns:
+            dict: Modified input data with stream_options set.
+        """
+        values["stream_options"] = ChatCompletionStreamOptionsParam(include_usage=True)
+        return values
+
 
 class CompletionChoice(BaseModel):
     """A single completion choice.

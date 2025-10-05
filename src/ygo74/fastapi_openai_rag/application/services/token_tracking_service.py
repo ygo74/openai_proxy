@@ -266,6 +266,81 @@ class TokenTrackingService:
             logger.error(f"Error tracking stream token usage: {str(e)}", exc_info=True)
             return False
 
+    def track_chat_completion_chunk(self,
+                                   chunk: Any,
+                                   user: AuthenticatedUser,
+                                   endpoint: str,
+                                   model: str,
+                                   start_time: Optional[float] = None) -> bool:
+        """Track token usage from a chat completion stream chunk.
+
+        Specifically handles chunks of type ChatCompletionChunk, which have
+        a different structure than response stream events.
+
+        Args:
+            chunk: ChatCompletionChunk that may contain usage information
+            user: Authenticated user
+            endpoint: API endpoint path
+            model: Model name
+            start_time: Optional start time of request (for duration calculation)
+
+        Returns:
+            bool: True if token usage was successfully tracked, False otherwise
+        """
+        try:
+            # Check if this is the final chunk with usage information
+            # In chat completion chunks, usage is typically included in the final chunk
+            if not hasattr(chunk, "usage") or not chunk.usage:
+                return False
+
+            # Extract usage data
+            usage = chunk.usage
+
+            # Calculate duration if start time was provided
+            duration = 0.0
+            if start_time is not None:
+                duration = time.time() - start_time
+
+            # Generate request ID
+            request_id = str(uuid.uuid4())
+
+            # Get token counts from ChatCompletionChunk usage
+            prompt_tokens = getattr(usage, "prompt_tokens", 0)
+            completion_tokens = getattr(usage, "completion_tokens", 0)
+            total_tokens = getattr(usage, "total_tokens", prompt_tokens + completion_tokens)
+
+            # Record token usage in database
+            user_id = getattr(user, "username", "anonymous")
+            if user_id is None:
+                user_id = "anonymous"
+
+            # Record in database
+            self._token_service.record_token_usage(
+                user_id=user_id,
+                model=model,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                endpoint=endpoint,
+                request_id=request_id
+            )
+
+            # Record metrics if available
+            if self._metrics_service:
+                self._metrics_service.record_llm_request(
+                    model=model,
+                    tokens_in=prompt_tokens,
+                    tokens_out=completion_tokens,
+                    duration=duration,
+                    success=True
+                )
+
+            logger.info(f"Recorded chat completion chunk token usage for user {user_id}: {total_tokens} tokens on {endpoint}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error tracking chat completion chunk token usage: {str(e)}", exc_info=True)
+            return False
+
     @contextmanager
     def track_request_in_progress(self, model: str):
         """Context manager for tracking in-progress requests.

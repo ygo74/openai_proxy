@@ -2,7 +2,8 @@
 from datetime import datetime
 from typing import Dict, Any, Optional, List, Union, Literal
 from enum import Enum
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+from openai.types.chat.chat_completion_stream_options_param import ChatCompletionStreamOptionsParam
 from .llm import TokenUsage, LLMProvider
 
 class ChatMessageRole(str, Enum):
@@ -123,6 +124,7 @@ class ChatCompletionRequest(BaseModel):
     top_p: Optional[float] = Field(None, ge=0, le=1)
     n: Optional[int] = Field(1, ge=1, le=128)
     stream: Optional[bool] = False
+    stream_options: Optional[ChatCompletionStreamOptionsParam] = None
     stop: Optional[Union[str, List[str]]] = None
     presence_penalty: Optional[float] = Field(None, ge=-2.0, le=2.0)
     frequency_penalty: Optional[float] = Field(None, ge=-2.0, le=2.0)
@@ -136,6 +138,19 @@ class ChatCompletionRequest(BaseModel):
     seed: Optional[int] = None
     logprobs: Optional[bool] = None
     top_logprobs: Optional[int] = Field(None, ge=0, le=5)
+
+    @model_validator(mode="before")
+    def _validate_stream_options(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        """Always request usage information to monitor the number of tokens.
+
+        Args:
+            values (dict): Raw input data.
+
+        Returns:
+            dict: Modified input data with stream_options set.
+        """
+        values["stream_options"] = ChatCompletionStreamOptionsParam(include_usage=True)
+        return values
 
 
 class ChatCompletionChoice(BaseModel):

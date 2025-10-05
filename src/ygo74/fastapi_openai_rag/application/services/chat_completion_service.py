@@ -183,8 +183,8 @@ class ChatCompletionService:
                     # Direct completion stream call
                     async for event in client.completion_stream(request_with_provider):
                         # Check if this event contains usage data and track it if so
-                        self._token_tracking.track_stream_completion(
-                            event=event,
+                        self._token_tracking.track_completion(
+                            response=event,
                             user=user,
                             endpoint=endpoint,
                             model=request.model,
@@ -197,8 +197,8 @@ class ChatCompletionService:
                     logger.info("Model lacks 'completions' streaming capability; falling back to chat completion stream conversion")
                     async for chat_event in self._completion_stream_via_chat_fallback(request_with_provider, client, model):
                         # Track token usage for chat fallback
-                        self._token_tracking.track_stream_completion(
-                            event=chat_event,
+                        self._token_tracking.track_completion(
+                            response=chat_event,
                             user=user,
                             endpoint=endpoint,
                             model=request.model,
@@ -296,21 +296,21 @@ class ChatCompletionService:
 
         # Start timing
         start_time = time.time()
-        endpoint = "/v1/ChatCompletion"
+        endpoint = "/v1/chat/completions"
 
         try:
             with self._token_tracking.track_request_in_progress(request.model):
-                async for event in client.chat_completion_stream(request_with_provider):
-                    # Check if this event contains usage data and track it if so
-                    self._token_tracking.track_stream_completion(
-                        event=event,
+                async for chunk in client.chat_completion_stream(request_with_provider):
+                    # Track token usage with the specialized method for chat completion chunks
+                    self._token_tracking.track_chat_completion_chunk(
+                        chunk=chunk,
                         user=user,
                         endpoint=endpoint,
                         model=request.model,
                         start_time=start_time
                     )
 
-                    yield event
+                    yield chunk
 
             logger.info(f"Streaming chat completion finished in {(time.time() - start_time) * 1000:.2f}ms")
 
@@ -717,6 +717,7 @@ class ChatCompletionService:
 
         # Process chat completion stream and convert each chunk to completion format
         async for chat_chunk in client.chat_completion_stream(chat_request):
+
             completion_chunk = self._convert_chat_chunk_to_completion_chunk(
                 chat_chunk,
                 completion_id,
