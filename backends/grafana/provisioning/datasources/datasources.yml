@@ -30,6 +30,12 @@ datasources:
         tags: [{ key: 'service.name', value: 'service' }, { key: 'job' }]
       serviceMap:
         datasourceUid: prometheus
+      nodeGraph:
+        enabled: true
+      search:
+        hide: false
+      lokiSearch:
+        datasourceUid: loki
     isDefault: false
     editable: true
 
