@@ -2,6 +2,7 @@
 import json
 import time
 import uuid
+import asyncio
 from typing import Dict, Any, Optional, AsyncGenerator, List, Union
 from datetime import datetime, timezone
 
@@ -57,7 +58,7 @@ class UniqueProxyClient(LLMClientProtocol):
         # Initialize the Unique SDK
         self._initialize_sdk()
 
-        logger.debug(f"UniqueProxyClient initialized for {provider}, company ID: {company_id}")
+        logger.debug(f"UniqueProxyClient initialized for {self.provider}, company ID: {company_id}")
 
     def _initialize_sdk(self):
         """Initialize the Unique SDK with the provided configuration."""
@@ -122,88 +123,87 @@ class UniqueProxyClient(LLMClientProtocol):
             raise
 
     async def chat_completion_stream(self, request: ChatCompletionRequest) -> AsyncGenerator[ChatCompletionStreamResponse, None]:
-        """Stream chat completion via Unique API.
+        """Stream chat completion via Unique API - simulated streaming since Unique doesn't support native streaming.
 
         Args:
             request (ChatCompletionRequest): Chat completion request
 
         Yields:
-            ChatCompletionStreamResponse: Streaming response chunks
+            ChatCompletionStreamResponse: Simulated streaming response chunks
         """
         start_time = time.time()
-
-        # Convert domain model request to Unique SDK format
-        unique_messages = self._convert_messages_for_unique(request.messages)
-        model = request.model
-
-        # Prepare options object with temperature and other parameters
-        options = {}
-        if request.temperature is not None:
-            options["temperature"] = request.temperature
-
-        # Add other parameters if they're specified
-        for param_name in ["top_p", "max_tokens", "frequency_penalty", "presence_penalty"]:
-            param_value = getattr(request, param_name, None)
-            if param_value is not None:
-                options[param_name] = param_value
-
-        logger.debug(f"Making Unique streaming chat completion request for model: {model}")
-
-        # Generate a unique chat ID for this request
-        chat_id = str(uuid.uuid4())
-        user_message_id = str(uuid.uuid4())
-        assistant_message_id = str(uuid.uuid4())
+        logger.debug(f"Starting simulated streaming for Unique model: {request.model}")
 
         try:
-            # Use the stream completion method from the SDK
-            stream_response = Integrated.chat_stream_completion(
-                company_id=self.company_id,
-                user_id=self.user_id,
-                chatId=chat_id,
-                userMessageId=user_message_id,
-                assistantMessageId=assistant_message_id,
-                model=model,
-                messages=unique_messages,
-                timeout=int(request.timeout * 1000) if request.timeout else 30000,  # Convert seconds to ms with default
-                options=options
-            )
+            # Get the complete chat completion response first
+            complete_response = await self.chat_completion(request)
 
-            # Process the stream
+            # Extract content from the response (usually from the first choice)
+            if not complete_response.choices or not complete_response.choices[0].message.content:
+                logger.warning("No content found in Unique response to stream")
+                return
+
+            full_content = complete_response.choices[0].message.content
+            response_id = complete_response.id
+            model = complete_response.model
+
+            # Generate a unique ID if none in response
+            if not response_id:
+                response_id = str(uuid.uuid4())
+
+            # Create chunks by character - could be adjusted to split by sentences/tokens
+            # Different chunk sizes for better streaming simulation
+            content_length = len(full_content)
+
+            # Calculate a reasonable chunk size based on content length
+            # Shorter content = smaller chunks for smoother appearance
+            if content_length < 100:
+                chunk_size = 4  # Very small chunks for short content
+            elif content_length < 500:
+                chunk_size = 10  # Small chunks for medium content
+            else:
+                chunk_size = 20  # Larger chunks for long content
+
+            # Ensure at least 5 chunks for smooth appearance
+            chunk_size = min(chunk_size, max(1, content_length // 5))
+
+            logger.debug(f"Simulating stream with content length {content_length} using chunk size {chunk_size}")
+
             content_so_far = ""
-            response_id = str(uuid.uuid4())
+            position = 0
 
-            # The structure of the stream response may vary based on Unique's API
-            # We need to adapt this based on actual response format
-            for chunk in stream_response:
-                # Track elapsed time for each chunk
-                current_time = time.time()
-                latency_ms = (current_time - start_time) * 1000
+            # Stream chunks with a small delay to simulate real-time generation
+            while position < content_length:
+                # Calculate end position for this chunk (don't exceed content length)
+                end_pos = min(position + chunk_size, content_length)
 
-                # Parse the chunk and update the content
-                if hasattr(chunk, 'content'):
-                    new_content = chunk.content
-                    delta_content = new_content[len(content_so_far):]
-                    content_so_far = new_content
-                else:
-                    # Fallback if the chunk doesn't have the expected structure
-                    delta_content = chunk.get('delta', {}).get('content', '')
-                    content_so_far += delta_content
+                # Extract chunk content
+                delta_content = full_content[position:end_pos]
+                content_so_far += delta_content
+                position = end_pos
 
-                # Create a stream response chunk
+                # Calculate finish reason - only set on last chunk
+                finish_reason = "stop" if position == content_length else None
+
+                # Calculate latency
+                current_latency_ms = (time.time() - start_time) * 1000
+
+                # Create and yield stream chunk
                 stream_chunk = self._create_stream_chunk(
                     response_id,
                     model,
                     delta_content,
-                    chunk.get('finish_reason'),
-                    latency_ms
+                    finish_reason,
+                    current_latency_ms
                 )
 
                 yield stream_chunk
 
-            logger.info(f"Streaming chat completion finished in {(time.time() - start_time) * 1000:.2f}ms")
+
+            logger.info(f"Simulated streaming finished in {(time.time() - start_time) * 1000:.2f}ms")
 
         except Exception as e:
-            logger.error(f"Error in Unique streaming chat completion: {str(e)}")
+            logger.error(f"Error in simulated streaming for Unique: {str(e)}")
             raise
 
     @with_enterprise_retry
@@ -291,6 +291,7 @@ class UniqueProxyClient(LLMClientProtocol):
         else:
             response_dict = response_data
 
+        print(response_dict)
         # Extract and format choices
         choices = []
         response_choices = response_dict.get('choices', [])
@@ -316,15 +317,12 @@ class UniqueProxyClient(LLMClientProtocol):
 
             choices.append(choice)
 
-        # Estimate token usage if not provided
-        # Unique API may not provide token usage, so we estimate
-        content_tokens = sum(len(choice.message.content.split()) * 1.3 for choice in choices)
-
-        # Create usage object
+        # Extract token usage from response if available
+        usage_data = response_dict.get('usage', {})
         usage = TokenUsage(
-            prompt_tokens=0,  # Not provided by Unique
-            completion_tokens=int(content_tokens),
-            total_tokens=int(content_tokens)
+            prompt_tokens=usage_data.get('promptTokens', 0),  # Utilisation de promptTokens de l'API Unique
+            completion_tokens=usage_data.get('completionTokens', 0),  # Utilisation de completionTokens de l'API Unique
+            total_tokens=usage_data.get('totalTokens', 0)  # Utilisation de totalTokens de l'API Unique
         )
 
         # Create and return the response

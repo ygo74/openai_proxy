@@ -23,32 +23,37 @@ def setup_logging() -> None:
     # Resolve numeric level (fallback INFO)
     numeric_level: int = getattr(logging, log_level, logging.INFO)
 
-    # Create resource info
-    resource = Resource.create({
-        ResourceAttributes.SERVICE_NAME: "fastapi-openai-rag",
-        ResourceAttributes.SERVICE_VERSION: "0.1.0",
-    })
+    handlers = [logging.StreamHandler(sys.stdout)]
 
-    # Create logger provider with resource
-    provider = LoggerProvider(resource=resource)
+    otlp_log_enabled = os.getenv("OTEL_LOGGING_ENABLED", "false").lower() == "true"
+    if otlp_log_enabled:
+        # Create resource info
+        resource = Resource.create({
+            ResourceAttributes.SERVICE_NAME: "fastapi-openai-rag",
+            ResourceAttributes.SERVICE_VERSION: "0.1.0",
+        })
 
-    # Add console exporter for local development
-    otlp_endpoint = os.getenv("OTLP_LOGS_ENDPOINT", "http://localhost:4318/v1/logs")
-    otlp_processor = BatchLogRecordProcessor(OTLPLogExporter(endpoint=otlp_endpoint))
-    provider.add_log_record_processor(otlp_processor)
+        # Create logger provider with resource
+        provider = LoggerProvider(resource=resource)
 
-    # Sets the global default logger provider
-    set_logger_provider(provider)
+        # Add console exporter for local development
+        otlp_endpoint = os.getenv("OTLP_LOGS_ENDPOINT", "http://localhost:4318/v1/logs")
+        otlp_processor = BatchLogRecordProcessor(OTLPLogExporter(endpoint=otlp_endpoint))
+        provider.add_log_record_processor(otlp_processor)
+
+        # Sets the global default logger provider
+        set_logger_provider(provider)
+        handler = LoggingHandler(level=numeric_level, logger_provider=provider)
+        handlers.append(handler)
+
 
     root_logger = logging.getLogger()
     if not root_logger.handlers:
-        # First-time basic configuration
-        handler = LoggingHandler(level=logging.INFO, logger_provider=provider)
 
         logging.basicConfig(
             level=numeric_level,
             format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-            handlers=[logging.StreamHandler(sys.stdout), handler],
+            handlers=handlers,
         )
     else:
         # Update existing handlers' levels

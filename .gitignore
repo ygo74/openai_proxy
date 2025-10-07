@@ -12,3 +12,4 @@ config.json
 unique/**
 
 backends/tempo/tempo_data/**
+containers/**
