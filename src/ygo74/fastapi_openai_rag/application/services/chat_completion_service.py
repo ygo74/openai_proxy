@@ -28,6 +28,8 @@ from openai.types.chat.chat_completion import (
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from openai.types.completion import Completion as OpenAICompletion
 from openai.types.completion_choice import CompletionChoice as OpenAICompletionChoice
+from ...domain.models.embedding import EmbeddingCreatePayload, CreateEmbeddingResponse
+# from openai.types.create_embedding_response import CreateEmbeddingResponse
 import logging
 
 from ..services.model_service import ModelService
@@ -391,6 +393,55 @@ class ChatCompletionService:
 
         except Exception as e:
             logger.error(f"Error in responses stream: {str(e)}", exc_info=True)
+            raise
+
+    async def create_embedding(self, payload: EmbeddingCreatePayload, user: AuthenticatedUser) -> CreateEmbeddingResponse:
+        """Create embeddings for the given input.
+
+        Args:
+            payload (EmbeddingCreatePayload): Embedding creation request
+            user (AuthenticatedUser): Authenticated user
+
+        Returns:
+            CreateEmbeddingResponse: OpenAI SDK typed response object
+
+        Raises:
+            EntityNotFoundError: If model not found
+            ValidationError: If model not approved or validation fails
+            PermissionError: If user is not authorized to access the model
+            RuntimeError: If provider client not configured
+        """
+        logger.info(f"Creating embeddings with model {payload.model}")
+
+        # Validate and get model, checking authorization
+        model = await self._get_and_validate_model(payload.model, user)
+
+        # Get or create client for this model
+        client = self._get_or_create_client(model)
+
+        # Measure request time and execute
+        start_time = time.time()
+        endpoint = "/v1/embeddings"
+
+        try:
+            # Use metrics tracking context manager if available
+            with self._token_tracking.track_request_in_progress(model.name):
+                # Make API request using the SDK-compatible payload
+                response = await client.embedding(payload)
+
+            # Track token usage
+            self._token_tracking.track_completion(
+                response=response,
+                user=user,
+                endpoint=endpoint,
+                model=model.name,
+                start_time=start_time
+            )
+
+            return response
+
+        except Exception as e:
+            logger.error(f"Error in embedding creation: {str(e)}", exc_info=True)
             raise
 
     async def _get_and_validate_model(self, model_name: str, user: AuthenticatedUser) -> LlmModel:

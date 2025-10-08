@@ -15,6 +15,8 @@ from openai.types.responses.response import Response as OpenAIResponse
 from openai.types.responses.response_stream_event import ResponseStreamEvent
 from openai.types.responses.response_completed_event import ResponseCompletedEvent
 from openai.types.completion_usage import CompletionUsage
+# from openai.types.create_embedding_response import CreateEmbeddingResponse
+from ...domain.models.embedding import CreateEmbeddingResponse
 
 from ...domain.unit_of_work import UnitOfWork
 from ...domain.models.autenticated_user import AuthenticatedUser
@@ -29,7 +31,8 @@ SupportedResponseType = Union[
     ChatCompletionChunk,
     Completion,
     OpenAIResponse,
-    ResponseStreamEvent
+    ResponseStreamEvent,
+    CreateEmbeddingResponse
 ]
 
 class TokenTrackingService:
@@ -140,6 +143,25 @@ class TokenTrackingService:
 
         return self._extract_usage_from_openai_response(event.response)
 
+    def _extract_usage_from_embedding_response(self, response: CreateEmbeddingResponse) -> Optional[Dict[str, int]]:
+        """Extract token usage from CreateEmbeddingResponse.
+
+        Args:
+            response: CreateEmbeddingResponse object
+
+        Returns:
+            Dictionary with prompt_tokens, completion_tokens (0), and total_tokens
+        """
+        if not response.usage:
+            return None
+
+        usage = response.usage
+        return {
+            "prompt_tokens": usage.prompt_tokens,
+            "completion_tokens": 0,  # Embeddings don't have completion tokens
+            "total_tokens": usage.total_tokens
+        }
+
     def extract_token_usage(self, response: SupportedResponseType) -> Optional[Dict[str, int]]:
         """Extract token usage information from a typed response object.
 
@@ -162,6 +184,8 @@ class TokenTrackingService:
                 return self._extract_usage_from_openai_response(response)
             elif isinstance(response, ResponseCompletedEvent):
                 return self._extract_usage_from_stream_event(response)
+            elif isinstance(response, CreateEmbeddingResponse):
+                return self._extract_usage_from_embedding_response(response)
             else:
                 # Fallback to generic extraction for unknown types
                 logger.warning(f"Unsupported response type for token extraction: {type(response)}")
@@ -232,7 +256,7 @@ class TokenTrackingService:
             Model name from response or fallback
         """
         try:
-            if isinstance(response, (ChatCompletion, ChatCompletionChunk, Completion, OpenAIResponse)):
+            if isinstance(response, (ChatCompletion, ChatCompletionChunk, Completion, OpenAIResponse, CreateEmbeddingResponse)):
                 return response.model
             elif isinstance(response, ResponseStreamEvent):
                 if hasattr(response, 'response') and response.response:

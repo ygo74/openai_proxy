@@ -7,6 +7,8 @@ from ..models.chat_completion import (
 )
 from ..models.completion import CompletionRequest, CompletionResponse
 from ..models.response import ResponsesCreatePayload
+from ..models.embedding import EmbeddingCreatePayload, CreateEmbeddingResponse
+# from openai.types.create_embedding_response import CreateEmbeddingResponse
 
 # OpenAI SDK response types
 from openai.types.responses.response import Response as OpenAIResponse
@@ -124,3 +126,17 @@ class LLMClientProtocol(Protocol):
         """Async context manager exit with automatic cleanup."""
         await self.close()
         return None
+
+    async def embedding(self, request: EmbeddingCreatePayload) -> CreateEmbeddingResponse:
+        """Create embeddings for the given input.
+
+        Args:
+            request (EmbeddingCreatePayload): Embedding creation request
+
+        Returns:
+            CreateEmbeddingResponse: Embedding response
+
+        Raises:
+            Exception: If the request fails
+        """
+        ...

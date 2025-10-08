@@ -18,12 +18,15 @@ from ....domain.models.completion import (
 from ....domain.models.llm import LLMProvider, TokenUsage
 from ....domain.protocols.llm_client import LLMClientProtocol
 from ....domain.models.response import ResponsesCreatePayload
+from ....domain.models.embedding import EmbeddingCreatePayload, CreateEmbeddingResponse
 
 from openai.types.responses.response import Response as OpenAIResponse
 from openai.types.responses.response_stream_event import ResponseStreamEvent
 from openai.types.chat.chat_completion import ChatCompletion as OpenAIChatCompletion
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from openai.types.completion import Completion as OpenAICompletion
+# from openai.types.create_embedding_response import CreateEmbeddingResponse
+
 
 from ..http_client_factory import HttpClientFactory
 from ..retry_handler import with_enterprise_retry, LLMRetryHandler
@@ -557,6 +560,66 @@ class BaseOpenAIClient(LLMClientProtocol):
         except Exception as e:
             logger.error(f"Unexpected error in responses stream: {e}")
             raise
+
+    @with_enterprise_retry
+    async def embedding(self, request: EmbeddingCreatePayload) -> CreateEmbeddingResponse:
+        """Create embeddings using OpenAI-compatible API with automatic retry.
+
+        Args:
+            request (EmbeddingCreatePayload): Embedding request
+
+        Returns:
+            CreateEmbeddingResponse: Embedding response from OpenAI SDK
+
+        Raises:
+            httpx.HTTPError: If API request fails after all retries
+        """
+        url = self._build_embeddings_url()
+        headers = self._get_headers()
+
+        # Convert to OpenAI SDK parameters
+        payload = request.to_openai_kwargs()
+
+        logger.debug(f"Making embedding request to {url}")
+        logger.debug(f"Embedding request payload: {payload}")
+
+        try:
+            response = await self._client.post(
+                url=url,
+                headers=headers,
+                json=payload,
+                timeout=120.0
+            )
+            response.raise_for_status()
+
+            data = response.json()
+            logger.debug(f"Embedding request successful: {len(data.get('data', []))} embeddings created")
+
+            try:
+                return CreateEmbeddingResponse.model_validate(data)  # type: ignore[attr-defined]
+            except AttributeError:
+                # Fallback if model_validate not available
+                return data
+
+        except httpx.HTTPStatusError as e:
+            error_details = self._parse_error(e)
+            logger.error(f"HTTP error in embedding creation: {error_details}")
+            raise httpx.HTTPError(f"API error: {error_details}")
+        except httpx.HTTPError as e:
+            logger.error(f"HTTP error in embedding creation: {str(e)}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error in embedding creation: {str(e)}")
+            raise
+
+    def _build_embeddings_url(self) -> str:
+        """Build URL for embeddings endpoint.
+
+        Returns:
+            str: Embeddings API URL
+        """
+        # Default implementation for standard OpenAI
+        return f"{self.base_url}/embeddings"
 
     def _build_event_variant_map(self) -> Dict[str, Any]:
         """Build mapping from event type literal to concrete variant model.

@@ -85,6 +85,16 @@ class AzureOpenAIClient(BaseOpenAIClient):
         """
         return f"{self.base_url}/openai/v1/responses"
 
+    def _build_embeddings_url(self) -> str:
+        """Build URL for embeddings endpoint.
+
+        Returns:
+            str: Embeddings API URL
+        """
+        # Default implementation for standard OpenAI
+        return f"{self.base_url}/openai/v1/embeddings"
+
+
     def _prepare_completion_payload(self, request: CompletionRequest) -> Dict[str, Any]:
         """Prepare text completion payload for Azure API.
 

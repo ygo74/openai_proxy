@@ -1,0 +1,3 @@
+First line to test multiple embeddings from AI Gateway
+Second line to test multiple embeddings from AI Gateway
+Third line to test multiple embeddings from AI Gateway
