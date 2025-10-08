@@ -168,7 +168,7 @@ def get_user_tokens(
     else:
         return api_client.get_user_token_usage_details(user_id=user_id, days=days)
 
-def login(cmd: CLICommand, username: str, password: str) -> Dict[str, Any]:
+def login(cmd: CLICommand, username: Optional[str]=None, password: Optional[str]=None) -> Dict[str, Any]:
     """Login with username and password."""
     # Get auth context from CLI context
     auth_ctx = get_auth_ctx(cmd)
