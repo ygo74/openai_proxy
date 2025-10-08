@@ -1,7 +1,7 @@
 """Main API router module."""
 import os
 from fastapi import APIRouter
-from .endpoints import models, groups, chat_completions, users, debug_auth, health, metrics, responses
+from .endpoints import models, groups, chat_completions, users, debug_auth, health, metrics, responses, embeddings
 
 # Create main API router
 api_router = APIRouter(prefix="/v1")
@@ -10,6 +10,9 @@ api_router = APIRouter(prefix="/v1")
 api_router.include_router(chat_completions.router, tags=["openai-compatible"])
 # Include the responses router (OpenAI-compatible)
 api_router.include_router(responses.router, tags=["openai-compatible"])
+
+# Include the embedding router
+api_router.include_router(embeddings.router, prefix="", tags=["openai-compatible"])
 
 # Health endpoints (no auth required)
 api_router.include_router(health.router, tags=["health"])

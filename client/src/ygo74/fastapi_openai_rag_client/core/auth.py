@@ -10,12 +10,18 @@ from datetime import datetime, timedelta
 import keyring
 
 import requests
-from requests_kerberos import HTTPKerberosAuth, OPTIONAL
+try:
+    from requests_kerberos import HTTPKerberosAuth, OPTIONAL
+    HAS_KERBEROS = True
+except ImportError:
+    HAS_KERBEROS = False
+
 import urllib3
 
 session = requests.Session()
 session.verify = False
-session.auth = HTTPKerberosAuth(mutual_authentication=OPTIONAL)
+if HAS_KERBEROS:
+    session.auth = HTTPKerberosAuth(mutual_authentication=OPTIONAL)
 
 
 
@@ -100,7 +106,7 @@ class AuthContext:
         except Exception:
             return None
 
-    def login_interactive(self, username: str, password: str) -> bool:
+    def login_interactive(self, username: Optional[str], password: Optional[str]) -> bool:
         """Authenticate with username and password using OAuth2.
 
         Args:
@@ -115,18 +121,25 @@ class AuthContext:
         client_id = self.config["client_id"]
         client_secret = self.config["client_secret"]
 
-        # data = {
-        #     "grant_type": "password",
-        #     "client_id": client_id,
-        #     "username": username,
-        #     "password": password
-        # }
+        if not username and not password:
+            if not HAS_KERBEROS:
+                logger.error("Kerberos authentication is not available. Please install requests-kerberos.")
+                return False
 
-        data = {
-            "grant_type": "client_credentials",
-            "client_id": client_id,
-            "client_secret": client_secret
-        }
+            data = {
+                "grant_type": "client_credentials",
+                "client_id": client_id,
+                "client_secret": client_secret
+            }
+        else:
+
+            data = {
+                "grant_type": "password",
+                "client_id": client_id,
+                "username": username,
+                "password": password
+            }
+
 
 
         # Add client secret if configured
