@@ -9,6 +9,15 @@ from pathlib import Path
 from datetime import datetime, timedelta
 import keyring
 
+import requests
+from requests_kerberos import HTTPKerberosAuth, OPTIONAL
+import urllib3
+
+session = requests.Session()
+session.verify = False
+session.auth = HTTPKerberosAuth(mutual_authentication=OPTIONAL)
+
+
 
 logger = logging.getLogger(__name__)
 
@@ -106,19 +115,26 @@ class AuthContext:
         client_id = self.config["client_id"]
         client_secret = self.config["client_secret"]
 
+        # data = {
+        #     "grant_type": "password",
+        #     "client_id": client_id,
+        #     "username": username,
+        #     "password": password
+        # }
+
         data = {
-            "grant_type": "password",
+            "grant_type": "client_credentials",
             "client_id": client_id,
-            "username": username,
-            "password": password
+            "client_secret": client_secret
         }
+
 
         # Add client secret if configured
         if client_secret:
             data["client_secret"] = client_secret
 
         try:
-            response = requests.post(token_url, data=data)
+            response = session.post(token_url, data=data)
             response.raise_for_status()
 
             token_data = response.json()
@@ -180,7 +196,7 @@ class AuthContext:
             data["client_secret"] = client_secret
 
         try:
-            response = requests.post(token_url, data=data)
+            response = session.post(token_url, data=data)
             response.raise_for_status()
 
             token_data = response.json()

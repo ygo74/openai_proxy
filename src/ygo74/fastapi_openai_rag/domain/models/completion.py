@@ -1,9 +1,10 @@
 """Domain models for OpenAI Completion API."""
 from datetime import datetime
 from typing import Dict, Any, Optional, List, Union
-from enum import Enum
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from .llm import TokenUsage, LLMProvider
+
+from openai.types.chat.chat_completion_stream_options_param import ChatCompletionStreamOptionsParam
 
 class CompletionRequest(BaseModel):
     """Text completion request model.
@@ -29,21 +30,38 @@ class CompletionRequest(BaseModel):
     """
     model: str
     prompt: Union[str, List[str]] = ""
-    suffix: Optional[str] = None
+    best_of: Optional[int] = Field(None, ge=1, le=20)
+    echo: Optional[bool] = False
+    frequency_penalty: Optional[float] = Field(0.0, ge=-2.0, le=2.0)
+    logit_bias: Optional[Dict[str, float]] = None
+    logprobs: Optional[int] = Field(None, ge=0, le=5)
     max_tokens: Optional[int] = Field(1000, ge=1)
+    n: Optional[int] = Field(1, ge=1, le=128)
+    presence_penalty: Optional[float] = Field(0.0, ge=-2.0, le=2.0)
+    seed: Optional[int] = None
+    stop: Optional[Union[str, List[str]]] = None
+    stream: Optional[bool] = False
+    stream_options: Optional[ChatCompletionStreamOptionsParam] = None
+    suffix: Optional[str] = None
     temperature: Optional[float] = Field(1.0, ge=0, le=2)
     top_p: Optional[float] = Field(1.0, ge=0, le=1)
-    n: Optional[int] = Field(1, ge=1, le=128)
-    stream: Optional[bool] = False
-    logprobs: Optional[int] = Field(None, ge=0, le=5)
-    echo: Optional[bool] = False
-    stop: Optional[Union[str, List[str]]] = None
-    presence_penalty: Optional[float] = Field(0.0, ge=-2.0, le=2.0)
-    frequency_penalty: Optional[float] = Field(0.0, ge=-2.0, le=2.0)
-    best_of: Optional[int] = Field(None, ge=1, le=20)
-    logit_bias: Optional[Dict[str, float]] = None
     user: Optional[str] = None
-    seed: Optional[int] = None
+
+    @model_validator(mode="before")
+    def _validate_stream_options(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        """Always request usage information to monitor the number of tokens.
+
+        Args:
+            values (dict): Raw input data.
+
+        Returns:
+            dict: Modified input data with stream_options set.
+        """
+        if "stream" in values and values["stream"]:
+            values["stream_options"] = ChatCompletionStreamOptionsParam(include_usage=True)
+
+        return values
+
 
 class CompletionChoice(BaseModel):
     """A single completion choice.

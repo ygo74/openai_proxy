@@ -1,5 +1,6 @@
 """OpenTelemetry observability service for the FastAPI application."""
 import logging
+import os
 from typing import Optional
 from opentelemetry import trace, metrics
 from opentelemetry.sdk.resources import Resource
@@ -12,6 +13,13 @@ from opentelemetry.instrumentation.logging import LoggingInstrumentor
 from opentelemetry.instrumentation.requests import RequestsInstrumentor
 from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 from fastapi import FastAPI
+
+# OpenTelemetry Logs imports
+from opentelemetry._logs import set_logger_provider
+from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+from opentelemetry.sdk._logs.export import BatchLogRecordProcessor, ConsoleLogExporter
+from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
+from opentelemetry.semconv.resource import ResourceAttributes
 
 try:
     from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
@@ -28,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 
 class TelemetryService:
-    """Service for managing OpenTelemetry instrumentation."""
+    """Service for managing OpenTelemetry instrumentation including logs, traces, and metrics."""
 
     def __init__(self, settings: ObservabilitySettings):
         """Initialize telemetry service with configuration.
@@ -39,10 +47,11 @@ class TelemetryService:
         self.settings = settings
         self.tracer_provider: Optional[TracerProvider] = None
         self.meter_provider: Optional[MeterProvider] = None
+        self.logger_provider: Optional[LoggerProvider] = None
         self._initialized = False
 
     def initialize(self) -> None:
-        """Initialize OpenTelemetry components."""
+        """Initialize OpenTelemetry components including logs, traces, and metrics."""
         # Add detailed logging for debugging
         logger.info(f"ObservabilitySettings.enabled = {self.settings.enabled}")
         logger.info(f"ObservabilitySettings.service_name = {self.settings.service_name}")
@@ -51,7 +60,7 @@ class TelemetryService:
         logger.info(f"ObservabilitySettings.metrics_enabled = {self.settings.metrics_enabled}")
 
         if not self.settings.enabled:
-            logger.warning("Observability is disabled - check OBSERVABILITY_ENABLED environment variable")
+            logger.info("Observability is disabled - telemetry will not be initialized")
             return
 
         if self._initialized:
@@ -60,11 +69,12 @@ class TelemetryService:
 
         logger.info(f"Initializing OpenTelemetry for service: {self.settings.service_name}")
 
-        # Create resource
-        resource = Resource.create({
-            "service.name": self.settings.service_name,
-            "service.version": self.settings.service_version,
-        })
+        # Create common resource
+        resource = self._create_resource()
+
+        # Initialize logs first (as it affects logging for other components)
+        if self.settings.logging_enabled:
+            self._setup_logging(resource)
 
         # Initialize tracing
         if self.settings.tracing_enabled:
@@ -74,15 +84,128 @@ class TelemetryService:
         if self.settings.metrics_enabled:
             self._setup_metrics(resource)
 
-        # Initialize logging instrumentation
-        if self.settings.logging_enabled:
-            self._setup_logging()
-
         # Instrument common libraries
         self._instrument_libraries()
 
         self._initialized = True
         logger.info("OpenTelemetry initialization completed")
+
+    def _create_resource(self) -> Resource:
+        """Create OpenTelemetry resource with service information.
+
+        Returns:
+            Resource: Configured OpenTelemetry resource
+        """
+        return Resource.create({
+            ResourceAttributes.SERVICE_NAME: self.settings.service_name,
+            ResourceAttributes.SERVICE_VERSION: self.settings.service_version,
+            "deployment.environment": getattr(self.settings, 'environment', 'development'),
+        })
+
+    def _setup_logging(self, resource: Resource) -> None:
+        """Setup logs forwarding to OpenTelemetry.
+
+        Args:
+            resource: OpenTelemetry resource
+        """
+        try:
+            # Check if logs forwarding is enabled
+            logs_enabled = os.getenv("OTEL_LOGGING_ENABLED", "false").lower() == "true"
+
+            if not logs_enabled:
+                logger.info("OpenTelemetry logs forwarding is disabled (OTEL_LOGGING_ENABLED=false)")
+                return
+
+            # Create logger provider with resource
+            self.logger_provider = LoggerProvider(resource=resource)
+
+            # Add console exporter for development
+            # TODO: Use environment variable to control console exporter
+            console_logs_enabled = os.getenv("OTEL_LOGGING_CONSOLE_ENABLED", "true").lower() == "true"
+            if console_logs_enabled:
+                console_processor = BatchLogRecordProcessor(ConsoleLogExporter())
+                self.logger_provider.add_log_record_processor(console_processor)
+
+            # Add OTLP HTTP exporter if endpoint is configured
+            otlp_logs_endpoint = os.getenv("OTLP_LOGS_ENDPOINT", "http://localhost:4318/v1/logs")
+
+            try:
+                # Test connectivity before setting up exporter
+                self._test_http_endpoint_connectivity(otlp_logs_endpoint)
+
+                otlp_exporter = OTLPLogExporter(endpoint=otlp_logs_endpoint)
+                otlp_processor = BatchLogRecordProcessor(otlp_exporter)
+                self.logger_provider.add_log_record_processor(otlp_processor)
+
+                logger.info(f"OTLP logs exporter configured with endpoint: {otlp_logs_endpoint}")
+
+            except Exception as e:
+                logger.warning(f"Failed to configure OTLP logs exporter: {e}")
+                logger.info("Continuing with console-only log export")
+
+            # Set global logger provider
+            set_logger_provider(self.logger_provider)
+
+            # Add OpenTelemetry handler to root logger
+            root_logger = logging.getLogger()
+            otel_handler = LoggingHandler(logger_provider=self.logger_provider)
+
+            # Set appropriate log level for OTEL handler
+            log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+            numeric_level = getattr(logging, log_level, logging.INFO)
+            otel_handler.setLevel(numeric_level)
+
+            root_logger.addHandler(otel_handler)
+
+            logger.info("OpenTelemetry logs forwarding setup completed")
+
+        except Exception as e:
+            logger.error(f"Failed to setup OpenTelemetry logs: {e}")
+
+    def _test_http_endpoint_connectivity(self, endpoint: str) -> None:
+        """Test HTTP endpoint connectivity for logs.
+
+        Args:
+            endpoint: HTTP endpoint to test
+
+        Raises:
+            Exception: If connectivity test fails
+        """
+        import urllib.parse
+        import socket
+
+        try:
+            parsed = urllib.parse.urlparse(endpoint)
+            host = parsed.hostname or "localhost"
+            port = parsed.port or (443 if parsed.scheme == "https" else 80)
+
+            # For common OTLP ports, use those defaults
+            if not parsed.port:
+                if "4318" in endpoint:
+                    port = 4318
+                elif "4317" in endpoint:
+                    port = 4317
+
+            logger.debug(f"Testing HTTP connectivity to {host}:{port}")
+
+            # Test TCP connectivity
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(3)  # Short timeout for HTTP
+            result = sock.connect_ex((host, port))
+            sock.close()
+
+            if result != 0:
+                raise ConnectionError(f"Cannot connect to {host}:{port}")
+
+            logger.debug(f"HTTP endpoint {endpoint} is reachable")
+
+        except Exception as e:
+            logger.warning(f"HTTP endpoint connectivity test failed for {endpoint}: {e}")
+            # In development mode, just warn but continue
+            if "dev" in self.settings.service_name.lower():
+                logger.warning("Continuing without OTLP connectivity in development mode")
+            else:
+                raise
 
     def _setup_tracing(self, resource: Resource) -> None:
         """Setup tracing configuration.
@@ -256,17 +379,6 @@ class TelemetryService:
             else:
                 raise
 
-    def _setup_logging(self) -> None:
-        """Setup logging instrumentation."""
-        try:
-            LoggingInstrumentor().instrument(
-                set_logging_format=True,
-                log_level=getattr(logging, self.settings.log_level.upper(), logging.INFO)
-            )
-            logger.info("Logging instrumentation setup completed")
-        except Exception as e:
-            logger.error(f"Failed to setup logging instrumentation: {e}")
-
     def _instrument_libraries(self) -> None:
         """Instrument common libraries."""
         try:
@@ -314,6 +426,9 @@ class TelemetryService:
 
             if self.meter_provider:
                 self.meter_provider.shutdown()
+
+            if self.logger_provider:
+                self.logger_provider.shutdown()
 
             logger.info("Telemetry service shutdown completed")
         except Exception as e:

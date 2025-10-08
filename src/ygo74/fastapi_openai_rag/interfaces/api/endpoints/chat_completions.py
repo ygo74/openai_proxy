@@ -1,5 +1,5 @@
 """OpenAI-compatible chat completions endpoints."""
-from typing import List, Dict, Any, Union
+from typing import List, Dict, Any, Union, AsyncGenerator
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 import logging
@@ -18,6 +18,9 @@ from ..security.auth import auth_jwt_or_api_key
 from .models import map_model_list_to_response, ModelResponse
 from ..utils.override_stream_response import OverrideStreamResponse
 from ..utils.json_encoder import DateTimeEncoder
+from openai.types.chat.chat_completion import ChatCompletion as OpenAIChatCompletion
+from openai.types.completion import Completion as OpenAICompletion
+
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -37,15 +40,13 @@ def get_chat_completion_service(db: Session = Depends(get_db)) -> ChatCompletion
     uow = SQLUnitOfWork(session_factory)
     return ChatCompletionService(uow)
 
-@router.post("/completions", response_model=CompletionResponse)
-@endpoint_handler("create_completion")
-@track_token_usage()  # Track token usage automatically
+@router.post("/completions", response_model=OpenAICompletion)
 async def create_completion(
     request: Request,
     completion_request: CompletionRequest,
     service: ChatCompletionService = Depends(get_chat_completion_service),
     user: AuthenticatedUser = Depends(auth_jwt_or_api_key)
-) -> CompletionResponse:
+) -> Any:  # Return type is either OpenAICompletion or OverrideStreamResponse
     """Create a text completion.
 
     Compatible with OpenAI's /v1/completions endpoint.
@@ -57,20 +58,44 @@ async def create_completion(
         user (AuthenticatedUser): Authenticated user with group memberships
 
     Returns:
-        CompletionResponse: Generated text completion
+        OpenAICompletion: Generated text completion or StreamingResponse
     """
+    if completion_request.stream:
+        async def event_gen() -> AsyncGenerator[str, None]:
+            try:
+                # Stream processing is now handled directly by the service
+                async for evt in service.create_completion_stream(completion_request, user):
+                    try:
+                        evt_dict = evt.model_dump()  # type: ignore[attr-defined]
+                    except Exception:
+                        evt_dict = dict(evt)  # type: ignore[arg-type]
+                    yield f"data: {json.dumps(evt_dict)}\r\n\r\n"
+                yield "data: [DONE]\r\n\r\n"
+            except Exception as e:  # noqa: BLE001
+                err_payload = {"error": {"message": str(e), "type": "responses_stream_error"}}
+                yield f"data: {json.dumps(err_payload)}\r\n\r\n"
+                yield "data: [DONE]\r\n\r\n"
+        return OverrideStreamResponse(
+            event_gen(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+                "Content-Type": "text/event-stream; charset=utf-8"
+            }
+        )
+
     response = await service.create_completion(completion_request, user=user)
     return response
 
-@router.post("/chat/completions", response_model=ChatCompletionResponse)
-@endpoint_handler("create_chat_completion")
-@track_token_usage()  # Track token usage automatically
+@router.post("/chat/completions", response_model=OpenAIChatCompletion)
 async def create_chat_completion(
     request: Request,
     chat_completion_request: ChatCompletionRequest,
     service: ChatCompletionService = Depends(get_chat_completion_service),
     user: AuthenticatedUser = Depends(auth_jwt_or_api_key)
-) -> Any:  # Return type is either ChatCompletionResponse or OverrideStreamResponse
+) -> Any:  # Return type is either OpenAIChatCompletion or OverrideStreamResponse
     """Create a chat completion.
 
     Compatible with OpenAI's /v1/chat/completions endpoint.
@@ -82,7 +107,7 @@ async def create_chat_completion(
         user (AuthenticatedUser): Authenticated user with group memberships
 
     Returns:
-        ChatCompletionResponse: Generated chat completion or StreamingResponse
+        OpenAIChatCompletion: Generated chat completion or StreamingResponse
     """
     if chat_completion_request.stream:
         # Return streaming response

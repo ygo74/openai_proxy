@@ -1,5 +1,6 @@
 server:
   http_listen_port: 3200
+  grpc_listen_port: 9095  # Port dédié pour gRPC
 
 distributor:
   receivers:
@@ -10,17 +11,43 @@ distributor:
         http:
           endpoint: 0.0.0.0:4318
 
-ingester:
-  max_block_duration: 5m
-
-compactor:
-  compaction:
-    block_retention: 1h
-
 storage:
   trace:
     backend: local
     local:
-      path: /tmp/tempo/traces
-    wal:
-      path: /tmp/tempo/wal
+      path: /var/tempo/traces
+    pool:
+      max_workers: 10
+      queue_depth: 1000
+
+compactor:
+  compaction:
+    block_retention: 48h
+
+# search_enabled: true
+
+metrics_generator:
+  registry:
+    external_labels:
+      source: tempo
+      cluster: docker-compose
+  storage:
+    path: /var/tempo/generator/wal
+    remote_write:
+      - url: http://prometheus:9090/api/v1/write
+        send_exemplars: true
+  processor:
+    local_blocks:
+      filter_server_spans: false
+      flush_to_storage: true
+
+# Configuration du processeur local-blocks pour les métriques TraceQL
+overrides:
+  metrics_generator_processors: [service-graphs, span-metrics, local-blocks]
+
+query_frontend:
+  metrics:
+    concurrent_jobs: 8
+    target_bytes_per_job: 1.25e+09 # ~1.25GB
+    max_duration: 12h # Augmenté à 12 heures (par défaut 3h)
+    interval: 30m0s

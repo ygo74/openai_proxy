@@ -4,9 +4,12 @@ venv
 config.json
 *.db
 .env
-.env.*
+.env.prod
 *egg-info
 *langchain_call_azure_openai.py
 *langchain_call_azure_openai*
 *call_azure_openai*
 unique/**
+
+backends/tempo/tempo_data/**
+containers/**

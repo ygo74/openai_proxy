@@ -1,11 +1,20 @@
 """Service for tracking token usage across LLM interactions."""
 
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Union
 from datetime import datetime, timezone
 import uuid
 import time
 import logging
 from contextlib import contextmanager
+
+# Import OpenAI typed objects
+from openai.types.chat.chat_completion import ChatCompletion
+from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+from openai.types.completion import Completion
+from openai.types.responses.response import Response as OpenAIResponse
+from openai.types.responses.response_stream_event import ResponseStreamEvent
+from openai.types.responses.response_completed_event import ResponseCompletedEvent
+from openai.types.completion_usage import CompletionUsage
 
 from ...domain.unit_of_work import UnitOfWork
 from ...domain.models.autenticated_user import AuthenticatedUser
@@ -13,6 +22,15 @@ from ...infrastructure.observability.metrics_service import get_metrics_service,
 from .token_usage_service import TokenUsageService
 
 logger = logging.getLogger(__name__)
+
+# Type aliases for supported response types
+SupportedResponseType = Union[
+    ChatCompletion,
+    ChatCompletionChunk,
+    Completion,
+    OpenAIResponse,
+    ResponseStreamEvent
+]
 
 class TokenTrackingService:
     """Service for tracking token usage and metrics in LLM requests."""
@@ -27,85 +45,170 @@ class TokenTrackingService:
         self._token_service = TokenUsageService(uow)
         self._metrics_service = get_metrics_service()
 
-    def extract_token_usage(self, response: Any) -> Optional[Dict[str, int]]:
-        """Extract token usage information from a response object or dictionary.
-
-        Handles different response types with their specific token usage property names:
-        - Response: input_tokens, output_tokens, total_tokens
-        - ChatCompletionResponse/CompletionResponse: prompt_tokens, completion_tokens, total_tokens
-        - Dictionary variants of both
+    def _extract_usage_from_chat_completion(self, response: ChatCompletion) -> Optional[Dict[str, int]]:
+        """Extract token usage from ChatCompletion response.
 
         Args:
-            response: Response object or dictionary from LLM API
+            response: ChatCompletion response object
+
+        Returns:
+            Dictionary with prompt_tokens, completion_tokens, and total_tokens
+        """
+        if not response.usage:
+            return None
+
+        usage = response.usage
+        return {
+            "prompt_tokens": usage.prompt_tokens,
+            "completion_tokens": usage.completion_tokens,
+            "total_tokens": usage.total_tokens
+        }
+
+    def _extract_usage_from_chat_completion_chunk(self, chunk: ChatCompletionChunk) -> Optional[Dict[str, int]]:
+        """Extract token usage from ChatCompletionChunk (typically only in final chunk).
+
+        Args:
+            chunk: ChatCompletionChunk object
+
+        Returns:
+            Dictionary with prompt_tokens, completion_tokens, and total_tokens
+        """
+        if not chunk.usage:
+            return None
+
+        usage = chunk.usage
+        return {
+            "prompt_tokens": usage.prompt_tokens,
+            "completion_tokens": usage.completion_tokens,
+            "total_tokens": usage.total_tokens
+        }
+
+    def _extract_usage_from_completion(self, response: Completion) -> Optional[Dict[str, int]]:
+        """Extract token usage from Completion response.
+
+        Args:
+            response: Completion response object
+
+        Returns:
+            Dictionary with prompt_tokens, completion_tokens, and total_tokens
+        """
+        if not response.usage:
+            return None
+
+        usage = response.usage
+        return {
+            "prompt_tokens": usage.prompt_tokens,
+            "completion_tokens": usage.completion_tokens,
+            "total_tokens": usage.total_tokens
+        }
+
+    def _extract_usage_from_openai_response(self, response: OpenAIResponse) -> Optional[Dict[str, int]]:
+        """Extract token usage from OpenAI Response object (Responses API).
+
+        Args:
+            response: OpenAI Response object
+
+        Returns:
+            Dictionary with prompt_tokens, completion_tokens, and total_tokens
+        """
+        if not response.usage:
+            return None
+
+        usage = response.usage
+        # Response API uses input_tokens/output_tokens naming
+        return {
+            "prompt_tokens": usage.input_tokens,
+            "completion_tokens": usage.output_tokens,
+            "total_tokens": usage.total_tokens
+        }
+
+    def _extract_usage_from_stream_event(self, event: ResponseStreamEvent) -> Optional[Dict[str, int]]:
+        """Extract token usage from ResponseStreamEvent.
+
+        Args:
+            event: ResponseStreamEvent object
+
+        Returns:
+            Dictionary with prompt_tokens, completion_tokens, and total_tokens
+        """
+        # Only response.completed events contain usage data
+        if event.type != "response.completed":
+            return None
+
+        if not hasattr(event, 'response') or not event.response:
+            return None
+
+        return self._extract_usage_from_openai_response(event.response)
+
+    def extract_token_usage(self, response: SupportedResponseType) -> Optional[Dict[str, int]]:
+        """Extract token usage information from a typed response object.
+
+        Args:
+            response: Typed response object from OpenAI SDK
 
         Returns:
             Optional[Dict[str, int]]: Dictionary with prompt_tokens, completion_tokens, and total_tokens,
                 or None if usage information cannot be extracted
         """
-        # Check the type of response
+        try:
+            # Use isinstance for type-safe extraction
+            if isinstance(response, ChatCompletion):
+                return self._extract_usage_from_chat_completion(response)
+            elif isinstance(response, ChatCompletionChunk):
+                return self._extract_usage_from_chat_completion_chunk(response)
+            elif isinstance(response, Completion):
+                return self._extract_usage_from_completion(response)
+            elif isinstance(response, OpenAIResponse):
+                return self._extract_usage_from_openai_response(response)
+            elif isinstance(response, ResponseCompletedEvent):
+                return self._extract_usage_from_stream_event(response)
+            else:
+                # Fallback to generic extraction for unknown types
+                logger.warning(f"Unsupported response type for token extraction: {type(response)}")
+                return self._extract_usage_generic(response)
+
+        except Exception as e:
+            logger.error(f"Error extracting token usage: {e}", exc_info=True)
+            return None
+
+    def _extract_usage_generic(self, response: Any) -> Optional[Dict[str, int]]:
+        """Fallback generic extraction for untyped or unknown response objects.
+
+        This method preserves backward compatibility with the original implementation.
+        """
+        # Fallback to the original getattr-based approach for unknown types
         response_type = type(response).__name__
-        logger.debug(f"Extracting token usage from response type: {response_type}")
+        logger.debug(f"Using generic extraction for response type: {response_type}")
 
-        # Case 1: Response object from OpenAI responses API
-        if response_type == "Response" or response_type.startswith("Response"):
-            # OpenAI responses API uses input_tokens and output_tokens
-            if hasattr(response, "usage"):
-                usage_obj = getattr(response, "usage")
-                if usage_obj:
-                    input_tokens = getattr(usage_obj, "input_tokens", 0)
-                    output_tokens = getattr(usage_obj, "output_tokens", 0)
-                    total_tokens = getattr(usage_obj, "total_tokens", input_tokens + output_tokens)
-                    return {
-                        "prompt_tokens": input_tokens,
-                        "completion_tokens": output_tokens,
-                        "total_tokens": total_tokens
-                    }
-
-        # Case 2: ChatCompletionResponse or CompletionResponse
-        if response_type in ["ChatCompletionResponse", "CompletionResponse"]:
-            if hasattr(response, "usage"):
-                usage_obj = getattr(response, "usage")
-                if usage_obj:
-                    prompt_tokens = getattr(usage_obj, "prompt_tokens", 0)
-                    completion_tokens = getattr(usage_obj, "completion_tokens", 0)
-                    total_tokens = getattr(usage_obj, "total_tokens", prompt_tokens + completion_tokens)
-                    return {
-                        "prompt_tokens": prompt_tokens,
-                        "completion_tokens": completion_tokens,
-                        "total_tokens": total_tokens
-                    }
-
-        # Case 3: Direct object with usage attribute but non-standard type
+        # Check for usage attribute with various naming conventions
         if hasattr(response, "usage"):
             usage_obj = getattr(response, "usage")
-            if usage_obj:
-                # Try both naming conventions
-                # First prompt/completion naming
-                if hasattr(usage_obj, "prompt_tokens") and hasattr(usage_obj, "completion_tokens"):
-                    return {
-                        "prompt_tokens": getattr(usage_obj, "prompt_tokens", 0),
-                        "completion_tokens": getattr(usage_obj, "completion_tokens", 0),
-                        "total_tokens": getattr(usage_obj, "total_tokens",
-                                              getattr(usage_obj, "prompt_tokens", 0) +
-                                              getattr(usage_obj, "completion_tokens", 0))
-                    }
-                # Then input/output naming
-                elif hasattr(usage_obj, "input_tokens") and hasattr(usage_obj, "output_tokens"):
-                    return {
-                        "prompt_tokens": getattr(usage_obj, "input_tokens", 0),
-                        "completion_tokens": getattr(usage_obj, "output_tokens", 0),
-                        "total_tokens": getattr(usage_obj, "total_tokens",
-                                              getattr(usage_obj, "input_tokens", 0) +
-                                              getattr(usage_obj, "output_tokens", 0))
-                    }
+            if not usage_obj:
+                return None
 
-        # Case 4: Dictionary-based response
+            # Try different naming conventions
+            if hasattr(usage_obj, "prompt_tokens") and hasattr(usage_obj, "completion_tokens"):
+                return {
+                    "prompt_tokens": getattr(usage_obj, "prompt_tokens", 0),
+                    "completion_tokens": getattr(usage_obj, "completion_tokens", 0),
+                    "total_tokens": getattr(usage_obj, "total_tokens",
+                                          getattr(usage_obj, "prompt_tokens", 0) +
+                                          getattr(usage_obj, "completion_tokens", 0))
+                }
+            elif hasattr(usage_obj, "input_tokens") and hasattr(usage_obj, "output_tokens"):
+                return {
+                    "prompt_tokens": getattr(usage_obj, "input_tokens", 0),
+                    "completion_tokens": getattr(usage_obj, "output_tokens", 0),
+                    "total_tokens": getattr(usage_obj, "total_tokens",
+                                          getattr(usage_obj, "input_tokens", 0) +
+                                          getattr(usage_obj, "output_tokens", 0))
+                }
+
+        # Dictionary-based fallback
         if isinstance(response, dict):
-            # Direct usage in dictionary format
             if "usage" in response:
                 usage_dict = response["usage"]
                 if isinstance(usage_dict, dict):
-                    # Try both naming conventions for dictionary
                     if "prompt_tokens" in usage_dict and "completion_tokens" in usage_dict:
                         return {
                             "prompt_tokens": usage_dict.get("prompt_tokens", 0),
@@ -114,30 +217,40 @@ class TokenTrackingService:
                                                          usage_dict.get("prompt_tokens", 0) +
                                                          usage_dict.get("completion_tokens", 0))
                         }
-                    elif "input_tokens" in usage_dict and "output_tokens" in usage_dict:
-                        return {
-                            "prompt_tokens": usage_dict.get("input_tokens", 0),
-                            "completion_tokens": usage_dict.get("output_tokens", 0),
-                            "total_tokens": usage_dict.get("total_tokens",
-                                                         usage_dict.get("input_tokens", 0) +
-                                                         usage_dict.get("output_tokens", 0))
-                        }
-
-            # Direct top-level token properties in Response
-            if "input_tokens" in response and "output_tokens" in response:
-                return {
-                    "prompt_tokens": response.get("input_tokens", 0),
-                    "completion_tokens": response.get("output_tokens", 0),
-                    "total_tokens": response.get("total_tokens",
-                                               response.get("input_tokens", 0) +
-                                               response.get("output_tokens", 0))
-                }
 
         logger.debug(f"Could not extract token usage from response type: {response_type}")
         return None
 
+    def _extract_model_name(self, response: SupportedResponseType, fallback_model: Optional[str] = None) -> str:
+        """Extract model name from typed response object.
+
+        Args:
+            response: Typed response object
+            fallback_model: Fallback model name if not found in response
+
+        Returns:
+            Model name from response or fallback
+        """
+        try:
+            if isinstance(response, (ChatCompletion, ChatCompletionChunk, Completion, OpenAIResponse)):
+                return response.model
+            elif isinstance(response, ResponseStreamEvent):
+                if hasattr(response, 'response') and response.response:
+                    return response.response.model
+
+            # Generic fallback
+            if hasattr(response, 'model'):
+                return str(getattr(response, 'model'))
+            elif isinstance(response, dict) and 'model' in response:
+                return str(response['model'])
+
+        except Exception as e:
+            logger.debug(f"Error extracting model name: {e}")
+
+        return fallback_model or "unknown"
+
     def track_completion(self,
-                        response: Any,
+                        response: SupportedResponseType,
                         user: AuthenticatedUser,
                         endpoint: str,
                         model: Optional[str] = None,
@@ -146,7 +259,7 @@ class TokenTrackingService:
         """Track token usage for a completion response.
 
         Args:
-            response: LLM response object
+            response: Typed LLM response object
             user: Authenticated user
             endpoint: API endpoint path
             model: Optional model name (will be extracted from response if not provided)
@@ -155,11 +268,7 @@ class TokenTrackingService:
         """
         try:
             # Extract model name from response if not provided
-            model_name = model or "unknown"
-            if not model and hasattr(response, "model"):
-                model_name = str(getattr(response, "model", model_name))
-            elif not model and isinstance(response, dict) and "model" in response:
-                model_name = str(response.get("model", model_name))
+            model_name = model or self._extract_model_name(response, "unknown")
 
             # Calculate duration if start time was provided
             duration = 0.0
@@ -169,7 +278,7 @@ class TokenTrackingService:
             # Generate request ID
             request_id = str(uuid.uuid4())
 
-            # Extract token usage information
+            # Extract token usage information using typed methods
             token_usage = self.extract_token_usage(response)
 
             if token_usage is None:
@@ -182,9 +291,7 @@ class TokenTrackingService:
             total_tokens = token_usage.get("total_tokens", prompt_tokens + completion_tokens)
 
             # Record token usage in database
-            user_id = getattr(user, "username", "anonymous")
-            if user_id is None:
-                user_id = "anonymous"
+            user_id = user.username or "anonymous"
 
             # Record in database
             self._token_service.record_token_usage(
@@ -212,7 +319,7 @@ class TokenTrackingService:
             logger.error(f"Error recording token usage: {str(e)}", exc_info=True)
 
     def track_stream_completion(self,
-                               event: Any,
+                               event: ResponseStreamEvent,
                                user: AuthenticatedUser,
                                endpoint: str,
                                model: str,
@@ -223,7 +330,7 @@ class TokenTrackingService:
         It will only record usage when appropriate usage information is found.
 
         Args:
-            event: Stream event that may contain usage information
+            event: ResponseStreamEvent that may contain usage information
             user: Authenticated user
             endpoint: API endpoint path
             model: Model name
@@ -233,26 +340,17 @@ class TokenTrackingService:
             bool: True if token usage was successfully tracked, False otherwise
         """
         try:
-            # For response.completed events, check for usage data
-            event_type = getattr(event, "type", None)
-
-            # Skip events that don't contain token usage
-            if event_type != "response.completed":
+            # Only process response.completed events
+            if event.type != "response.completed":
                 return False
 
             # Check if this event has usage data
-            response_obj = getattr(event, "response", None)
-            if not response_obj:
+            if not hasattr(event, 'response') or not event.response:
                 return False
-
-            # Calculate duration if start time was provided
-            duration = 0.0
-            if start_time is not None:
-                duration = time.time() - start_time
 
             # Track the completion with the response object
             self.track_completion(
-                response=response_obj,
+                response=event,
                 user=user,
                 endpoint=endpoint,
                 model=model,
@@ -264,6 +362,48 @@ class TokenTrackingService:
 
         except Exception as e:
             logger.error(f"Error tracking stream token usage: {str(e)}", exc_info=True)
+            return False
+
+    def track_chat_completion_chunk(self,
+                                   chunk: ChatCompletionChunk,
+                                   user: AuthenticatedUser,
+                                   endpoint: str,
+                                   model: str,
+                                   start_time: Optional[float] = None) -> bool:
+        """Track token usage from a chat completion stream chunk.
+
+        Specifically handles chunks of type ChatCompletionChunk, which have
+        a different structure than response stream events.
+
+        Args:
+            chunk: ChatCompletionChunk that may contain usage information
+            user: Authenticated user
+            endpoint: API endpoint path
+            model: Model name
+            start_time: Optional start time of request (for duration calculation)
+
+        Returns:
+            bool: True if token usage was successfully tracked, False otherwise
+        """
+        try:
+            # Check if this chunk has usage information (typically only final chunk)
+            if not chunk.usage:
+                return False
+
+            # Track the completion with the chunk object
+            self.track_completion(
+                response=chunk,
+                user=user,
+                endpoint=endpoint,
+                model=model,
+                start_time=start_time,
+                success=True
+            )
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Error tracking chat completion chunk token usage: {str(e)}", exc_info=True)
             return False
 
     @contextmanager

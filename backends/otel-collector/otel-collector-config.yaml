@@ -24,7 +24,7 @@ exporters:
     tls:
       insecure: true
 
-  # Export metrics to Prometheus
+  # Expose metrics for Prometheus
   prometheus:
     endpoint: "0.0.0.0:8889"
     namespace: ""
@@ -32,8 +32,8 @@ exporters:
     metric_expiration: 180m
 
   # Export logs to Loki
-  loki:
-    endpoint: http://loki:3100/loki/api/v1/push
+  otlphttp:
+    endpoint: http://loki:3100/otlp
 
   # Debug exporter
   debug:
@@ -57,7 +57,8 @@ service:
     logs:
       receivers: [otlp]
       processors: [batch, resource]
-      exporters: [loki, debug]
+      exporters: [otlphttp, debug]
+      # exporters: [debug]
 
 extensions:
   health_check:

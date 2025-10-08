@@ -22,6 +22,19 @@ OpenAI:
 
 # development
 
+## Init environment
+
+``` bash
+python3.11 -m venv venv/openai_proxy
+. venv/openai_proxy/bin/activate
+pip install --upgrade pip
+pip install poetry
+pip install wheel setuptools Cython
+
+poetry install
+
+```
+
 ## Start backends
 
 ``` powershell
