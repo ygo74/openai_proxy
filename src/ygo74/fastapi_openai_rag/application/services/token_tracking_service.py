@@ -13,6 +13,7 @@ from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from openai.types.completion import Completion
 from openai.types.responses.response import Response as OpenAIResponse
 from openai.types.responses.response_stream_event import ResponseStreamEvent
+from openai.types.responses.response_completed_event import ResponseCompletedEvent
 from openai.types.completion_usage import CompletionUsage
 
 from ...domain.unit_of_work import UnitOfWork
@@ -159,7 +160,7 @@ class TokenTrackingService:
                 return self._extract_usage_from_completion(response)
             elif isinstance(response, OpenAIResponse):
                 return self._extract_usage_from_openai_response(response)
-            elif isinstance(response, ResponseStreamEvent):
+            elif isinstance(response, ResponseCompletedEvent):
                 return self._extract_usage_from_stream_event(response)
             else:
                 # Fallback to generic extraction for unknown types
