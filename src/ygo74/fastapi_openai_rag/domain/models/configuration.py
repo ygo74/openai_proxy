@@ -1,8 +1,9 @@
 """Domain model for configuration."""
 from typing import Dict, Any, Optional, List, Union
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, model_validator, Field
 import json
 import os
+from .rate_limit import TokenRateLimit
 
 class ModelConfig(BaseModel):
     """Model configuration settings.
@@ -16,6 +17,7 @@ class ModelConfig(BaseModel):
         api_version (Optional[str]): API version for Azure models
         rate_limit (Optional[int]): Rate limit per minute
         capabilities (Dict[str, Any]): Model-specific capabilities
+        token_rate_limit (Optional[TokenRateLimit]): Token-based rate limiting configuration
     """
     name: str
     technical_name: str
@@ -24,6 +26,7 @@ class ModelConfig(BaseModel):
     api_key: Optional[str] = None
     rate_limit: Optional[int] = None
     capabilities: Dict[str, Any] = {}
+    token_rate_limit: Optional[TokenRateLimit] = None
 
 class AzureModelConfig(ModelConfig):
     """Azure-specific model configuration with management API support."""
@@ -93,12 +96,16 @@ class AppConfig(BaseModel):
         db_type (str): The type of database being used
         forwarders (ForwardersConfig): Configuration for audit forwarders
         audit (AuditConfig): Configuration for audit functionality
+        global_token_rate_limit (Optional[TokenRateLimit]): Global token rate limiting configuration
+        group_token_rate_limits (Dict[str, TokenRateLimit]): Per-group token rate limiting overrides
     """
     model_configs: List[Union[ModelConfig, AzureModelConfig, UniqueModelConfig]]
     db_type: str
     db_url: str
     forwarders: ForwardersConfig = ForwardersConfig()
     audit: AuditConfig = AuditConfig()
+    global_token_rate_limit: Optional[TokenRateLimit] = None
+    group_token_rate_limits: Dict[str, TokenRateLimit] = Field(default_factory=dict)
 
     @classmethod
     def load_from_json(cls, config_path: str = "config.json") -> "AppConfig":
@@ -150,12 +157,19 @@ class AppConfig(BaseModel):
             if "audit" in config_data:
                 audit_config = AuditConfig(**config_data["audit"])
 
+            # Process default rate limiting configuration
+            token_rate_limit = None
+            if "default_rate_limiting" in config_data:
+                token_rate_limit = TokenRateLimit(**config_data["default_rate_limiting"])
+
+
             return cls(
                 model_configs=processed_configs,
                 db_type=config_data.get("db_type", "sqlite"),
                 db_url=config_data.get("db_url"),
                 forwarders=forwarders_config,
-                audit=audit_config
+                audit=audit_config,
+                global_token_rate_limit=token_rate_limit
             )
 
     def to_dict(self) -> Dict[str, Any]:

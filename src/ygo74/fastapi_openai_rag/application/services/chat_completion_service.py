@@ -34,6 +34,7 @@ import logging
 
 from ..services.model_service import ModelService
 from ..services.token_tracking_service import TokenTrackingService
+from ..services.rate_limit_service import TokenRateLimitService
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,7 @@ class ChatCompletionService:
         self._uow = uow
         self._model_service = ModelService(uow)
         self._token_tracking = TokenTrackingService(uow)
+        self._token_rate_limit = TokenRateLimitService(uow)
         self._client_cache: Dict[str, LLMClientProtocol] = {}
         logger.debug("ChatCompletionService initialized")
 
@@ -78,6 +80,7 @@ class ChatCompletionService:
 
         # Validate and get model, checking authorization
         model = await self._get_and_validate_model(request.model, user)
+        self._token_rate_limit.check_rate_limit(user=user, model=model)
 
         # Get or create client for this model
         client = self._get_or_create_client(model)
@@ -98,24 +101,23 @@ class ChatCompletionService:
 
         start_time = time.time()
         endpoint = "/v1/completions"
+
         try:
+
             if supports_completions or not supports_chat:
-                # Direct call (or no chat fallback available)
                 with self._token_tracking.track_request_in_progress(request.model):
                     response = await client.completion(request_with_provider)
-
-                # Track token usage
-                self._token_tracking.track_completion(
-                    response=response,
-                    user=user,
-                    endpoint=endpoint,
-                    start_time=start_time
-                )
-
             else:
                 logger.info("Model lacks 'completions' capability; falling back to chat completion conversion")
                 response = await self._completion_via_chat_fallback(request_with_provider, client, model)
 
+            self._token_tracking.track_completion(
+                response=response,
+                user=user,
+                model=model,
+                endpoint=endpoint,
+                start_time=start_time
+            )
             latency_ms = (time.time() - start_time) * 1000
 
             logger.info(f"Text completion successful in {latency_ms:.2f}ms (fallback={not supports_completions and supports_chat})")
@@ -145,6 +147,7 @@ class ChatCompletionService:
 
         # Validate and get model, checking authorization
         model = await self._get_and_validate_model(request.model, user)
+        self._token_rate_limit.check_rate_limit(user=user, model=model)
 
         # Get or create client for this model
         client = self._get_or_create_client(model)
@@ -168,38 +171,29 @@ class ChatCompletionService:
 
         start_time = time.time()
         endpoint = "/v1/completions"
-
         try:
             with self._token_tracking.track_request_in_progress(request.model):
-                # Use fallback if needed
                 if supports_completions or not supports_chat:
-                    # Direct completion stream call
                     async for event in client.completion_stream(request_with_provider):
-                        # Check if this event contains usage data and track it if so
                         self._token_tracking.track_completion(
                             response=event,
                             user=user,
                             endpoint=endpoint,
-                            model=model.name,
+                            model=model,
                             start_time=start_time
                         )
-
                         yield event
                 else:
-                    # Fallback to chat completion stream
                     logger.info("Model lacks 'completions' streaming capability; falling back to chat completion stream conversion")
                     async for chat_event in self._completion_stream_via_chat_fallback(request_with_provider, client, model):
-                        # Track token usage for chat fallback
                         self._token_tracking.track_completion(
                             response=chat_event,
                             user=user,
                             endpoint=endpoint,
-                            model=model.name,
+                            model=model,
                             start_time=start_time
                         )
-
                         yield chat_event
-
             logger.info(f"Streaming text completion finished in {(time.time() - start_time) * 1000:.2f}ms")
 
         except Exception as e:
@@ -226,6 +220,7 @@ class ChatCompletionService:
 
         # Validate and get model, checking authorization
         model = await self._get_and_validate_model(request.model, user)
+        self._token_rate_limit.check_rate_limit(user=user, model=model)
 
         # Get or create client for this model
         client = self._get_or_create_client(model)
@@ -236,23 +231,19 @@ class ChatCompletionService:
         # Measure request time and execute
         start_time = time.time()
         endpoint = "/v1/chat/completions"
-
         try:
-            # Use metrics tracking context manager if available
             with self._token_tracking.track_request_in_progress(model.name):
-                # Make API request
                 response = await client.chat_completion(request_with_provider)
 
-            # Track token usage
-            self._token_tracking.track_completion(
-                response=response,
-                user=user,
-                endpoint=endpoint,
-                model=model.name,
-                start_time=start_time
-            )
+                self._token_tracking.track_completion(
+                    response=response,
+                    user=user,
+                    endpoint=endpoint,
+                    model=model,
+                    start_time=start_time
+                )
 
-            return response
+                return response
 
         except Exception as e:
             logger.error(f"Error in chat completion: {str(e)}")
@@ -278,6 +269,7 @@ class ChatCompletionService:
 
         # Validate and get model, checking authorization
         model = await self._get_and_validate_model(request.model, user)
+        self._token_rate_limit.check_rate_limit(user=user, model=model)
 
         # Get or create client for this model
         client = self._get_or_create_client(model)
@@ -291,19 +283,16 @@ class ChatCompletionService:
         # Start timing
         start_time = time.time()
         endpoint = "/v1/chat/completions"
-
         try:
             with self._token_tracking.track_request_in_progress(request.model):
                 async for chunk in client.chat_completion_stream(request_with_provider):
-                    # Track token usage with the specialized method for chat completion chunks
                     self._token_tracking.track_chat_completion_chunk(
                         chunk=chunk,
                         user=user,
                         endpoint=endpoint,
-                        model=model.name,
+                        model=model,
                         start_time=start_time
                     )
-
                     yield chunk
 
             logger.info(f"Streaming chat completion finished in {(time.time() - start_time) * 1000:.2f}ms")
@@ -326,27 +315,25 @@ class ChatCompletionService:
         if not model_name:
             raise ValidationError("model is required in responses payload")
         model = await self._get_and_validate_model(model_name, user)
+        self._token_rate_limit.check_rate_limit(user=user, model=model)
+
         client = self._get_or_create_client(model)
 
         start_time = time.time()
         endpoint = "/v1/responses"
-
         try:
-            # Use metrics tracking context manager if available
+
             with self._token_tracking.track_request_in_progress(model_name):
-                # Make API request
                 response = await client.responses(payload)
+                self._token_tracking.track_completion(
+                    response=response,
+                    user=user,
+                    endpoint=endpoint,
+                    model=model,
+                    start_time=start_time
+                )
 
-            # Track token usage
-            self._token_tracking.track_completion(
-                response=response,
-                user=user,
-                endpoint=endpoint,
-                model=model.name,
-                start_time=start_time
-            )
-
-            return response
+                return response
 
         except Exception as e:
             logger.error(f"Error in responses API: {str(e)}", exc_info=True)
@@ -366,31 +353,25 @@ class ChatCompletionService:
         if not model_name:
             raise ValidationError("model is required in responses payload")
         model = await self._get_and_validate_model(model_name, user)
+        self._token_rate_limit.check_rate_limit(user=user, model=model)
+
         client = self._get_or_create_client(model)
 
         start_time = time.time()
         endpoint = "/v1/responses"
-
-        # Ensure streaming is enabled
         payload.stream = True
-
         try:
-            # Use metrics tracking context manager if available
+
             with self._token_tracking.track_request_in_progress(model_name):
-                # Stream API responses
                 async for event in client.responses_stream(payload):
-                    # Check if this event contains usage data and track it if so
                     self._token_tracking.track_stream_completion(
                         event=event,
                         user=user,
                         endpoint=endpoint,
-                        model=model.name,
+                        model=model,
                         start_time=start_time
                     )
-
-                    # Pass the event along
                     yield event
-
         except Exception as e:
             logger.error(f"Error in responses stream: {str(e)}", exc_info=True)
             raise
@@ -415,6 +396,7 @@ class ChatCompletionService:
 
         # Validate and get model, checking authorization
         model = await self._get_and_validate_model(payload.model, user)
+        self._token_rate_limit.check_rate_limit(user=user, model=model)
 
         # Get or create client for this model
         client = self._get_or_create_client(model)
@@ -422,23 +404,18 @@ class ChatCompletionService:
         # Measure request time and execute
         start_time = time.time()
         endpoint = "/v1/embeddings"
-
         try:
-            # Use metrics tracking context manager if available
             with self._token_tracking.track_request_in_progress(model.name):
-                # Make API request using the SDK-compatible payload
                 response = await client.embedding(payload)
+                self._token_tracking.track_completion(
+                    response=response,
+                    user=user,
+                    endpoint=endpoint,
+                    model=model,
+                    start_time=start_time
+                )
 
-            # Track token usage
-            self._token_tracking.track_completion(
-                response=response,
-                user=user,
-                endpoint=endpoint,
-                model=model.name,
-                start_time=start_time
-            )
-
-            return response
+                return response
 
         except Exception as e:
             logger.error(f"Error in embedding creation: {str(e)}", exc_info=True)

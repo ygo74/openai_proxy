@@ -15,11 +15,15 @@ from openai.types.responses.response import Response as OpenAIResponse
 from openai.types.responses.response_stream_event import ResponseStreamEvent
 from openai.types.responses.response_completed_event import ResponseCompletedEvent
 from openai.types.completion_usage import CompletionUsage
+
+from .rate_limit_service import TokenRateLimitService
 # from openai.types.create_embedding_response import CreateEmbeddingResponse
 from ...domain.models.embedding import CreateEmbeddingResponse
 
 from ...domain.unit_of_work import UnitOfWork
 from ...domain.models.autenticated_user import AuthenticatedUser
+from ...domain.models.llm_model import LlmModel
+
 from ...infrastructure.observability.metrics_service import get_metrics_service, MetricsService
 from .token_usage_service import TokenUsageService
 
@@ -47,6 +51,8 @@ class TokenTrackingService:
         self._uow = uow
         self._token_service = TokenUsageService(uow)
         self._metrics_service = get_metrics_service()
+        self._token_rate_limit = TokenRateLimitService(uow)
+
 
     def _extract_usage_from_chat_completion(self, response: ChatCompletion) -> Optional[Dict[str, int]]:
         """Extract token usage from ChatCompletion response.
@@ -277,7 +283,7 @@ class TokenTrackingService:
                         response: SupportedResponseType,
                         user: AuthenticatedUser,
                         endpoint: str,
-                        model: Optional[str] = None,
+                        model: LlmModel,
                         start_time: Optional[float] = None,
                         success: bool = True) -> None:
         """Track token usage for a completion response.
@@ -292,7 +298,7 @@ class TokenTrackingService:
         """
         try:
             # Extract model name from response if not provided
-            model_name = model or self._extract_model_name(response, "unknown")
+            model_name = model.name or self._extract_model_name(response, "unknown")
 
             # Calculate duration if start time was provided
             duration = 0.0
@@ -337,6 +343,9 @@ class TokenTrackingService:
                     success=success
                 )
 
+            # Store rate limit usage
+            self._token_rate_limit.consume_tokens(user=user, token_count=total_tokens, model=model)
+
             logger.info(f"Recorded token usage for user {user_id}: {total_tokens} tokens on {endpoint}")
 
         except Exception as e:
@@ -346,7 +355,7 @@ class TokenTrackingService:
                                event: ResponseStreamEvent,
                                user: AuthenticatedUser,
                                endpoint: str,
-                               model: str,
+                               model: LlmModel,
                                start_time: Optional[float] = None) -> bool:
         """Track token usage from a stream completion event.
 
@@ -392,7 +401,7 @@ class TokenTrackingService:
                                    chunk: ChatCompletionChunk,
                                    user: AuthenticatedUser,
                                    endpoint: str,
-                                   model: str,
+                                   model: LlmModel,
                                    start_time: Optional[float] = None) -> bool:
         """Track token usage from a chat completion stream chunk.
 
