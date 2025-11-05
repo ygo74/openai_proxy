@@ -8,6 +8,9 @@ import requests
 from pathlib import Path
 from datetime import datetime, timedelta
 import keyring
+import base64
+import hashlib
+import urllib.parse
 
 import requests
 try:
@@ -106,6 +109,181 @@ class AuthContext:
         except Exception:
             return None
 
+    @staticmethod
+    def _urlsafe_b64encode_no_padding(data: bytes) -> str:
+        """Encode bytes to base64 URL-safe format without padding.
+
+        Args:
+            data: Bytes to encode
+
+        Returns:
+            str: Base64 URL-safe encoded string without padding
+        """
+        return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+    @staticmethod
+    def _generate_code_verifier() -> str:
+        """Generate PKCE code verifier.
+
+        Returns:
+            str: Random 32-byte code verifier encoded in base64 URL-safe format
+        """
+        random_bytes = os.urandom(32)
+        return AuthContext._urlsafe_b64encode_no_padding(random_bytes)
+
+    @staticmethod
+    def _generate_code_challenge(code_verifier: str) -> str:
+        """Generate PKCE code challenge from verifier.
+
+        Args:
+            code_verifier: Code verifier string
+
+        Returns:
+            str: SHA256 hash of verifier encoded in base64 URL-safe format
+        """
+        digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
+        return AuthContext._urlsafe_b64encode_no_padding(digest)
+
+    def _get_auth_code_with_kerberos(self, auth_url: str) -> str:
+        """Obtain authorization code using Kerberos/SPNEGO authentication.
+
+        This method performs a Kerberos-authenticated request to the authorization endpoint.
+        The server redirects to the redirect_uri with the authorization code.
+
+        Args:
+            auth_url: Authorization URL with PKCE parameters
+
+        Returns:
+            str: Authorization code
+
+        Raises:
+            RuntimeError: If authentication fails or code cannot be extracted
+        """
+        if not HAS_KERBEROS:
+            raise RuntimeError("Kerberos authentication requires requests-kerberos package")
+
+        # Perform Kerberos authentication without following redirects
+        resp = session.get(auth_url, allow_redirects=False)
+
+        # Check for redirect response
+        if resp.status_code in (301, 302, 303, 307, 308):
+            location = resp.headers.get("Location")
+            if not location:
+                raise RuntimeError("Redirect response missing Location header")
+
+            # Extract authorization code from redirect URL
+            parsed = urllib.parse.urlparse(location)
+            qs = urllib.parse.parse_qs(parsed.query)
+            code_values = qs.get("code")
+
+            if not code_values:
+                raise RuntimeError(f"Authorization code not found in redirect URL: {location}")
+
+            return code_values[0]
+        else:
+            raise RuntimeError(
+                f"Unexpected response status {resp.status_code}. "
+                f"Expected redirect with authorization code. Body: {resp.text[:500]}"
+            )
+
+    def _exchange_code_for_token(self, code: str, code_verifier: str) -> Dict[str, Any]:
+        """Exchange authorization code for access token.
+
+        Args:
+            code: Authorization code obtained from Kerberos flow
+            code_verifier: PKCE code verifier
+
+        Returns:
+            dict: Token response containing access_token, refresh_token, expires_in
+
+        Raises:
+            RuntimeError: If token exchange fails
+        """
+        keycloak_url = self.config["keycloak_url"]
+        token_url = f"{keycloak_url}/protocol/openid-connect/token"
+        client_id = self.config["client_id"]
+        client_secret = self.config.get("client_secret")
+
+        # Construct redirect URI (should match the one used in auth request)
+        redirect_uri = self.config.get("redirect_uri", "urn:ietf:wg:oauth:2.0:oob")
+
+        data = {
+            "grant_type": "authorization_code",
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "code": code,
+            "code_verifier": code_verifier,
+        }
+
+        if client_secret:
+            data["client_secret"] = client_secret
+
+        try:
+            resp = session.post(token_url, data=data)
+            resp.raise_for_status()
+            return resp.json()
+        except requests.RequestException as e:
+            raise RuntimeError(f"Token exchange failed: {resp.status_code} {resp.text}") from e
+
+    def login_with_kerberos(self) -> bool:
+        """Authenticate using Kerberos/SPNEGO with PKCE flow.
+
+        This method requires:
+        - User to have obtained Kerberos ticket (via kinit)
+        - requests-kerberos package installed
+        - Keycloak configured for SPNEGO/Kerberos authentication
+
+        Returns:
+            bool: True if authentication was successful
+        """
+        if not HAS_KERBEROS:
+            logger.error("Kerberos authentication is not available. Please install requests-kerberos.")
+            return False
+
+        try:
+            # 1) Generate PKCE parameters
+            code_verifier = self._generate_code_verifier()
+            code_challenge = self._generate_code_challenge(code_verifier)
+
+            # 2) Build authorization URL with PKCE
+            keycloak_url = self.config["keycloak_url"]
+            auth_url = f"{keycloak_url}/protocol/openid-connect/auth"
+
+            redirect_uri = self.config.get("redirect_uri", "urn:ietf:wg:oauth:2.0:oob")
+
+            auth_params = {
+                "client_id": self.config["client_id"],
+                "response_type": "code",
+                "scope": "openid",
+                "redirect_uri": redirect_uri,
+                "code_challenge": code_challenge,
+                "code_challenge_method": "S256",
+            }
+            auth_url = f"{auth_url}?{urllib.parse.urlencode(auth_params)}"
+
+            logger.info("Attempting Kerberos authentication...")
+
+            # 3) Obtain authorization code via Kerberos
+            code = self._get_auth_code_with_kerberos(auth_url)
+            logger.debug(f"Obtained authorization code: {code[:10]}...")
+
+            # 4) Exchange code for tokens
+            token_data = self._exchange_code_for_token(code, code_verifier)
+
+            # 5) Add expiry timestamp
+            token_data["expires_at"] = time.time() + token_data["expires_in"]
+
+            # 6) Cache the token
+            self.token_cache = token_data
+            self._save_token_cache()
+
+            logger.info("Successfully authenticated with Kerberos")
+            return True
+
+        except Exception as e:
+            logger.error(f"Kerberos authentication failed: {e}")
+            return False
+
     def login_interactive(self, username: Optional[str], password: Optional[str]) -> bool:
         """Authenticate with username and password using OAuth2.
 
@@ -116,31 +294,24 @@ class AuthContext:
         Returns:
             bool: True if authentication was successful
         """
+        # If no credentials provided, try Kerberos/PKCE flow
+        if not username and not password:
+            return self.login_with_kerberos()
+
         # Perform OAuth2 password grant flow
-        token_url = self.config["keycloak_url"]
+        keycloak_url = self.config["keycloak_url"]
+        token_url = f"{keycloak_url}/protocol/openid-connect/token"
+        auth_url = f"{keycloak_url}/protocol/openid-connect/auth"
         client_id = self.config["client_id"]
         client_secret = self.config["client_secret"]
 
-        if not username and not password:
-            if not HAS_KERBEROS:
-                logger.error("Kerberos authentication is not available. Please install requests-kerberos.")
-                return False
 
-            data = {
-                "grant_type": "client_credentials",
-                "client_id": client_id,
-                "client_secret": client_secret
-            }
-        else:
-
-            data = {
-                "grant_type": "password",
-                "client_id": client_id,
-                "username": username,
-                "password": password
-            }
-
-
+        data = {
+            "grant_type": "password",
+            "client_id": client_id,
+            "username": username,
+            "password": password
+        }
 
         # Add client secret if configured
         if client_secret:
