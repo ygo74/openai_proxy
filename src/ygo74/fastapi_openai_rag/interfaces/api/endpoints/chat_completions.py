@@ -15,7 +15,7 @@ from ....domain.models.completion import CompletionRequest, CompletionResponse
 from ..decorators.decorators import endpoint_handler, track_token_usage
 from ....domain.models.autenticated_user import AuthenticatedUser
 from ..security.auth import auth_jwt_or_api_key
-from .models import map_model_list_to_response, ModelResponse
+from .models import map_model_list_to_response, ModelResponse, ModelListResponse
 from ..utils.override_stream_response import OverrideStreamResponse
 from ..utils.json_encoder import DateTimeEncoder
 from openai.types.chat.chat_completion import ChatCompletion as OpenAIChatCompletion
@@ -165,7 +165,7 @@ async def create_chat_completion(
 async def list_models(
     service: ChatCompletionService = Depends(get_chat_completion_service),
     user: AuthenticatedUser = Depends(auth_jwt_or_api_key)
-) -> Dict[str, Any]:
+) -> ModelListResponse:
     """List available models.
 
     Compatible with OpenAI's /v1/models endpoint.
@@ -176,7 +176,7 @@ async def list_models(
         user (AuthenticatedUser): Authenticated user information
 
     Returns:
-        List[ModelResponse]: List of models the user has access to
+        ModelListResponse: List of models the user has access to
     """
     # Get all models accessible to the user based on their groups
     logger.debug(f"Fetching models for user {user.username} with groups: {user.groups}")
@@ -185,10 +185,10 @@ async def list_models(
     models = service.get_models_for_user(user)
 
     # Convert domain models to OpenAI API compatible format
-    map = map_model_list_to_response(models)
+    map_to_model_response = map_model_list_to_response(models)
 
-    return {
-        "data": map,
-        "object": "list"
-    }
+    return ModelListResponse(
+        data=map_to_model_response,
+        object="list"
+    )
 

@@ -6,6 +6,7 @@ from knack.commands import CLICommandsLoader, CommandGroup
 from knack.help_files import helps
 from knack.cli import CLI
 from knack.arguments import ArgumentsContext
+from knack.log import get_logger
 
 from typing import Optional, Dict, Any
 from .core.auth import AuthContext
@@ -19,7 +20,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(message)s"
 )
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Setup knack help content
 helps[''] = """

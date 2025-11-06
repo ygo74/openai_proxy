@@ -87,10 +87,11 @@ class ModelService:
                 logger.error("Missing required fields for model creation")
                 raise ValidationError("URL, name, technical_name, and provider are required for new models")
 
-            models = repository.get_by_technical_name(technical_name)
+            models = repository.get_by_model_provider(name=name, technical_name=technical_name)
+
             if models:
-                logger.warning(f"Model with technical_name {technical_name} already exists")
-                raise EntityAlreadyExistsError("Model", f"technical_name {technical_name}")
+                logger.warning(f"Model with name {name} and technical_name {technical_name} already exists")
+                raise EntityAlreadyExistsError("Model", f"name {name} and technical_name {technical_name}")
 
             new_model = self._create_model_instance(
                 url=url,
@@ -372,8 +373,7 @@ class ModelService:
         """
         with self._uow as uow:
             repository: IModelRepository = self._repository_factory(uow.session)
-            models: List[LlmModel] = repository.get_by_technical_name(technical_name)
-            existing_model = models[0] if models else None
+            existing_model: Optional[LlmModel] = repository.get_by_model_provider(name=name, technical_name=technical_name)
 
             if existing_model:
                 updated_model = self._create_model_instance(

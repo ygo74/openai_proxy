@@ -100,6 +100,7 @@ class TelemetryService:
             ResourceAttributes.SERVICE_NAME: self.settings.service_name,
             ResourceAttributes.SERVICE_VERSION: self.settings.service_version,
             "deployment.environment": getattr(self.settings, 'environment', 'development'),
+            "deployment.hostname": getattr(self.settings, 'hostname', None),
         })
 
     def _setup_logging(self, resource: Resource) -> None:

@@ -42,6 +42,8 @@ class ObservabilitySettings(BaseModel):
     enabled: bool
     service_name: str
     service_version: str
+    environment: str
+    hostname: Optional[str]
 
     # OTLP Exporter Configuration
     otlp_endpoint: Optional[str]
@@ -73,6 +75,8 @@ class ObservabilitySettings(BaseModel):
         settings = cls(
             enabled=observability_enabled,
             service_name=os.getenv("OTEL_SERVICE_NAME", "fastapi-openai-rag"),
+            environment=os.getenv("OTEL_DEPLOYMENT_ENVIRONMENT", "Development"),
+            hostname=os.getenv("OTEL_DEPLOYMENT_HOSTNAME", None),
             service_version=os.getenv("OTEL_SERVICE_VERSION", "1.0.0"),
             otlp_endpoint=os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317"),
             otlp_insecure=os.getenv("OTEL_EXPORTER_OTLP_INSECURE", "true").lower() == "true",

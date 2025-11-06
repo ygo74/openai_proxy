@@ -11,6 +11,7 @@ import keyring
 import base64
 import hashlib
 import urllib.parse
+from knack.log import get_logger
 
 import requests
 try:
@@ -28,7 +29,7 @@ if HAS_KERBEROS:
 
 
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Constants for token cache and config
 CONFIG_DIR = Path.home() / ".rag-client"
@@ -262,6 +263,7 @@ class AuthContext:
             auth_url = f"{auth_url}?{urllib.parse.urlencode(auth_params)}"
 
             logger.info("Attempting Kerberos authentication...")
+            logger.debug(f"Url: {auth_url}")
 
             # 3) Obtain authorization code via Kerberos
             code = self._get_auth_code_with_kerberos(auth_url)
@@ -365,9 +367,10 @@ class AuthContext:
             logger.warning("No refresh token available")
             return False
 
-        token_url = self.config["keycloak_url"]
+        keycloak_url = self.config["keycloak_url"]
+        token_url = f"{keycloak_url}/protocol/openid-connect/token"
         client_id = self.config["client_id"]
-        client_secret = self.config["client_secret"]
+        client_secret = self.config.get("client_secret", None)
 
         data = {
             "grant_type": "refresh_token",

@@ -1,5 +1,5 @@
 """Model endpoints module."""
-from typing import List, Optional, Dict, Any, Union
+from typing import List, Optional, Dict, Any, Union, Literal
 from fastapi import APIRouter, Depends, HTTPException, status as http_status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -21,9 +21,15 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+class ModelListResponse(BaseModel):
+    """Model list response schema."""
+    data: List['ModelResponse']
+    object: Literal["list"]
+
+
 class ModelResponse(BaseModel):
     """Model response schema."""
-    id: Optional[Union[str,int]] = None
+    id: Optional[Union[str, int]] = None
     url: str
     name: str
     technical_name: str
@@ -56,10 +62,10 @@ class UpdateModelStatusRequest(BaseModel):
     status: LlmModelStatus
 
 
-def map_model_to_response(model: LlmModel) -> ModelResponse:
+def map_model_to_response(model: LlmModel, openai_format: bool=False) -> ModelResponse:
     """Map LlmModel to ModelResponse."""
     return ModelResponse(
-        id=model.name,
+        id=model.name if openai_format else model.id,
         url=model.url,
         name=model.name,
         technical_name=model.technical_name,
@@ -72,9 +78,9 @@ def map_model_to_response(model: LlmModel) -> ModelResponse:
         owned_by=model.technical_name
     )
 
-def map_model_list_to_response(models: List[LlmModel]) -> List[ModelResponse]:
+def map_model_list_to_response(models: List[LlmModel], openai_format: bool=False) -> List[ModelResponse]:
     """Map list of LlmModel to list of ModelResponse."""
-    return [map_model_to_response(model) for model in models]
+    return [map_model_to_response(model, openai_format) for model in models]
 
 
 def get_model_service(db: Session = Depends(get_db)) -> ModelService:
@@ -139,7 +145,7 @@ async def get_models(
     # Apply pagination
     paginated_models = models[skip:skip + limit]
 
-    return map_model_list_to_response(paginated_models)
+    return map_model_list_to_response(paginated_models, False)
 
 
 @router.get("/statistics")
@@ -200,7 +206,7 @@ async def search_models_by_name(
     # Simple name filtering
     filtered_models = [m for m in models if name.lower() in m.name.lower()]
 
-    return map_model_list_to_response(filtered_models)
+    return map_model_list_to_response(filtered_models, False)
 
 @router.post("", response_model=ModelResponse, status_code=http_status.HTTP_201_CREATED)
 @endpoint_handler("create_model")
