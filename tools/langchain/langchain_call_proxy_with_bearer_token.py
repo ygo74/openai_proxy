@@ -91,7 +91,7 @@ def main():
 
 
     # Get access token
-    token_data = get_access_token("admin_user", "admin123")
+    token_data = get_access_token("regular_user", "regular123")
     if token_data is None:
         print("Failed to get access token. Exiting.")
         return

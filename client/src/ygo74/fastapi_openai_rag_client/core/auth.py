@@ -64,7 +64,7 @@ class AuthContext:
             # Create default config
             default_config = {
                 "api_url": "http://localhost:8000",
-                "keycloak_url": "http://localhost:8080/realms/fastapi-openai-rag/protocol/openid-connect/token",
+                "keycloak_url": "http://localhost:8080/realms/fastapi-openai-rag",
                 "client_id": "fastapi-app",
                 "client_secret": ""
             }

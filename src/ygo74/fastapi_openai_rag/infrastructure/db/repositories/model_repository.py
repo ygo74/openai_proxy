@@ -1,7 +1,7 @@
 """SQLAlchemy repository implementation for Model entity."""
 from typing import Optional, List
 from sqlalchemy.orm import Session, selectinload
-from sqlalchemy import select
+from sqlalchemy import select, distinct
 from ....domain.models.llm_model import LlmModel, LlmModelStatus
 from ....domain.repositories.model_repository import IModelRepository
 from ..models.model_orm import ModelORM
@@ -105,12 +105,18 @@ class SQLModelRepository(SQLBaseRepository[LlmModel, ModelORM], IModelRepository
         Returns:
             List[LlmModel]: List of distinct models in the group
         """
+        # First get distinct model IDs for the group
+        subquery = (
+            select(distinct(ModelORM.id))
+            .join(ModelORM.groups)
+            .where(ModelORM.groups.any(id=group_id))
+        )
+
+        # Then fetch the full models with their groups
         stmt = (
             select(ModelORM)
             .options(selectinload(ModelORM.groups))
-            .join(ModelORM.groups)
-            .where(ModelORM.groups.any(id=group_id))
-            .distinct()  # Add distinct to avoid duplicate models
+            .where(ModelORM.id.in_(subquery))
         )
         result = self._session.execute(stmt)
         model_orms = result.scalars().all()
