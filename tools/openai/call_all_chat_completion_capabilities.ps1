@@ -25,7 +25,7 @@ if ($TestFileUpload) {
     python .\tools\openai\openai_call_chat_completions.py `
        --question "describe this file" `
        --model $model `
-       --image-path "C:\Users\Administrator\Pictures\226px-Jenkins_logo.svg.png"
+       --file-path "C:\Users\Administrator\Pictures\226px-Jenkins_logo.svg.png"
 }
 
 
@@ -34,7 +34,7 @@ if ($TestFileUpload -and $TestStreaming) {
     python .\tools\openai\openai_call_chat_completions.py `
        --question "describe this file" `
        --model $model `
-       --image-path "C:\Users\Administrator\Pictures\226px-Jenkins_logo.svg.png" `
+       --file-path "C:\Users\Administrator\Pictures\226px-Jenkins_logo.svg.png" `
        --stream
 }
 

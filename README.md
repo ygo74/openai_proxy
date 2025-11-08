@@ -20,6 +20,10 @@ OpenAI:
 - sdk : https://github.com/openai/openai-python/blob/main/src/openai/types/chat/chat_completion_chunk.py
 - responses API: https://platform.openai.com/docs/api-reference/responses
 
+Azure:
+
+- https://learn.microsoft.com/en-us/azure/ai-foundry/foundry-models/concepts/models-sold-directly-by-azure?tabs=global-standard-aoai%2Cstandard-chat-completions%2Cglobal-standard&pivots=azure-openai
+
 # development
 
 ## Init environment

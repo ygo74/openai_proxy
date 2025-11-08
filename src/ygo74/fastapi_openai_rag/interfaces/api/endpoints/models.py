@@ -1,5 +1,5 @@
 """Model endpoints module."""
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 from fastapi import APIRouter, Depends, HTTPException, status as http_status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -23,7 +23,7 @@ router = APIRouter()
 
 class ModelResponse(BaseModel):
     """Model response schema."""
-    id: Optional[int] = None
+    id: Optional[Union[str,int]] = None
     url: str
     name: str
     technical_name: str
@@ -33,6 +33,7 @@ class ModelResponse(BaseModel):
     groups: List[str]
     created: datetime  # Ajout du champ manquant
     updated: datetime  # Ajout du champ manquant
+    owned_by: str
 
 class ModelCreate(BaseModel):
     """Model creation schema."""
@@ -58,7 +59,7 @@ class UpdateModelStatusRequest(BaseModel):
 def map_model_to_response(model: LlmModel) -> ModelResponse:
     """Map LlmModel to ModelResponse."""
     return ModelResponse(
-        id=model.id,
+        id=model.name,
         url=model.url,
         name=model.name,
         technical_name=model.technical_name,
@@ -67,7 +68,8 @@ def map_model_to_response(model: LlmModel) -> ModelResponse:
         capabilities=model.capabilities,
         groups=[group.name for group in model.groups] if model.groups else [],
         created=model.created,
-        updated=model.updated
+        updated=model.updated,
+        owned_by=model.technical_name
     )
 
 def map_model_list_to_response(models: List[LlmModel]) -> List[ModelResponse]:

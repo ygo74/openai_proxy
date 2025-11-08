@@ -165,7 +165,7 @@ async def create_chat_completion(
 async def list_models(
     service: ChatCompletionService = Depends(get_chat_completion_service),
     user: AuthenticatedUser = Depends(auth_jwt_or_api_key)
-) -> List[ModelResponse]:
+) -> Dict[str, Any]:
     """List available models.
 
     Compatible with OpenAI's /v1/models endpoint.
@@ -185,5 +185,10 @@ async def list_models(
     models = service.get_models_for_user(user)
 
     # Convert domain models to OpenAI API compatible format
-    return map_model_list_to_response(models)
+    map = map_model_list_to_response(models)
+
+    return {
+        "data": map,
+        "object": "list"
+    }
 

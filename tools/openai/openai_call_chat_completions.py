@@ -17,7 +17,7 @@ python openai_call_chat_completions.py --question "What is 2+2?"
 python openai_call_chat_completions.py --question "What time is it in Paris?" --function-tools --auto-execute
 python openai_call_chat_completions.py --question "Latest tech news" --stream
 python openai_call_chat_completions.py --question "Hi, I'm Alice" --follow-up "What's my name?"
-python openai_call_chat_completions.py --question "Describe this image" --image-path ./image.jpg
+python openai_call_chat_completions.py --question "Describe this image" --file-path ./image.jpg
 """
 from __future__ import annotations
 
@@ -47,6 +47,7 @@ logger = logging.getLogger("chat_completions_api_openai_test")
 
 # File type constants
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+PDF_EXTENSIONS = {".pdf"}
 
 # Time zone mapping for function calling
 TIMEZONE_DATA: Dict[str, str] = {
@@ -119,10 +120,20 @@ def file_to_data_url(path: str) -> str:
     return f"data:{mime};base64,{b64}"
 
 
-def build_messages(question: str, image_path: Optional[str] = None,
+def build_messages(question: str, file_path: Optional[str] = None,
                   system_message: Optional[str] = None,
                   previous_messages: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
-    """Build messages array for Chat Completions API."""
+    """Build messages array for Chat Completions API.
+
+    Args:
+        question (str): User question/prompt
+        file_path (Optional[str]): Path to image or PDF file
+        system_message (Optional[str]): System message
+        previous_messages (Optional[List[Dict[str, Any]]]): Previous conversation messages
+
+    Returns:
+        List[Dict[str, Any]]: Messages array for Chat Completions API
+    """
     messages = []
 
     # Add system message if provided
@@ -134,14 +145,16 @@ def build_messages(question: str, image_path: Optional[str] = None,
         messages.extend(previous_messages)
 
     # Create user message with text content
-    if not image_path:
+    if not file_path:
         messages.append({"role": "user", "content": question})
     else:
-        # Create multimodal content with image
-        if os.path.isfile(image_path):
-            _, ext = os.path.splitext(image_path.lower())
+        # Create multimodal content with image or PDF
+        if os.path.isfile(file_path):
+            _, ext = os.path.splitext(file_path.lower())
+
             if ext in IMAGE_EXTENSIONS:
-                data_url = file_to_data_url(image_path)
+                # Handle image files
+                data_url = file_to_data_url(file_path)
                 messages.append({
                     "role": "user",
                     "content": [
@@ -155,10 +168,26 @@ def build_messages(question: str, image_path: Optional[str] = None,
                         }
                     ]
                 })
+            elif ext in PDF_EXTENSIONS:
+                # Handle PDF files
+                data_url = file_to_data_url(file_path)
+                messages.append({
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": question},
+                        {
+                            "type": "file",  # Some models use image_url for PDFs
+                            "file": {
+                                "filename": os.path.basename(file_path),
+                                "file_data": data_url
+                            }
+                        }
+                    ]
+                })
             else:
-                raise ValueError(f"Unsupported image file extension: {ext}")
+                raise ValueError(f"Unsupported file extension: {ext}. Supported: {IMAGE_EXTENSIONS | PDF_EXTENSIONS}")
         else:
-            raise FileNotFoundError(f"Image file not found: {image_path}")
+            raise FileNotFoundError(f"File not found: {file_path}")
 
     return messages
 
@@ -213,7 +242,7 @@ def test_basic_chat(client: OpenAI, args: argparse.Namespace) -> Optional[ChatCo
 
     messages = build_messages(
         args.question,
-        args.image_path,
+        args.file_path,
         args.system_message
     )
 
@@ -254,7 +283,7 @@ def test_function_calling(client: OpenAI, args: argparse.Namespace) -> Optional[
     """Test function calling functionality."""
     logger.info("=== Testing Function Calling ===")
 
-    messages = build_messages(args.question, args.image_path, args.system_message)
+    messages = build_messages(args.question, args.file_path, args.system_message)
     function_tools = build_function_tools()
 
     kwargs: Dict[str, Any] = {
@@ -356,7 +385,7 @@ def test_follow_up(client: OpenAI, args: argparse.Namespace, previous_completion
     # Create messages array with previous interaction
     messages = build_messages(
         args.question,
-        args.image_path,
+        args.file_path,
         args.system_message
     )
 
@@ -414,7 +443,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature")
 
     # Multimodal
-    parser.add_argument("--image-path", help="Optional image file path")
+    parser.add_argument("--file-path", help="Path to image or PDF file for multimodal input")
 
     # Tools and function calling
     parser.add_argument("--function-tools", action="store_true", help="Enable function calling tools")
