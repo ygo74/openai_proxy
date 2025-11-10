@@ -185,7 +185,7 @@ async def list_models(
     models = service.get_models_for_user(user)
 
     # Convert domain models to OpenAI API compatible format
-    map_to_model_response = map_model_list_to_response(models)
+    map_to_model_response = map_model_list_to_response(models, openai_format=True)
 
     return ModelListResponse(
         data=map_to_model_response,
