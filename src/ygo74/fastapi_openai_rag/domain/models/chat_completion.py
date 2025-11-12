@@ -13,6 +13,7 @@ class ChatMessageRole(str, Enum):
     ASSISTANT = "assistant"
     FUNCTION = "function"
     TOOL = "tool"
+    DEVELOPER = "developer"
 
 class MessageContentText(BaseModel):
     """Text content part."""
