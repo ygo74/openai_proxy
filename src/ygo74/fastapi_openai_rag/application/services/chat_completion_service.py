@@ -1,6 +1,7 @@
 """Chat completion service for handling OpenAI-compatible requests."""
 import time
 from typing import Dict, Any, List, AsyncGenerator
+from random import choice
 
 from ...domain.models.autenticated_user import AuthenticatedUser
 from ...domain.models.chat_completion import (
@@ -468,21 +469,22 @@ class ChatCompletionService:
             if not models:
                 raise EntityNotFoundError("Model", model_name)
 
-            # Take the first model found
-            model = models[0]
+            # Gather candidate models (match on name or technical_name)
+            candidates: List[LlmModel] = [
+                m for m in user.models if m.name == model_name
+            ]
 
-            # If user is admin, allow access
-            if "admin" in user.groups:
-                return model
-
-            # For regular users, check if they have access to this model
-            # Get all models the user has access to
-            accessible_models = user.models
-
-            # Check if requested model is in user's accessible models
-            if not any(m.id == model.id for m in accessible_models):
+            if not candidates or len(candidates) == 0:
                 logger.warning(f"User with groups {user} attempted unauthorized access to model {model_name}")
                 raise PermissionError(f"Not authorized to access model {model_name}")
+
+            # Pick one at random if multiple
+            candidate_model = choice(candidates)
+
+            # Find candidate model in approved models from repository
+            model = next((m for m in models if m.id == candidate_model.id), None)
+            if not model:
+                raise EntityNotFoundError("Model", model_name)
 
             return model
 
