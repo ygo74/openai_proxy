@@ -254,10 +254,7 @@ class UniqueProxyClient(LLMClientProtocol):
         """
         unique_messages = []
         for msg in messages:
-            message_dict = {
-                "role": msg.role,
-                "content": msg.content or ""
-            }
+            message_dict = msg.model_dump(exclude_none=True)
 
             # Add name if available
             if hasattr(msg, 'name') and msg.name:
