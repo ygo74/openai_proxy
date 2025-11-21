@@ -341,6 +341,7 @@ class ModelService:
                     provider=provider,
                     status=existing_model.status,
                     capabilities=capabilities,
+                    groups=existing_model.groups or [],
                     created=existing_model.created,
                     updated=datetime.now(timezone.utc)
                 )

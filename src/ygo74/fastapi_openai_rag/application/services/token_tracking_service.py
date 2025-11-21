@@ -17,6 +17,7 @@ from openai.types.responses.response_completed_event import ResponseCompletedEve
 from openai.types.completion_usage import CompletionUsage
 # from openai.types.create_embedding_response import CreateEmbeddingResponse
 from ...domain.models.embedding import CreateEmbeddingResponse
+from ...domain.models.chat_completion import ChatCompletionResponse
 
 from ...domain.unit_of_work import UnitOfWork
 from ...domain.models.autenticated_user import AuthenticatedUser
@@ -175,6 +176,8 @@ class TokenTrackingService:
         try:
             # Use isinstance for type-safe extraction
             if isinstance(response, ChatCompletion):
+                return self._extract_usage_from_chat_completion(response)
+            elif isinstance(response, ChatCompletionResponse):
                 return self._extract_usage_from_chat_completion(response)
             elif isinstance(response, ChatCompletionChunk):
                 return self._extract_usage_from_chat_completion_chunk(response)

@@ -99,7 +99,7 @@ class UniqueProxyClient(LLMClientProtocol):
             if param_value is not None:
                 options[param_name] = param_value
 
-        logger.debug(f"Making Unique chat completion request for model: {model}")
+        logger.info(f"Making Unique chat completion request for model: {model}")
         logger.debug(f"Request options: {options}")
 
         try:
@@ -109,7 +109,7 @@ class UniqueProxyClient(LLMClientProtocol):
                 user_id=self.user_id,
                 model=model,
                 messages=unique_messages,
-                # timeout=int(request.timeout * 1000) if request.timeout else None,  # Convert seconds to ms
+                timeout=int(request.timeout * 1000) if request.timeout else None,  # Convert seconds to ms
                 **options
             )
 
