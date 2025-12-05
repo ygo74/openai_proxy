@@ -137,7 +137,7 @@ class ChatCompletionRequest(BaseModel):
     # prompt_cache_key: str | Omit = omit,
     # prompt_cache_retention: Optional[Literal["in-memory", "24h"]] | Omit = omit,
     # reasoning_effort: Optional[ReasoningEffort] | Omit = omit,
-    response_format: Optional[Dict[str, str]] = None
+    response_format: Optional[Dict[str, Any]] = None
     # safety_identifier: str | Omit = omit,
     seed: Optional[int] = None
     # service_tier: Optional[Literal["auto", "default", "flex", "scale", "priority"]] | Omit = omit,

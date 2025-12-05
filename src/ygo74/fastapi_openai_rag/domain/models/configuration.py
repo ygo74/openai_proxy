@@ -85,6 +85,13 @@ class ForwardersConfig(BaseModel):
     print: PrintForwarderConfig = PrintForwarderConfig()
     http: List[HttpForwarderConfig] = []
 
+class CORSConfig(BaseModel):
+    """CORS configuration settings."""
+    allow_origins: List[str] = ["*"]
+    allow_methods: List[str] = ["*"]
+    allow_headers: List[str] = ["*"]
+    allow_credentials: bool = False
+
 class AppConfig(BaseModel):
     """AppConfig is a configuration model for the application.
 
@@ -99,6 +106,7 @@ class AppConfig(BaseModel):
     db_url: str
     forwarders: ForwardersConfig = ForwardersConfig()
     audit: AuditConfig = AuditConfig()
+    cors: CORSConfig = CORSConfig()
 
     @classmethod
     def load_from_json(cls, config_path: str = "config.json") -> "AppConfig":
@@ -150,12 +158,18 @@ class AppConfig(BaseModel):
             if "audit" in config_data:
                 audit_config = AuditConfig(**config_data["audit"])
 
+            # Process CORS configuration
+            cors_config = CORSConfig()
+            if "cors" in config_data:
+                cors_config = CORSConfig(**config_data["cors"])
+
             return cls(
                 model_configs=processed_configs,
                 db_type=config_data.get("db_type", "sqlite"),
                 db_url=config_data.get("db_url"),
                 forwarders=forwarders_config,
-                audit=audit_config
+                audit=audit_config,
+                cors=cors_config
             )
 
     def to_dict(self) -> Dict[str, Any]:

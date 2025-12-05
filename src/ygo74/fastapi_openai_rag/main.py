@@ -79,13 +79,13 @@ app.add_middleware(MetricsMiddleware)
 config = config_service.get_config()
 AuditFactory.create_audit_middleware(app, config)
 
-# Configure CORS
+# Configure CORS from configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Modify this in production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=config.cors.allow_origins,
+    allow_credentials=config.cors.allow_credentials,
+    allow_methods=config.cors.allow_methods,
+    allow_headers=config.cors.allow_headers,
 )
 
 # Include API router
