@@ -117,6 +117,25 @@
             "stopOnEntry": false
         },
         {
+            "name": "List Models - All",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/tools/openai/openai_list_models.py",
+            "args": [
+                "--verbose"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}",
+                "LOG_LEVEL": "DEBUG",
+                "PROXY_URL": "http://localhost:8000",
+                "OPENAI_API_KEY": "sk-16AwYoZqNoVKjfMz-Mr8TeuaXk3O6JeLwPdQSAQiF0s"
+            },
+            "python": "${workspaceFolder}/venv/fastapi/Scripts/python.exe",
+            "justMyCode": false
+        },
+        {
             "name": "Debug Chat Completions API Test (Stream)",
             "type": "python",
             "request": "launch",
