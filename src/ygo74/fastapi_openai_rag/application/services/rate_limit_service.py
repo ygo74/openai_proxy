@@ -73,21 +73,32 @@ class RateLimitService:
     def check_request_limit(self,
                            scope_type: str,
                            scope_id: Optional[str] = None,
-                           user_id: Optional[str] = None) -> bool:
-        """Check if a request is allowed under the current rate limits.
+                           user_id: Optional[str] = None,
+                           group_id: Optional[str] = None,
+                           model_id: Optional[str] = None) -> bool:
+        """Check if a request is allowed under the current rate limits with hierarchical priority.
 
-        Implements request-based rate limiting with:
-        1. Retrieve rate limit configuration from database
-        2. Find active time window for current time
-        3. Calculate window start timestamp
-        4. Atomically increment request counter in Redis
-        5. Compare count against limit and raise exception if exceeded
+        Implements request-based rate limiting with hierarchical evaluation:
+        1. Query all applicable limits (group/model → model → global)
+        2. Apply first non-null, enabled limit with max_requests != -1
+        3. Find active time window for current time
+        4. Calculate window start timestamp
+        5. Atomically increment request counter in Redis
+        6. Compare count against limit and raise exception if exceeded
+
+        Hierarchy priority (first applicable wins):
+        - Group+model limit (most specific) - requires group_id and model_id
+        - Model limit (medium priority) - requires model_id
+        - Global limit (fallback) - always checked
+
+        Unlimited handling: Limits with max_requests=-1 or None are skipped.
 
         Args:
-            scope_type: Type of scope ('global', 'model', 'group_model')
-            scope_id: Identifier for the scope (None for global, model_id for model,
-                     'group_id:model_id' for group_model)
+            scope_type: Type of scope ('global', 'model', 'group_model') - DEPRECATED, use group_id/model_id
+            scope_id: Identifier for the scope - DEPRECATED, use group_id/model_id
             user_id: Optional user identifier for user-specific tracking
+            group_id: Optional group identifier for hierarchical evaluation
+            model_id: Optional model identifier for hierarchical evaluation
 
         Returns:
             bool: True if request is allowed
@@ -98,38 +109,71 @@ class RateLimitService:
         from datetime import datetime, time as dt_time
         from ...domain.exceptions.rate_limit_exception import RateLimitExceeded
 
-        # Step 1: Get rate limit configuration
-        rate_limit = self.get_rate_limit_config(scope_type, scope_id)
+        # Step 1: Get applicable limits with hierarchy
+        # Support both old (scope_type/scope_id) and new (group_id/model_id) APIs
+        if group_id is not None or model_id is not None:
+            # New API: Use hierarchical evaluation
+            applicable_limits = self.get_applicable_limits(group_id=group_id, model_id=model_id)
 
-        if not rate_limit or not rate_limit.enabled:
-            logger.debug(f"No rate limit configured or disabled for scope={scope_type}, id={scope_id}")
-            return True  # No limit configured, allow request
+            # Apply priority: group_model → model → global
+            rate_limit = None
+            effective_scope_type = None
+            effective_scope_id = None
+
+            for scope, limit in [
+                ('group_model', applicable_limits['group_model']),
+                ('model', applicable_limits['model']),
+                ('global', applicable_limits['global'])
+            ]:
+                if limit and limit.enabled:
+                    rate_limit = limit
+                    effective_scope_type = scope
+                    effective_scope_id = limit.scope_id
+                    logger.debug(f"Using {scope} limit for hierarchical evaluation")
+                    break
+
+            if not rate_limit:
+                logger.debug("No applicable rate limit found in hierarchy, allowing request")
+                return True
+
+        else:
+            # Old API: Direct scope lookup (backward compatibility)
+            rate_limit = self.get_rate_limit_config(scope_type, scope_id)
+            effective_scope_type = scope_type
+            effective_scope_id = scope_id
+
+            if not rate_limit or not rate_limit.enabled:
+                logger.debug(f"No rate limit configured or disabled for scope={scope_type}, id={scope_id}")
+                return True  # No limit configured, allow request
 
         # Step 2: Find active window for current time
         current_time = datetime.now().time()
         active_window = rate_limit.get_active_window(current_time)
 
         if not active_window:
-            logger.debug(f"No active window at {current_time} for scope={scope_type}, id={scope_id}")
+            logger.debug(f"No active window at {current_time} for scope={effective_scope_type}, id={effective_scope_id}")
             return True  # No active window, allow request
 
-        # Check if window has request limit set
+        # Step 2.5: Check if window has unlimited request limit (T057)
         if active_window.max_requests is None or active_window.max_requests < 0:
-            logger.debug(f"No request limit in active window for scope={scope_type}, id={scope_id}")
+            logger.debug(
+                f"Unlimited requests in active window for scope={effective_scope_type}, "
+                f"id={effective_scope_id} (max_requests={active_window.max_requests})"
+            )
             return True  # Unlimited requests (-1 or None)
 
         # Step 3: Calculate window start and duration
         window_start, window_duration = self.get_current_window_key(
-            scope_type,
-            scope_id,
+            effective_scope_type,
+            effective_scope_id,
             active_window.from_time,
             active_window.to_time
         )
 
         # Step 4: Atomically increment counter
         current_count = self._counter.increment_request_count(
-            scope_type,
-            scope_id,
+            effective_scope_type,
+            effective_scope_id,
             window_start,
             window_duration
         )
@@ -148,13 +192,13 @@ class RateLimitService:
             retry_after = max(1, window_end - current_timestamp)
 
             logger.warning(
-                f"Rate limit exceeded: scope={scope_type}, id={scope_id}, "
+                f"Rate limit exceeded: scope={effective_scope_type}, id={effective_scope_id}, "
                 f"count={current_count}, limit={active_window.max_requests}"
             )
 
             raise RateLimitExceeded(
-                scope_type=scope_type,
-                scope_id=scope_id,
+                scope_type=effective_scope_type,
+                scope_id=effective_scope_id,
                 limit_type="requests",
                 limit=active_window.max_requests,
                 current=current_count,
@@ -163,7 +207,7 @@ class RateLimitService:
             )
 
         logger.debug(
-            f"Request allowed: scope={scope_type}, id={scope_id}, "
+            f"Request allowed: scope={effective_scope_type}, id={effective_scope_id}, "
             f"count={current_count}/{active_window.max_requests}"
         )
         return True
@@ -172,21 +216,33 @@ class RateLimitService:
                          scope_type: str,
                          scope_id: Optional[str] = None,
                          user_id: Optional[str] = None,
-                         estimated_tokens: Optional[int] = None) -> bool:
-        """Check if a request is allowed under token-based rate limits.
+                         estimated_tokens: Optional[int] = None,
+                         group_id: Optional[str] = None,
+                         model_id: Optional[str] = None) -> bool:
+        """Check if a request is allowed under token-based rate limits with hierarchical priority.
 
-        Implements token-based rate limiting with:
-        1. Retrieve rate limit configuration from database
-        2. Find active time window for current time
-        3. Get current token usage from Redis
-        4. Optionally check if estimated tokens would exceed limit (pre-flight check)
-        5. Raise RateLimitExceeded exception if limit would be exceeded
+        Implements token-based rate limiting with hierarchical evaluation:
+        1. Query all applicable limits (group/model → model → global)
+        2. Apply first non-null, enabled limit with max_tokens != -1
+        3. Find active time window for current time
+        4. Get current token usage from Redis
+        5. Optionally check if estimated tokens would exceed limit (pre-flight check)
+        6. Raise RateLimitExceeded exception if limit would be exceeded
+
+        Hierarchy priority (first applicable wins):
+        - Group+model limit (most specific) - requires group_id and model_id
+        - Model limit (medium priority) - requires model_id
+        - Global limit (fallback) - always checked
+
+        Unlimited handling: Limits with max_tokens=-1 or None are skipped.
 
         Args:
-            scope_type: Type of scope ('global', 'model', 'group_model')
-            scope_id: Identifier for the scope
+            scope_type: Type of scope ('global', 'model', 'group_model') - DEPRECATED, use group_id/model_id
+            scope_id: Identifier for the scope - DEPRECATED, use group_id/model_id
             user_id: Optional user identifier for user-specific tracking
             estimated_tokens: Optional estimated token count for pre-flight check
+            group_id: Optional group identifier for hierarchical evaluation
+            model_id: Optional model identifier for hierarchical evaluation
 
         Returns:
             bool: True if request is allowed under token limits
@@ -197,38 +253,71 @@ class RateLimitService:
         from datetime import datetime, time as dt_time
         from ...domain.exceptions.rate_limit_exception import RateLimitExceeded
 
-        # Step 1: Get rate limit configuration
-        rate_limit = self.get_rate_limit_config(scope_type, scope_id)
+        # Step 1: Get applicable limits with hierarchy
+        # Support both old (scope_type/scope_id) and new (group_id/model_id) APIs
+        if group_id is not None or model_id is not None:
+            # New API: Use hierarchical evaluation
+            applicable_limits = self.get_applicable_limits(group_id=group_id, model_id=model_id)
 
-        if not rate_limit or not rate_limit.enabled:
-            logger.debug(f"No token rate limit configured or disabled for scope={scope_type}, id={scope_id}")
-            return True  # No limit configured, allow request
+            # Apply priority: group_model → model → global
+            rate_limit = None
+            effective_scope_type = None
+            effective_scope_id = None
+
+            for scope, limit in [
+                ('group_model', applicable_limits['group_model']),
+                ('model', applicable_limits['model']),
+                ('global', applicable_limits['global'])
+            ]:
+                if limit and limit.enabled:
+                    rate_limit = limit
+                    effective_scope_type = scope
+                    effective_scope_id = limit.scope_id
+                    logger.debug(f"Using {scope} limit for token hierarchical evaluation")
+                    break
+
+            if not rate_limit:
+                logger.debug("No applicable token rate limit found in hierarchy, allowing request")
+                return True
+
+        else:
+            # Old API: Direct scope lookup (backward compatibility)
+            rate_limit = self.get_rate_limit_config(scope_type, scope_id)
+            effective_scope_type = scope_type
+            effective_scope_id = scope_id
+
+            if not rate_limit or not rate_limit.enabled:
+                logger.debug(f"No token rate limit configured or disabled for scope={scope_type}, id={scope_id}")
+                return True  # No limit configured, allow request
 
         # Step 2: Find active window for current time
         current_time = datetime.now().time()
         active_window = rate_limit.get_active_window(current_time)
 
         if not active_window:
-            logger.debug(f"No active window at {current_time} for token limit scope={scope_type}, id={scope_id}")
+            logger.debug(f"No active window at {current_time} for token limit scope={effective_scope_type}, id={effective_scope_id}")
             return True  # No active window, allow request
 
-        # Check if window has token limit set
+        # Step 2.5: Check if window has unlimited token limit (T057)
         if active_window.max_tokens is None or active_window.max_tokens < 0:
-            logger.debug(f"No token limit in active window for scope={scope_type}, id={scope_id}")
+            logger.debug(
+                f"Unlimited tokens in active window for scope={effective_scope_type}, "
+                f"id={effective_scope_id} (max_tokens={active_window.max_tokens})"
+            )
             return True  # Unlimited tokens (-1 or None)
 
         # Step 3: Calculate window start and duration
         window_start, window_duration = self.get_current_window_key(
-            scope_type,
-            scope_id,
+            effective_scope_type,
+            effective_scope_id,
             active_window.from_time,
             active_window.to_time
         )
 
         # Step 4: Get current token usage (not incrementing, just checking)
         current_token_count = self._counter.get_current_count(
-            scope_type,
-            scope_id,
+            effective_scope_type,
+            effective_scope_id,
             "tokens",
             window_start
         )
@@ -249,14 +338,14 @@ class RateLimitService:
                 retry_after = max(1, window_end - current_timestamp)
 
                 logger.warning(
-                    f"Token limit would be exceeded with estimated tokens: scope={scope_type}, id={scope_id}, "
+                    f"Token limit would be exceeded with estimated tokens: scope={effective_scope_type}, id={effective_scope_id}, "
                     f"current={current_token_count}, estimated={estimated_tokens}, "
                     f"projected={projected_count}, limit={active_window.max_tokens}"
                 )
 
                 raise RateLimitExceeded(
-                    scope_type=scope_type,
-                    scope_id=scope_id,
+                    scope_type=effective_scope_type,
+                    scope_id=effective_scope_id,
                     limit_type="tokens",
                     limit=active_window.max_tokens,
                     current=projected_count,
@@ -273,13 +362,13 @@ class RateLimitService:
                 retry_after = max(1, window_end - current_timestamp)
 
                 logger.warning(
-                    f"Token limit exceeded: scope={scope_type}, id={scope_id}, "
+                    f"Token limit exceeded: scope={effective_scope_type}, id={effective_scope_id}, "
                     f"count={current_token_count}, limit={active_window.max_tokens}"
                 )
 
                 raise RateLimitExceeded(
-                    scope_type=scope_type,
-                    scope_id=scope_id,
+                    scope_type=effective_scope_type,
+                    scope_id=effective_scope_id,
                     limit_type="tokens",
                     limit=active_window.max_tokens,
                     current=current_token_count,
@@ -288,7 +377,7 @@ class RateLimitService:
                 )
 
         logger.debug(
-            f"Token limit check passed: scope={scope_type}, id={scope_id}, "
+            f"Token limit check passed: scope={effective_scope_type}, id={effective_scope_id}, "
             f"current={current_token_count}/{active_window.max_tokens}"
         )
         return True

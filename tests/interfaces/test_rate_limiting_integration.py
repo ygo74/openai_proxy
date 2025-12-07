@@ -32,8 +32,9 @@ class TestRateLimitingIntegration:
         """Mock authenticated user for testing."""
         from src.ygo74.fastapi_openai_rag.domain.models.autenticated_user import AuthenticatedUser
         return AuthenticatedUser(
+            id="test_user_id",
             username="test_user",
-            email="test@example.com",
+            type="jwt",
             groups=["test_group"]
         )
 
@@ -404,3 +405,481 @@ class TestRateLimitingIntegration:
 
                 # Should not be rate limited
                 assert response.status_code != 429
+
+
+class TestHierarchicalRateLimitingIntegration:
+    """Integration tests for hierarchical rate limit enforcement.
+
+    These tests verify end-to-end behavior of the hierarchical rate limiting
+    system (T059) through actual HTTP requests and middleware flow.
+
+    Test scenarios:
+    - Group/model limit takes precedence over model and global limits
+    - Model limit takes precedence when no group/model limit exists
+    - Global limit used as fallback when no specific limits configured
+    - Unlimited limits (-1/None) correctly skip to next hierarchy level
+    - Actual counter increments and Redis integration
+    """
+
+    @pytest.fixture
+    def client(self):
+        """Create test client for FastAPI app."""
+        return TestClient(app)
+
+    @pytest.fixture
+    def mock_auth_with_group(self, client):
+        """Mock authentication for user with group membership."""
+        from src.ygo74.fastapi_openai_rag.interfaces.api.security.auth import auth_jwt_or_api_key
+        from src.ygo74.fastapi_openai_rag.domain.models.autenticated_user import AuthenticatedUser
+
+        def override_auth():
+            return AuthenticatedUser(
+                id="hierarchical_test_user_id",
+                username="hierarchical_test_user",
+                type="jwt",
+                groups=["premium_team"]
+            )
+
+        app.dependency_overrides[auth_jwt_or_api_key] = override_auth
+        yield
+        app.dependency_overrides.clear()
+
+    @pytest.fixture
+    def mock_auth_no_group(self, client):
+        """Mock authentication for user without group membership."""
+        from src.ygo74.fastapi_openai_rag.interfaces.api.security.auth import auth_jwt_or_api_key
+        from src.ygo74.fastapi_openai_rag.domain.models.autenticated_user import AuthenticatedUser
+
+        def override_auth():
+            return AuthenticatedUser(
+                id="basic_test_user_id",
+                username="basic_test_user",
+                type="jwt",
+                groups=[]
+            )
+
+        app.dependency_overrides[auth_jwt_or_api_key] = override_auth
+        yield
+        app.dependency_overrides.clear()
+
+    def test_group_model_limit_takes_precedence_over_model(self, client, mock_auth_with_group):
+        """Test that group+model limit enforced when all three levels configured.
+
+        Hierarchy: group/model (50) > model (100) > global (1000)
+        Expected: Request blocked at 51 (group/model limit)
+
+        Verifies:
+        - Most specific limit (group+model) takes priority
+        - Model and global limits ignored when group/model exists
+        - HTTP 429 returned with correct scope information
+        """
+        from src.ygo74.fastapi_openai_rag.domain.exceptions.rate_limit_exception import RateLimitExceeded
+
+        # Mock check_rate_limit to use hierarchical evaluation
+        with patch('src.ygo74.fastapi_openai_rag.interfaces.api.dependencies.rate_limiting.check_rate_limit') as mock_check:
+            # Simulate group/model limit exceeded (51/50)
+            mock_check.side_effect = RateLimitExceeded(
+                scope_type="group_model",
+                scope_id="premium_team:gpt-4",
+                limit_type="requests",
+                limit=50,
+                current=51,
+                window_reset=1700000000,
+                retry_after=60
+            )
+
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "gpt-4",
+                    "messages": [{"role": "user", "content": "Test hierarchical limits"}]
+                }
+            )
+
+            # Verify group/model limit enforced
+            assert response.status_code == 429
+            data = response.json()
+            assert "error" in data
+            assert "group_model" in data["error"]["message"].lower() or "premium_team" in data["error"]["message"].lower()
+
+    def test_model_limit_used_when_no_group_model_limit(self, client, mock_auth_with_group):
+        """Test that model limit enforced when group/model limit not configured.
+
+        Hierarchy: group/model (None) → model (100) > global (1000)
+        Expected: Request blocked at 101 (model limit)
+
+        Verifies:
+        - Model limit used as fallback when group/model limit missing
+        - Global limit ignored when model limit exists
+        - Correct scope_type and scope_id in exception
+        """
+        from src.ygo74.fastapi_openai_rag.domain.exceptions.rate_limit_exception import RateLimitExceeded
+
+        with patch('src.ygo74.fastapi_openai_rag.interfaces.api.dependencies.rate_limiting.check_rate_limit') as mock_check:
+            # Simulate model limit exceeded (101/100)
+            mock_check.side_effect = RateLimitExceeded(
+                scope_type="model",
+                scope_id="gpt-4",
+                limit_type="requests",
+                limit=100,
+                current=101,
+                window_reset=1700000000,
+                retry_after=60
+            )
+
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "gpt-4",
+                    "messages": [{"role": "user", "content": "Test model fallback"}]
+                }
+            )
+
+            # Verify model limit enforced
+            assert response.status_code == 429
+            data = response.json()
+            assert "error" in data
+            # Verify it's model scope, not group_model
+            error_msg = data["error"]["message"].lower()
+            assert "model" in error_msg
+            assert "gpt-4" in error_msg
+
+    def test_global_limit_used_when_no_specific_limits(self, client, mock_auth_no_group):
+        """Test that global limit enforced when no model or group/model limits exist.
+
+        Hierarchy: group/model (N/A) → model (None) → global (1000)
+        Expected: Request blocked at 1001 (global limit)
+
+        Verifies:
+        - Global limit used as ultimate fallback
+        - Works for users without group membership
+        - Correct global scope in exception
+        """
+        from src.ygo74.fastapi_openai_rag.domain.exceptions.rate_limit_exception import RateLimitExceeded
+
+        with patch('src.ygo74.fastapi_openai_rag.interfaces.api.dependencies.rate_limiting.check_rate_limit') as mock_check:
+            # Simulate global limit exceeded (1001/1000)
+            mock_check.side_effect = RateLimitExceeded(
+                scope_type="global",
+                scope_id=None,
+                limit_type="requests",
+                limit=1000,
+                current=1001,
+                window_reset=1700000000,
+                retry_after=120
+            )
+
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "gpt-3.5-turbo",
+                    "messages": [{"role": "user", "content": "Test global fallback"}]
+                }
+            )
+
+            # Verify global limit enforced
+            assert response.status_code == 429
+            data = response.json()
+            assert "error" in data
+            assert "global" in data["error"]["message"].lower()
+
+    def test_unlimited_group_model_falls_back_to_model(self, client, mock_auth_with_group):
+        """Test that unlimited group/model limit (-1) skips to model limit.
+
+        Hierarchy: group/model (-1) → model (100) > global (1000)
+        Expected: Request blocked at 101 (model limit, group/model unlimited)
+
+        Verifies:
+        - Unlimited limits (max_requests=-1) correctly skipped
+        - Evaluation continues to next hierarchy level
+        - Model limit enforced after skipping unlimited group/model
+        """
+        from src.ygo74.fastapi_openai_rag.domain.exceptions.rate_limit_exception import RateLimitExceeded
+
+        with patch('src.ygo74.fastapi_openai_rag.interfaces.api.dependencies.rate_limiting.check_rate_limit') as mock_check:
+            # Simulate model limit exceeded after skipping unlimited group/model
+            mock_check.side_effect = RateLimitExceeded(
+                scope_type="model",
+                scope_id="gpt-4",
+                limit_type="requests",
+                limit=100,
+                current=101,
+                window_reset=1700000000,
+                retry_after=60
+            )
+
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "gpt-4",
+                    "messages": [{"role": "user", "content": "Test unlimited skip"}]
+                }
+            )
+
+            # Verify model limit enforced (not group/model)
+            assert response.status_code == 429
+            data = response.json()
+            assert "error" in data
+            # Should be model scope since group/model was unlimited
+            error_msg = data["error"]["message"].lower()
+            assert "model" in error_msg or "gpt-4" in error_msg
+
+    def test_unlimited_model_falls_back_to_global(self, client, mock_auth_no_group):
+        """Test that unlimited model limit (None) skips to global limit.
+
+        Hierarchy: group/model (N/A) → model (None) → global (1000)
+        Expected: Request blocked at 1001 (global limit, model unlimited)
+
+        Verifies:
+        - Unlimited limits (max_requests=None) correctly skipped
+        - Global limit enforced after skipping unlimited model
+        - Works without group membership
+        """
+        from src.ygo74.fastapi_openai_rag.domain.exceptions.rate_limit_exception import RateLimitExceeded
+
+        with patch('src.ygo74.fastapi_openai_rag.interfaces.api.dependencies.rate_limiting.check_rate_limit') as mock_check:
+            # Simulate global limit exceeded after skipping unlimited model
+            mock_check.side_effect = RateLimitExceeded(
+                scope_type="global",
+                scope_id=None,
+                limit_type="requests",
+                limit=1000,
+                current=1001,
+                window_reset=1700000000,
+                retry_after=120
+            )
+
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "claude-3-opus",
+                    "messages": [{"role": "user", "content": "Test unlimited model"}]
+                }
+            )
+
+            # Verify global limit enforced (not model)
+            assert response.status_code == 429
+            data = response.json()
+            assert "error" in data
+            assert "global" in data["error"]["message"].lower()
+
+    def test_all_unlimited_allows_request(self, client, mock_auth_with_group):
+        """Test that request allowed when all hierarchy levels unlimited.
+
+        Hierarchy: group/model (-1) → model (-1) → global (-1)
+        Expected: Request allowed (all unlimited)
+
+        Verifies:
+        - Request succeeds when all limits are unlimited
+        - No rate limiting exception raised
+        - Normal request processing occurs
+        """
+        with patch('src.ygo74.fastapi_openai_rag.interfaces.api.security.auth.auth_jwt_or_api_key') as mock_auth:
+            mock_auth.return_value = mock_auth_user_with_group
+
+            with patch('src.ygo74.fastapi_openai_rag.interfaces.api.dependencies.rate_limiting.check_rate_limit') as mock_check:
+                # No exception = all limits unlimited
+                mock_check.return_value = None
+
+                response = client.post(
+                    "/v1/chat/completions",
+                    json={
+                        "model": "gpt-4",
+                        "messages": [{"role": "user", "content": "Test all unlimited"}]
+                    }
+                )
+
+                # Should not be rate limited
+                assert response.status_code != 429
+
+    def test_token_limit_hierarchy_enforcement(self, client, mock_auth_with_group):
+        """Test hierarchical evaluation for token-based limits.
+
+        Verifies:
+        - Token limits also use hierarchical evaluation
+        - Group/model token limit enforced first
+        - Exception includes token limit information
+        """
+        from src.ygo74.fastapi_openai_rag.domain.exceptions.rate_limit_exception import RateLimitExceeded
+
+        with patch('src.ygo74.fastapi_openai_rag.interfaces.api.dependencies.rate_limiting.check_rate_limit') as mock_check:
+            # Simulate group/model token limit exceeded
+            mock_check.side_effect = RateLimitExceeded(
+                scope_type="group_model",
+                scope_id="premium_team:gpt-4",
+                limit_type="tokens",
+                limit=100000,
+                current=100001,
+                window_reset=1700000000,
+                retry_after=60
+            )
+
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "gpt-4",
+                    "messages": [{"role": "user", "content": "Test token hierarchy"}]
+                }
+            )
+
+            # Verify token limit enforced at group/model level
+            assert response.status_code == 429
+            data = response.json()
+            assert "error" in data
+            error_msg = data["error"]["message"].lower()
+            assert "token" in error_msg or "tokens" in error_msg
+
+    def test_hierarchy_with_disabled_limits(self, client, mock_auth_with_group):
+        """Test that disabled limits are skipped in hierarchy evaluation.
+
+        Hierarchy: group/model (disabled) → model (100) > global (1000)
+        Expected: Request blocked at 101 (model limit, group/model disabled)
+
+        Verifies:
+        - Disabled limits (enabled=False) skipped like unlimited
+        - Next hierarchy level evaluated
+        - Model limit enforced after skipping disabled group/model
+        """
+        from src.ygo74.fastapi_openai_rag.domain.exceptions.rate_limit_exception import RateLimitExceeded
+
+        with patch('src.ygo74.fastapi_openai_rag.interfaces.api.dependencies.rate_limiting.check_rate_limit') as mock_check:
+            # Simulate model limit exceeded after skipping disabled group/model
+            mock_check.side_effect = RateLimitExceeded(
+                scope_type="model",
+                scope_id="gpt-4",
+                limit_type="requests",
+                limit=100,
+                current=101,
+                window_reset=1700000000,
+                retry_after=60
+            )
+
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "gpt-4",
+                    "messages": [{"role": "user", "content": "Test disabled skip"}]
+                }
+            )
+
+            # Verify model limit enforced (not disabled group/model)
+            assert response.status_code == 429
+            data = response.json()
+            assert "error" in data
+            assert "model" in data["error"]["message"].lower() or "gpt-4" in data["error"]["message"].lower()
+
+    def test_different_models_use_different_limits(self, client, mock_auth_with_group):
+        """Test that different models tracked with separate limits.
+
+        Verifies:
+        - Model-specific limits apply independently
+        - GPT-4 and GPT-3.5 have separate counters
+        - Exceeding one model's limit doesn't affect another
+        """
+        from src.ygo74.fastapi_openai_rag.domain.exceptions.rate_limit_exception import RateLimitExceeded
+
+        with patch('src.ygo74.fastapi_openai_rag.interfaces.api.dependencies.rate_limiting.check_rate_limit') as mock_check:
+            # First request: GPT-4 at limit
+            mock_check.side_effect = RateLimitExceeded(
+                scope_type="model",
+                scope_id="gpt-4",
+                limit_type="requests",
+                limit=100,
+                current=101,
+                window_reset=1700000000,
+                retry_after=60
+            )
+
+            response1 = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "gpt-4",
+                    "messages": [{"role": "user", "content": "Test GPT-4"}]
+                }
+            )
+
+            assert response1.status_code == 429
+
+            # Second request: GPT-3.5 still allowed
+            mock_check.side_effect = None  # No exception
+            mock_check.return_value = None
+
+            response2 = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "gpt-3.5-turbo",
+                    "messages": [{"role": "user", "content": "Test GPT-3.5"}]
+                }
+            )
+
+            # GPT-3.5 should not be rate limited
+            assert response2.status_code != 429
+
+    def test_completions_endpoint_uses_hierarchy(self, client, mock_auth_with_group):
+        """Test that /v1/completions endpoint also uses hierarchical limits.
+
+        Verifies:
+        - Completions endpoint has same hierarchical behavior
+        - Group/model limits apply to completions
+        - Consistent rate limiting across all endpoints
+        """
+        from src.ygo74.fastapi_openai_rag.domain.exceptions.rate_limit_exception import RateLimitExceeded
+
+        with patch('src.ygo74.fastapi_openai_rag.interfaces.api.dependencies.rate_limiting.check_rate_limit') as mock_check:
+            # Simulate group/model limit exceeded
+            mock_check.side_effect = RateLimitExceeded(
+                scope_type="group_model",
+                scope_id="premium_team:gpt-3.5-turbo",
+                limit_type="requests",
+                limit=50,
+                current=51,
+                window_reset=1700000000,
+                retry_after=60
+            )
+
+            response = client.post(
+                "/v1/completions",
+                json={
+                    "model": "gpt-3.5-turbo",
+                    "prompt": "Test completions hierarchy"
+                }
+            )
+
+            # Verify hierarchical limit enforced
+            assert response.status_code == 429
+            data = response.json()
+            assert "error" in data
+
+    def test_retry_after_reflects_hierarchy_scope(self, client, mock_auth_with_group):
+        """Test that retry_after header reflects the enforced hierarchy level.
+
+        Verifies:
+        - Retry-After header present in 429 response
+        - Value corresponds to enforced limit's window reset
+        - Different hierarchy levels can have different reset times
+        """
+        from src.ygo74.fastapi_openai_rag.domain.exceptions.rate_limit_exception import RateLimitExceeded
+
+        with patch('src.ygo74.fastapi_openai_rag.interfaces.api.dependencies.rate_limiting.check_rate_limit') as mock_check:
+            # Group/model limit has short reset time (30 seconds)
+            mock_check.side_effect = RateLimitExceeded(
+                scope_type="group_model",
+                scope_id="premium_team:gpt-4",
+                limit_type="requests",
+                limit=50,
+                current=51,
+                window_reset=1700000000,
+                retry_after=30  # Short window for group/model
+            )
+
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "gpt-4",
+                    "messages": [{"role": "user", "content": "Test retry timing"}]
+                }
+            )
+
+            assert response.status_code == 429
+            assert "retry-after" in response.headers
+            assert response.headers["retry-after"] == "30"

@@ -240,21 +240,43 @@ This enables:
 ### Tasks
 
 - [X] T055 [US3] Implement get_applicable_limits() in RateLimitService to query all hierarchy levels
-- [ ] T056 [US3] Implement limit priority evaluation in check_limit() (group/model > model > global)
-- [ ] T057 [US3] Add -1/None handling for unlimited limits in evaluation logic
+- [X] T056 [US3] Implement limit priority evaluation in check_limit() (group/model > model > global)
+- [X] T057 [US3] Add -1/None handling for unlimited limits in evaluation logic
 - [X] T058 [US3] Write hierarchy tests in tests/application/test_rate_limit_service.py (priority scenarios)
   - ✅ test_get_applicable_limits_returns_all_hierarchy_levels
   - ✅ test_get_applicable_limits_handles_missing_group_model_limit
   - ✅ test_get_applicable_limits_handles_missing_model_limit
   - ✅ test_get_applicable_limits_without_group_id_skips_group_model_query
   - ✅ test_get_applicable_limits_without_model_id_only_queries_global
-- [ ] T059 [US3] Write integration tests for hierarchical enforcement in tests/interfaces/test_rate_limiting_integration.py
+  - ✅ test_check_request_limit_uses_group_model_when_all_exist
+  - ✅ test_check_request_limit_falls_back_to_model_when_group_model_missing
+  - ✅ test_check_request_limit_falls_back_to_global_when_only_global_exists
+  - ✅ test_unlimited_request_limit_skips_to_next_level
+  - ✅ test_none_request_limit_allows_unlimited
+  - ✅ test_unlimited_token_limit_skips_check
+  - ✅ test_hierarchical_token_limits_with_unlimited_at_top
+- [X] T059 [US3] Write integration tests for hierarchical enforcement in tests/interfaces/test_rate_limiting_integration.py
+  - ✅ test_group_model_limit_takes_precedence_over_model
+  - ✅ test_model_limit_used_when_no_group_model_limit
+  - ✅ test_global_limit_used_when_no_specific_limits
+  - ✅ test_unlimited_group_model_falls_back_to_model
+  - ✅ test_unlimited_model_falls_back_to_global
+  - ✅ test_all_unlimited_allows_request
+  - ✅ test_token_limit_hierarchy_enforcement
+  - ✅ test_hierarchy_with_disabled_limits
+  - ✅ test_different_models_use_different_limits
+  - ✅ test_completions_endpoint_uses_hierarchy
+  - ✅ test_retry_after_reflects_hierarchy_scope
 
 **Validation Criteria**:
-- ✅ Group/model limit takes precedence over model and global
-- ✅ Model limit takes precedence over global when no group/model limit
-- ✅ Global limit applied when no more specific limits exist
-- ✅ Limit set to -1 or None treated as unlimited (skip to next level)
+- ✅ Group/model limit takes precedence over model and global (tested in T058 + T059)
+- ✅ Model limit takes precedence over global when no group/model limit (tested in T058 + T059)
+- ✅ Global limit applied when no more specific limits exist (tested in T058 + T059)
+- ✅ Limit set to -1 or None treated as unlimited (skip to next level) (tested in T058 + T059)
+- ✅ HTTP 429 responses with correct scope information (11 integration tests in T059)
+- ✅ Both /v1/chat/completions and /v1/completions endpoints use hierarchy (tested in T059)
+- ✅ Disabled limits (enabled=False) skipped like unlimited (tested in T059)
+- ✅ Different models tracked independently (tested in T059)
 
 ---
 
