@@ -1,26 +1,32 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version Change: 0.0.0 → 1.0.0
-Rationale: Initial constitution creation with 4 core principles
+Version Change: 1.0.0 → 1.1.0
+Rationale: Added new principle for Management Client Parity - all admin endpoints must have corresponding client methods
 
-Modified Principles: N/A (initial creation)
+Modified Principles: N/A
 Added Sections:
-  - I. Onion Architecture Integrity
-  - II. Test-First Development (NON-NEGOTIABLE)
-  - III. Type Safety & Documentation
-  - IV. Performance & Observability
-  - Architecture Standards
-  - Development Workflow
+  - V. Management Client Parity (NON-NEGOTIABLE)
+    * Requirement: All /admin/* endpoints must be callable from client SDK
+    * Location: client/src/ygo74/fastapi_openai_rag_client/
+    * Workflow: Define endpoint → Implement handler → Implement client method → Write tests → Update docs
+    * Examples: users, groups, models, rate-limits client methods
 
 Removed Sections: N/A
 
 Templates Status:
-  ✅ plan-template.md - Reviewed (Constitution Check section aligns)
-  ✅ spec-template.md - Reviewed (User scenarios & acceptance criteria align with testing principles)
-  ✅ tasks-template.md - Reviewed (Test-first task organization aligns)
+  ✅ plan-template.md - Needs review (add client implementation to task phases)
+  ✅ spec-template.md - Needs review (add client SDK requirements to acceptance criteria)
+  ✅ tasks-template.md - Needs review (add client implementation tasks for admin endpoints)
+  ⚠ Commands requiring updates:
+    - Any commands creating admin endpoints should remind to implement client method
+    - Rate limit admin endpoints need client implementation (pending)
 
-Follow-up TODOs: None
+Follow-up TODOs:
+  - TODO(CLIENT_SDK): Implement rate limit admin endpoints in management client
+  - TODO(TEMPLATES): Update plan/spec/tasks templates to include client SDK requirements
+  - TODO(CHECKLIST): Add "Client method implemented" to PR checklist for admin endpoints
+  - TODO(DOCS): Document client SDK architecture and testing patterns
 -->
 
 # FastAPI OpenAI Proxy Constitution
@@ -94,6 +100,38 @@ Follow-up TODOs: None
   - Graceful degradation when providers are unavailable
 
 **Rationale**: Enterprise deployments require predictable performance, comprehensive monitoring for debugging production issues, and resilience to external service failures. Token tracking enables cost attribution, while structured logging facilitates rapid incident response.
+
+### V. Management Client Parity (NON-NEGOTIABLE)
+
+**All management endpoints MUST be callable from the gateway management client. Adding an admin route requires implementing the corresponding client method.**
+
+- **Client location**: `client/src/ygo74/fastapi_openai_rag_client/` contains the management client SDK
+- **Endpoint-to-client mapping**: Every route in `interfaces/api/admin/*` MUST have a corresponding method in the client
+- **Client implementation requirements**:
+  - Method signature matches endpoint semantics (same parameters, return types)
+  - Proper error handling (HTTP status codes mapped to client exceptions)
+  - Type hints and docstrings matching server endpoint documentation
+  - Support for all endpoint features (pagination, filtering, etc.)
+- **Testing requirements**:
+  - Client method tests MUST mock HTTP calls (no live server required)
+  - Integration tests MUST verify client works against real server
+  - Contract tests ensure client expectations match server responses
+- **Implementation workflow**:
+  1. Define admin endpoint route with OpenAPI documentation
+  2. Implement endpoint handler in `interfaces/api/admin/`
+  3. Implement corresponding client method in `client/src/ygo74/fastapi_openai_rag_client/`
+  4. Write client method tests
+  5. Update client README with usage examples
+- **Client versioning**: Client version MUST match gateway version (semantic versioning)
+
+**Examples of management endpoints requiring client support**:
+
+- `GET/POST /admin/users` → `client.users.list()`, `client.users.create()`
+- `GET/POST/DELETE /admin/groups` → `client.groups.list()`, `client.groups.create()`, `client.groups.delete()`
+- `GET/POST/DELETE /admin/models` → `client.models.list()`, `client.models.create()`, `client.models.delete()`
+- `GET/POST/DELETE /admin/rate-limits` → `client.rate_limits.list()`, `client.rate_limits.create()`, `client.rate_limits.delete()`
+
+**Rationale**: Management operations require programmatic access for automation, CI/CD pipelines, and infrastructure-as-code workflows. A well-maintained client SDK reduces integration friction, enforces consistent error handling, and provides type safety for API consumers. The client serves as executable documentation and enables testing management workflows without manual API calls.
 
 ## Architecture Standards
 
@@ -171,4 +209,4 @@ poetry run uvicorn src.ygo74.fastapi_openai_rag.main:app --host 0.0.0.0 --port 8
 - **Runtime guidance**: Detailed implementation patterns in `.github/copilot-instructions.md` for AI assistants
 - **Constitution authority**: When practices conflict, constitution wins. Deviations require explicit justification in PR description
 
-**Version**: 1.0.0 | **Ratified**: 2025-12-06 | **Last Amended**: 2025-12-06
+**Version**: 1.1.0 | **Ratified**: 2025-12-06 | **Last Amended**: 2025-12-07

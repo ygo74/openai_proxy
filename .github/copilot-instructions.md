@@ -167,6 +167,99 @@ class UserService:
 **Azure integration**: `AzureAuthClient` for management API access
 **SSL flexibility**: Custom CA certs, client certificates, SSL verification controls
 
+## 📦 Management Client SDK (NON-NEGOTIABLE)
+
+**Every admin endpoint MUST have a corresponding client method** in `client/src/ygo74/fastapi_openai_rag_client/`
+
+**Required workflow when adding admin endpoints**:
+1. **Define endpoint**: Create route in `interfaces/api/admin/[resource].py`
+2. **Implement handler**: Add business logic with service layer
+3. **Implement client method**: Add corresponding method in client SDK
+4. **Write client tests**: Mock HTTP calls, verify behavior
+5. **Update client docs**: Add usage examples to client README
+
+**Client architecture pattern**:
+```python
+# Server endpoint
+@router.post("/admin/rate-limits/models/{model_id}")
+async def create_model_rate_limit(
+    model_id: str,
+    request: CreateRateLimitRequest,
+    user: AuthenticatedUser = Depends(require_admin_role)
+) -> RateLimitResponse:
+    """Create or update model-level rate limit."""
+    ...
+
+# Client method (in client/src/ygo74/fastapi_openai_rag_client/rate_limits.py)
+class RateLimitsClient:
+    def create_model_limit(
+        self,
+        model_id: str,
+        max_requests: Optional[int] = None,
+        max_tokens: Optional[int] = None,
+        windows: Optional[List[TimeWindowConfig]] = None
+    ) -> RateLimit:
+        """Create or update model-level rate limit.
+        
+        Args:
+            model_id: Model identifier
+            max_requests: Maximum requests per window
+            max_tokens: Maximum tokens per window
+            windows: Time-based windows configuration
+            
+        Returns:
+            Created/updated rate limit configuration
+            
+        Raises:
+            ValidationError: Invalid parameters
+            NotFoundError: Model not found
+            AuthenticationError: Invalid credentials
+        """
+        payload = {
+            "max_requests": max_requests,
+            "max_tokens": max_tokens,
+            "windows": [w.dict() for w in windows] if windows else None
+        }
+        response = self._http.post(
+            f"/admin/rate-limits/models/{model_id}",
+            json=payload
+        )
+        return RateLimit.parse_obj(response.json())
+```
+
+**Client testing pattern**:
+```python
+def test_create_model_limit_success(mock_http_client):
+    """Test rate limit creation via client."""
+    # Arrange
+    mock_http_client.post.return_value = MockResponse(
+        status_code=200,
+        json_data={"id": 1, "scope_type": "model", ...}
+    )
+    client = RateLimitsClient(http_client=mock_http_client)
+    
+    # Act
+    result = client.create_model_limit(
+        model_id="gpt-4",
+        max_requests=100
+    )
+    
+    # Assert
+    assert result.scope_type == "model"
+    mock_http_client.post.assert_called_once_with(
+        "/admin/rate-limits/models/gpt-4",
+        json={"max_requests": 100, ...}
+    )
+```
+
+**Existing client modules** (examples):
+- `client.users` - User management (list, create, update, delete, add/remove groups)
+- `client.groups` - Group management (list, create, update, delete)
+- `client.models` - Model management (list, create, update, delete, associate groups)
+- `client.rate_limits` - **TODO**: Needs implementation for rate limit endpoints
+
+**Client versioning**: Client version MUST match gateway version (semantic versioning in `pyproject.toml`)
+
 ## 🔧 Code Style
 
 - **English documentation** for all functions/classes, written in clear, concise English
