@@ -568,14 +568,17 @@ After completing all phases:
 
 **Document Status:** ✅ COMPLETE
 **Total Tasks:** 95 (including refactoring)
-**Completed Tasks:** 56 (Phases 1-5 + 9 completed)
+**Completed Tasks:** 63 (Phases 1-7 + 9 completed) ✅
 **MVP Tasks:** 51 (Phases 1-5 + 9) ✅ COMPLETE
-**P2 Tasks:** 16 (Phases 6-8) - NOT STARTED
+**P2 Tasks:** 16 (Phases 6-8)
+  - Phase 6 (US3 - Hierarchical): ✅ COMPLETE (5 tasks)
+  - Phase 7 (US4 - Time Windows): ✅ COMPLETE (7 tasks)
+  - Phase 8 (US6 - Aggregation): NOT STARTED (4 tasks)
 **Polish Tasks:** 12 (Phase 10) - Partially complete
-**Tests Created:** 254 rate limiting tests
+**Tests Created:** 266 rate limiting tests (+12 from Phase 7)
 **Test Breakdown:**
-  - Domain: 52 tests (models, config validation)
-  - Application: 45 tests (service logic, global config fallback)
+  - Domain: 54 tests (models, config validation, window selection +2)
+  - Application: 50 tests (service logic, global config fallback, window transitions +5)
   - Infrastructure: 61 tests (cache 20, counter 18, repository 14, factories 9)
-  - Interfaces: 96 tests (admin API 17, integration 19, errors 24, propagation 8, token limits 28)
-**Ready for:** Implementation Sprint Planning
+  - Interfaces: 101 tests (admin API 17, integration 24 +5, errors 24, propagation 8, token limits 28)
+**Ready for:** Phase 8 (US6 - Model-Level Aggregation) or Phase 10 (Polish)

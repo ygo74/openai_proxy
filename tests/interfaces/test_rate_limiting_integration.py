@@ -921,10 +921,10 @@ class TestTimeWindowTransitionsIntegration:
 
     def test_different_windows_apply_different_limits(self, client, mock_auth_with_override):
         """Test that requests at different times use appropriate window limits.
-        
+
         Verifies:
         - Off-peak window (00:00-08:00) uses lower limit
-        - Peak window (08:00-18:00) uses higher limit  
+        - Peak window (08:00-18:00) uses higher limit
         - Window selection based on current time
         """
         from unittest.mock import patch
@@ -972,7 +972,7 @@ class TestTimeWindowTransitionsIntegration:
 
     def test_window_transition_boundary(self, client, mock_auth_with_override):
         """Test requests exactly at window transition boundary.
-        
+
         Verifies:
         - from_time is inclusive (12:00:00 includes in afternoon window)
         - to_time is exclusive (12:00:00 excludes from morning window)
@@ -1006,7 +1006,7 @@ class TestTimeWindowTransitionsIntegration:
 
     def test_default_fallback_when_no_window_active(self, client, mock_auth_with_override):
         """Test that default 24-hour window is used when no time window matches.
-        
+
         Verifies:
         - Request allowed when outside defined windows
         - Default fallback provides unlimited access or uses first window's limits
@@ -1031,7 +1031,7 @@ class TestTimeWindowTransitionsIntegration:
 
     def test_window_duration_affects_counter_key(self, client, mock_auth_with_override):
         """Test that different window durations result in different reset times.
-        
+
         Verifies:
         - Short windows (1 hour) have short reset periods
         - Long windows (8 hours) have longer reset periods
@@ -1043,7 +1043,7 @@ class TestTimeWindowTransitionsIntegration:
 
         with patch('src.ygo74.fastapi_openai_rag.interfaces.api.dependencies.rate_limiting.check_rate_limit') as mock_check:
             current_time = int(time_module.time())
-            
+
             # Short window - resets in 1 hour
             mock_check.side_effect = RateLimitExceeded(
                 scope_type="model",
@@ -1071,7 +1071,7 @@ class TestTimeWindowTransitionsIntegration:
 
     def test_multiple_windows_per_day(self, client, mock_auth_with_override):
         """Test configuration with 3+ windows covering different times of day.
-        
+
         Verifies:
         - Morning, afternoon, evening windows each have distinct limits
         - System correctly selects window based on time

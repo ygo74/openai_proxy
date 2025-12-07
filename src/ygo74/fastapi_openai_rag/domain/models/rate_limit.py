@@ -338,7 +338,7 @@ class RateLimit(BaseModel):
         for window in self.windows:
             if window.is_active_at(current_time):
                 return window
-        
+
         # No matching window - use default 24-hour fallback if enabled
         if use_default_fallback and len(self.windows) > 0:
             # Create default 24-hour window using first window's limits as template
@@ -350,7 +350,7 @@ class RateLimit(BaseModel):
                 max_tokens=first_window.max_tokens
             )
             return default_window
-        
+
         return None
 
     @property

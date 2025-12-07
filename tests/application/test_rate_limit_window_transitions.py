@@ -163,7 +163,7 @@ class TestWindowTransitions:
         service: RateLimitService
     ):
         """Test that windows with different from_time values generate different window keys.
-        
+
         This test directly calls get_current_window_key to verify window transitions
         result in different counter keys.
         """
@@ -190,8 +190,8 @@ class TestWindowTransitions:
 
     def test_multiple_windows_use_correct_limits_per_time(self):
         """Test that RateLimit.get_active_window() selects correct window based on time.
-        
-        Verifies that multiple time windows with different limits are correctly 
+
+        Verifies that multiple time windows with different limits are correctly
         selected based on the current time.
         """
         # arrange - off-peak: 100 req, peak: 1000 req
@@ -216,7 +216,7 @@ class TestWindowTransitions:
         assert active_window == off_peak_window
         assert active_window.max_requests == 100
 
-        # act & assert - peak time (10 AM) returns peak window  
+        # act & assert - peak time (10 AM) returns peak window
         active_window = rate_limit.get_active_window(time(10, 0, 0))
         assert active_window == peak_window
         assert active_window.max_requests == 1000
