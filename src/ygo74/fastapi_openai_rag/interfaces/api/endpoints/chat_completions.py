@@ -40,6 +40,8 @@ def get_chat_completion_service(db: Session = Depends(get_db)) -> ChatCompletion
     uow = SQLUnitOfWork(session_factory)
     return ChatCompletionService(uow)
 
+
+
 @router.post("/completions", response_model=OpenAICompletion)
 async def create_completion(
     request: Request,
@@ -51,6 +53,7 @@ async def create_completion(
 
     Compatible with OpenAI's /v1/completions endpoint.
     Requires authentication via API key or Bearer token.
+    Rate limiting is handled by ChatCompletionService.
 
     Args:
         completion_request (CompletionRequest): Text completion request
@@ -86,8 +89,8 @@ async def create_completion(
             }
         )
 
-    response = await service.create_completion(completion_request, user=user)
-    return response
+    # Service handles rate limiting, validation, and token tracking
+    return await service.create_completion(completion_request, user=user)
 
 @router.post("/chat/completions", response_model=OpenAIChatCompletion)
 async def create_chat_completion(
@@ -100,10 +103,13 @@ async def create_chat_completion(
 
     Compatible with OpenAI's /v1/chat/completions endpoint.
     Supports both streaming and non-streaming responses.
+    Rate limiting is handled by ChatCompletionService.
 
     Args:
         request (ChatCompletionRequest): Chat completion request
+        background_tasks (BackgroundTasks): FastAPI background tasks
         service (ChatCompletionService): Service instance
+        rate_limit_service: Rate limit service for token recording
         user (AuthenticatedUser): Authenticated user with group memberships
 
     Returns:
@@ -156,9 +162,8 @@ async def create_chat_completion(
             }
         )
     else:
-        # Regular response
-        response = await service.create_chat_completion(chat_completion_request, user=user)
-        return response
+        # Service handles rate limiting, validation, and token tracking
+        return await service.create_chat_completion(chat_completion_request, user=user)
 
 @router.get("/models")
 @endpoint_handler("list_models")

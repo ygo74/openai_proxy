@@ -60,4 +60,10 @@ try:
 except ImportError as e:
     logger.warning(f"Could not import TokenUsageORM: {e}")
 
+try:
+    from .rate_limit_orm import RateLimitORM, RateLimitWindowORM
+    logger.debug("RateLimitORM and RateLimitWindowORM imported")
+except ImportError as e:
+    logger.warning(f"Could not import RateLimitORM: {e}")
+
 logger.info(f"Base metadata contains {len(Base.metadata.tables)} tables: {list(Base.metadata.tables.keys())}")

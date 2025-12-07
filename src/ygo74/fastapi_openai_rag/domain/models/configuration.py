@@ -3,7 +3,8 @@ from typing import Dict, Any, Optional, List, Union
 from pydantic import BaseModel, model_validator, Field
 import json
 import os
-from .rate_limit import TokenRateLimit
+from .rate_limit import FixedWindowTokenRateLimit
+from .rate_limit_config import RateLimitsConfig
 
 class ModelConfig(BaseModel):
     """Model configuration settings.
@@ -26,7 +27,7 @@ class ModelConfig(BaseModel):
     api_key: Optional[str] = None
     rate_limit: Optional[int] = None
     capabilities: Dict[str, Any] = {}
-    token_rate_limit: Optional[TokenRateLimit] = None
+    token_rate_limit: Optional[FixedWindowTokenRateLimit] = None
 
 class AzureModelConfig(ModelConfig):
     """Azure-specific model configuration with management API support."""
@@ -104,8 +105,12 @@ class AppConfig(BaseModel):
     db_url: str
     forwarders: ForwardersConfig = ForwardersConfig()
     audit: AuditConfig = AuditConfig()
-    global_token_rate_limit: Optional[TokenRateLimit] = None
-    group_token_rate_limits: Dict[str, TokenRateLimit] = Field(default_factory=dict)
+    global_token_rate_limit: Optional[FixedWindowTokenRateLimit] = None
+    group_token_rate_limits: Dict[str, FixedWindowTokenRateLimit] = Field(default_factory=dict)
+    rate_limits: Optional[RateLimitsConfig] = Field(
+        None,
+        description="Rate limiting configuration with time windows"
+    )
 
     @classmethod
     def load_from_json(cls, config_path: str = "config.json") -> "AppConfig":
@@ -160,8 +165,12 @@ class AppConfig(BaseModel):
             # Process default rate limiting configuration
             token_rate_limit = None
             if "default_rate_limiting" in config_data:
-                token_rate_limit = TokenRateLimit(**config_data["default_rate_limiting"])
+                token_rate_limit = FixedWindowTokenRateLimit(**config_data["default_rate_limiting"])
 
+            # Process rate limits configuration (new time-window based system)
+            rate_limits_config = None
+            if "rate_limits" in config_data:
+                rate_limits_config = RateLimitsConfig(**config_data["rate_limits"])
 
             return cls(
                 model_configs=processed_configs,
@@ -169,7 +178,8 @@ class AppConfig(BaseModel):
                 db_url=config_data.get("db_url"),
                 forwarders=forwarders_config,
                 audit=audit_config,
-                global_token_rate_limit=token_rate_limit
+                global_token_rate_limit=token_rate_limit,
+                rate_limits=rate_limits_config
             )
 
     def to_dict(self) -> Dict[str, Any]:

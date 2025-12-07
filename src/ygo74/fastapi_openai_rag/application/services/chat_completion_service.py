@@ -34,7 +34,7 @@ import logging
 
 from ..services.model_service import ModelService
 from ..services.token_tracking_service import TokenTrackingService
-from ..services.rate_limit_service import TokenRateLimitService
+from ..services.rate_limit_service import RateLimitService
 
 logger = logging.getLogger(__name__)
 
@@ -50,9 +50,101 @@ class ChatCompletionService:
         self._uow = uow
         self._model_service = ModelService(uow)
         self._token_tracking = TokenTrackingService(uow)
-        self._token_rate_limit = TokenRateLimitService(uow)
+        self._rate_limit_service = RateLimitService(uow)
         self._client_cache: Dict[str, LLMClientProtocol] = {}
         logger.debug("ChatCompletionService initialized")
+
+    def _check_rate_limits(self, user: AuthenticatedUser, model: LlmModel) -> None:
+        """Check rate limits before processing request.
+
+        Applies hierarchical rate limit checks:
+        1. Group/Model limit - User quota on this model (highest priority from authorized groups)
+           - Only considers groups authorized on the model
+           - Takes the highest limit among authorized groups
+           - Falls back to global if no group/model limits exist
+        2. Model limit - Protects specific model (all users aggregated)
+        3. Global limit - System-wide fallback (only if no group/model limit found)
+
+        Args:
+            user: Authenticated user with group memberships
+            model: LLM model being accessed
+
+        Raises:
+            RateLimitExceeded: If any rate limit is exceeded
+        """
+        user_id = user.username
+
+        # Get authorized groups for this model (groups that have access to the model)
+        authorized_groups = []
+        if model and model.groups:
+            # Filter user's groups to only those authorized on this model
+            model_group_names = {g.name for g in model.groups}
+            authorized_groups = [g for g in user.groups if g in model_group_names]
+            logger.debug(f"User {user_id} authorized groups for model {model.name}: {authorized_groups}")
+
+        # 1. Check group/model rate limits for authorized groups (user quota)
+        group_model_limit_found = False
+        if model and model.id and authorized_groups:
+            # Find all group/model rate limits for authorized groups
+            from typing import Tuple
+            from ...domain.models.rate_limit import RateLimit
+            group_limits: List[Tuple[str, str, RateLimit]] = []
+            for group_id in authorized_groups:
+                scope_id = f"{group_id}:{model.id}"
+                rate_limit = self._rate_limit_service.get_rate_limit_config("group_model", scope_id)
+                if rate_limit and rate_limit.enabled:
+                    group_limits.append((group_id, scope_id, rate_limit))
+                    logger.debug(f"Found rate limit for {scope_id}")
+
+            if group_limits:
+                group_model_limit_found = True
+                # Use the highest limit (most permissive) among authorized groups
+                # For simplicity, check all and use first that passes, or fail if all fail
+                limit_passed = False
+                for group_id, scope_id, rate_limit in group_limits:
+                    try:
+                        logger.debug(f"Checking group/model rate limit: {scope_id} for user {user_id}")
+                        self._rate_limit_service.check_request_limit("group_model", scope_id, user_id)
+                        self._rate_limit_service.check_token_limit("group_model", scope_id, user_id, estimated_tokens=None)
+                        logger.debug(f"Group/model rate limit passed for {scope_id}")
+                        limit_passed = True
+                        break  # At least one group limit passes
+                    except Exception as e:
+                        logger.debug(f"Group/model rate limit check failed for {scope_id}: {e}")
+                        continue
+
+                if not limit_passed:
+                    logger.warning(f"All group/model rate limits exceeded for user {user_id}")
+                    raise Exception("Rate limit exceeded for all authorized groups")
+
+        # Fallback to global rate limit if no group/model limit was found
+        if not group_model_limit_found:
+            logger.debug(f"No group/model rate limit found, checking global rate limit for user {user_id}")
+            global_limit = self._rate_limit_service.get_rate_limit_config("global", None)
+            if global_limit and global_limit.enabled:
+                try:
+                    self._rate_limit_service.check_request_limit("global", None, user_id)
+                    self._rate_limit_service.check_token_limit("global", None, user_id, estimated_tokens=None)
+                    logger.debug(f"Global rate limit passed for user {user_id}")
+                except Exception as e:
+                    logger.warning(f"Global rate limit exceeded: {e}")
+                    raise
+
+        # 2. Check model-specific rate limit (protect model from all users)
+        if model and model.id:
+            model_limit = self._rate_limit_service.get_rate_limit_config("model", str(model.id))
+            if model_limit and model_limit.enabled:
+                logger.debug(f"Checking model rate limit for {model.name} (id={model.id})")
+                try:
+                    # Model-level limit uses empty user_id to aggregate ALL users
+                    self._rate_limit_service.check_request_limit("model", str(model.id), "")
+                    self._rate_limit_service.check_token_limit("model", str(model.id), "", estimated_tokens=None)
+                    logger.debug(f"Model rate limit passed for {model.name}")
+                except Exception as e:
+                    logger.warning(f"Model rate limit exceeded for {model.name}: {e}")
+                    raise
+
+        logger.debug(f"All rate limit checks passed for user {user_id} on model {model.name if model else 'None'}")
 
     async def create_completion(self, request: CompletionRequest, user: AuthenticatedUser) -> OpenAICompletion:
         """Create a text completion.
@@ -80,7 +172,9 @@ class ChatCompletionService:
 
         # Validate and get model, checking authorization
         model = await self._get_and_validate_model(request.model, user)
-        self._token_rate_limit.check_rate_limit(user=user, model=model)
+
+        # Check rate limits (request + token)
+        self._check_rate_limits(user, model)
 
         # Get or create client for this model
         client = self._get_or_create_client(model)
@@ -147,7 +241,9 @@ class ChatCompletionService:
 
         # Validate and get model, checking authorization
         model = await self._get_and_validate_model(request.model, user)
-        self._token_rate_limit.check_rate_limit(user=user, model=model)
+
+        # Check rate limits (request + token)
+        self._check_rate_limits(user, model)
 
         # Get or create client for this model
         client = self._get_or_create_client(model)
@@ -220,7 +316,9 @@ class ChatCompletionService:
 
         # Validate and get model, checking authorization
         model = await self._get_and_validate_model(request.model, user)
-        self._token_rate_limit.check_rate_limit(user=user, model=model)
+
+        # Check rate limits (request + token)
+        self._check_rate_limits(user, model)
 
         # Get or create client for this model
         client = self._get_or_create_client(model)
@@ -269,7 +367,9 @@ class ChatCompletionService:
 
         # Validate and get model, checking authorization
         model = await self._get_and_validate_model(request.model, user)
-        self._token_rate_limit.check_rate_limit(user=user, model=model)
+
+        # Check rate limits (request + token)
+        self._check_rate_limits(user, model)
 
         # Get or create client for this model
         client = self._get_or_create_client(model)
@@ -315,7 +415,9 @@ class ChatCompletionService:
         if not model_name:
             raise ValidationError("model is required in responses payload")
         model = await self._get_and_validate_model(model_name, user)
-        self._token_rate_limit.check_rate_limit(user=user, model=model)
+
+        # Check rate limits (request + token)
+        self._check_rate_limits(user, model)
 
         client = self._get_or_create_client(model)
 
@@ -353,7 +455,9 @@ class ChatCompletionService:
         if not model_name:
             raise ValidationError("model is required in responses payload")
         model = await self._get_and_validate_model(model_name, user)
-        self._token_rate_limit.check_rate_limit(user=user, model=model)
+
+        # Check rate limits (request + token)
+        self._check_rate_limits(user, model)
 
         client = self._get_or_create_client(model)
 
@@ -396,7 +500,9 @@ class ChatCompletionService:
 
         # Validate and get model, checking authorization
         model = await self._get_and_validate_model(payload.model, user)
-        self._token_rate_limit.check_rate_limit(user=user, model=model)
+
+        # Check rate limits (request + token)
+        self._check_rate_limits(user, model)
 
         # Get or create client for this model
         client = self._get_or_create_client(model)

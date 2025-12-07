@@ -13,6 +13,7 @@ from .core.client import ApiClient
 from .commands.groups import GroupCommandsLoader
 from .commands.models import ModelCommandsLoader
 from .commands.users import UserCommandsLoader
+from .commands.rate_limits import RateLimitCommandsLoader
 
 # Configure logging
 logging.basicConfig(
@@ -50,6 +51,11 @@ helps['model'] = """
 helps['user'] = """
     type: group
     short-summary: Manage user resources.
+"""
+
+helps['rate-limit'] = """
+    type: group
+    short-summary: Manage rate limit configurations.
 """
 
 helps['version'] = """
@@ -92,6 +98,7 @@ class RagProxyCommandsLoader(CLICommandsLoader):
             GroupCommandsLoader().load_command_table(self)
             ModelCommandsLoader().load_command_table(self)
             UserCommandsLoader().load_command_table(self)
+            RateLimitCommandsLoader().load_command_table(self)
         except Exception as e:
             logger.error(f"Error loading command modules: {str(e)}")
 
@@ -111,6 +118,7 @@ class RagProxyCommandsLoader(CLICommandsLoader):
             GroupCommandsLoader().load_arguments(self, command)
             ModelCommandsLoader().load_arguments(self, command)
             UserCommandsLoader().load_arguments(self, command)
+            RateLimitCommandsLoader().load_arguments(self, command)
         except Exception as e:
             logger.error(f"Error loading command arguments: {str(e)}")
 

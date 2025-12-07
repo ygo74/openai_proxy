@@ -92,6 +92,53 @@ rag-client model add-to-group --model-id 789 --group-id 456
 rag-client model list-in-group --group-id 456
 ```
 
+### Managing Rate Limits
+
+```bash
+# List all rate limit configurations
+rag-client rate-limit list
+
+# Show specific rate limit
+rag-client rate-limit show --scope-type model --scope-id 5
+
+# Create global rate limit (applies to all models as fallback)
+rag-client rate-limit create-global --windows '[{"from_time":"00:00:00","to_time":"23:59:59","max_requests":1000,"max_tokens":100000}]'
+
+# Create model-specific rate limit
+rag-client rate-limit create-model --model-id 5 --windows '[{"from_time":"00:00:00","to_time":"23:59:59","max_requests":500,"max_tokens":50000}]'
+
+# Create group/model rate limit (highest priority)
+rag-client rate-limit create-group-model --group-name key_users --model-id 5 --windows '[{"from_time":"00:00:00","to_time":"23:59:59","max_requests":100,"max_tokens":10000}]'
+
+# Update rate limit (disable temporarily)
+rag-client rate-limit update --scope-type model --scope-id 5 --enabled false
+
+# Delete rate limit
+rag-client rate-limit delete --scope-type model --scope-id 5
+```
+
+**Rate Limit Hierarchy:**
+
+1. **Group/Model** (highest priority) - Applies when user is in authorized group for that model
+2. **Global** (fallback) - Applies when no group/model rate limit exists
+3. **Model** (aggregate protection) - Always checked to prevent model overload
+
+**Time Windows Format:**
+
+- `from_time`: Start time in HH:MM:SS format (e.g., "09:00:00")
+- `to_time`: End time in HH:MM:SS format (e.g., "17:00:00")
+- `max_requests`: Maximum number of requests in the window
+- `max_tokens`: Maximum number of tokens (input + output) in the window
+
+#### Example: Business Hours Rate Limit
+
+```bash
+rag-client rate-limit create-model --model-id 5 --windows '[
+  {"from_time":"09:00:00","to_time":"17:00:00","max_requests":1000,"max_tokens":100000},
+  {"from_time":"17:00:00","to_time":"09:00:00","max_requests":100,"max_tokens":10000}
+]'
+```
+
 ## Troubleshooting
 
 ### Authentication Issues

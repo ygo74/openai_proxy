@@ -34,6 +34,22 @@ services:
     networks:
       - observability-net
 
+  # Redis - Cache and rate limiting counters
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - observability-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   # Tempo - Distributed tracing backend
   tempo:
     image: *tempoImage
@@ -130,6 +146,7 @@ volumes:
   loki_data:
   prometheus_data:
   grafana_data:
+  redis_data:
 
 networks:
   observability-net:

@@ -8,6 +8,7 @@ from .interfaces.api.exception_handlers import ExceptionHandlers
 from .domain.exceptions.entity_not_found_exception import EntityNotFoundError
 from .domain.exceptions.entity_already_exists import EntityAlreadyExistsError
 from .domain.exceptions.validation_error import ValidationError
+from .domain.exceptions.rate_limit_exception import RateLimitExceeded
 from .application.services.config_service import config_service
 from .config.logging_config import setup_logging
 from .interfaces.api.middlewares.audit_factory import AuditFactory
@@ -95,6 +96,7 @@ app.include_router(api_router)
 app.add_exception_handler(EntityNotFoundError, ExceptionHandlers.entity_not_found_handler)
 app.add_exception_handler(EntityAlreadyExistsError, ExceptionHandlers.entity_already_exists_handler)
 app.add_exception_handler(ValidationError, ExceptionHandlers.validation_error_handler)
+app.add_exception_handler(RateLimitExceeded, ExceptionHandlers.rate_limit_exceeded_handler)
 app.add_exception_handler(Exception, ExceptionHandlers.generic_exception_handler)
 app.add_exception_handler(PermissionError, ExceptionHandlers.permission_error_handler)
 

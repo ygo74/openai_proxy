@@ -9,18 +9,23 @@ from pathlib import Path
 from datetime import datetime, timedelta
 import keyring
 
-import requests
+import urllib3
+
+# Try to import Kerberos, but make it truly optional
+HAS_KERBEROS = False
+HTTPKerberosAuth = None
+OPTIONAL = None
+
 try:
     from requests_kerberos import HTTPKerberosAuth, OPTIONAL
     HAS_KERBEROS = True
-except ImportError:
-    HAS_KERBEROS = False
-
-import urllib3
+except (ImportError, OSError):
+    # OSError occurs on Windows when Kerberos for Windows is not installed
+    pass
 
 session = requests.Session()
 session.verify = False
-if HAS_KERBEROS:
+if HAS_KERBEROS and HTTPKerberosAuth is not None:
     session.auth = HTTPKerberosAuth(mutual_authentication=OPTIONAL)
 
 

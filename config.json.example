@@ -50,5 +50,18 @@
         "log_level": "INFO",
         "exclude_paths": ["/health", "/metrics"],
         "sensitive_headers": ["Authorization", "API-Key"]
+    },
+    "rate_limits": {
+        "global": {
+            "enabled": true,
+            "windows": [
+                {
+                    "from_time": "00:00",
+                    "to_time": "23:59",
+                    "max_requests": 1000,
+                    "max_tokens": 500000
+                }
+            ]
+        }
     }
 }

@@ -406,7 +406,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", default="gpt-4o", help="Model name")
     parser.add_argument("--question", default="What is 2+2?", help="Primary question/prompt")
     parser.add_argument("--proxy-url", default="http://localhost:8000", help="Proxy base URL (without /v1)")
-    parser.add_argument("--api-key", default="sk-16AwYoZqNoVKjfMz-Mr8TeuaXk3O6JeLwPdQSAQiF0s", help="API key")
+    parser.add_argument("--api-key", default="sk-jgXfzrw6iOxu0F-xvtyHXE9QKP6Lu8sUoqipjf6rVy8", help="API key")
     parser.add_argument("--system-message", default="You are a helpful assistant.", help="System message")
 
     # Generation parameters
