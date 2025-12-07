@@ -1095,3 +1095,360 @@ class TestTimeWindowTransitionsIntegration:
             assert mock_check.called
             # Status depends on mock - should pass rate limiting
             assert response.status_code in [200, 404]
+
+
+class TestModelLevelAggregationIntegration:
+    """Integration tests for Phase 8 - Model-Level Aggregation (US6).
+
+    These tests verify end-to-end model-level rate limiting where:
+    - Model limits count requests from all groups combined
+    - Different groups share the same counter for a model
+    - Model limit blocks all groups when exceeded
+    - Different models have independent counters
+    """
+
+    @pytest.fixture
+    def client(self):
+        """Create test client."""
+        return TestClient(app)
+
+    @pytest.fixture
+    def mock_auth_user_group_a(self):
+        """Mock user from Group A."""
+        from src.ygo74.fastapi_openai_rag.domain.models.autenticated_user import AuthenticatedUser
+        return AuthenticatedUser(
+            id="user_a",
+            username="user_group_a",
+            type="jwt",
+            groups=["team-a"]
+        )
+
+    @pytest.fixture
+    def mock_auth_user_group_b(self):
+        """Mock user from Group B."""
+        from src.ygo74.fastapi_openai_rag.domain.models.autenticated_user import AuthenticatedUser
+        return AuthenticatedUser(
+            id="user_b",
+            username="user_group_b",
+            type="jwt",
+            groups=["team-b"]
+        )
+
+    @pytest.fixture
+    def mock_auth_user_group_c(self):
+        """Mock user from Group C."""
+        from src.ygo74.fastapi_openai_rag.domain.models.autenticated_user import AuthenticatedUser
+        return AuthenticatedUser(
+            id="user_c",
+            username="user_group_c",
+            type="jwt",
+            groups=["team-c"]
+        )
+
+    def test_model_limit_aggregates_across_groups(self, client, mock_auth_user_group_a, mock_auth_user_group_b):
+        """Test that model-level limits count requests from all groups.
+
+        Scenario:
+        - Model "gpt-4" has limit of 10 requests
+        - Group A sends 6 requests
+        - Group B sends 4 requests
+        - Total = 10 requests (shared counter across groups)
+
+        This test verifies that the counter key for model limits uses only the model_id,
+        not the group_id, so all groups share the same counter.
+        """
+        from src.ygo74.fastapi_openai_rag.domain.models.rate_limit import RateLimit, RateLimitWindow
+        from src.ygo74.fastapi_openai_rag.application.services.rate_limit_service import RateLimitService
+        from unittest.mock import MagicMock
+
+        # Create model-level rate limit
+        model_limit = RateLimit(
+            id=1,
+            scope_type="model",
+            scope_id="gpt-4",
+            enabled=True,
+            windows=[
+                RateLimitWindow(
+                    from_time=time(0, 0, 0),
+                    to_time=time(23, 59, 59),
+                    max_requests=10,
+                    max_tokens=10000
+                )
+            ]
+        )
+
+        # Track counter state with shared counter across groups
+        counter_state = {"requests": 0}
+        counter_calls = []  # Track which (scope_type, scope_id) were called
+
+        def mock_increment(scope_type, scope_id, window_start, window_duration):
+            counter_calls.append((scope_type, scope_id))
+            counter_state["requests"] += 1
+            return counter_state["requests"]
+
+        # Create real service with mocked dependencies
+        mock_counter = MagicMock()
+        mock_counter.increment_request_count.side_effect = mock_increment
+
+        mock_repository = MagicMock()
+        def get_by_scope(scope_type, scope_id):
+            if scope_type == "model" and scope_id == "gpt-4":
+                return model_limit
+            return None
+        mock_repository.get_by_scope.side_effect = get_by_scope
+
+        mock_uow = MagicMock()
+        mock_uow.session = MagicMock()
+        mock_uow.__enter__ = MagicMock(return_value=mock_uow)
+        mock_uow.__exit__ = MagicMock(return_value=False)
+
+        mock_config_service = MagicMock()
+        mock_config_service.get_global_rate_limits = MagicMock(return_value=None)
+
+        mock_cache = MagicMock()
+        mock_cache.get = MagicMock(return_value=None)
+        mock_cache.set = MagicMock()
+
+        service = RateLimitService(
+            uow=mock_uow,
+            repository_factory=lambda s: mock_repository,
+            counter=mock_counter,
+            cache=mock_cache,
+            config_service=mock_config_service
+        )
+
+        # Group A sends 6 requests
+        for i in range(6):
+            result = service.check_request_limit(
+                scope_type="model",
+                scope_id="gpt-4",
+                group_id="team-a",
+                model_id="gpt-4"
+            )
+            assert result is True, f"Request {i+1} from Group A should be allowed"
+
+        # Group B sends 4 requests (total 10)
+        for i in range(4):
+            result = service.check_request_limit(
+                scope_type="model",
+                scope_id="gpt-4",
+                group_id="team-b",
+                model_id="gpt-4"
+            )
+            assert result is True, f"Request {i+1} from Group B should be allowed"
+
+        # Verify counter was called 10 times with same key (model:gpt-4)
+        assert len(counter_calls) == 10
+        for scope_type, scope_id in counter_calls:
+            assert scope_type == "model", "All calls should use model scope"
+            assert scope_id == "gpt-4", "All calls should use same model_id"
+
+        # Verify total count is 10 (aggregated across both groups)
+        assert counter_state["requests"] == 10
+
+    def test_different_groups_blocked_by_same_model_limit(self, client, mock_auth_user_group_a, mock_auth_user_group_b, mock_auth_user_group_c):
+        """Test that model limit blocks all groups when exceeded.
+
+        Scenario:
+        - Model "gpt-4" has limit of 5 requests
+        - Group A sends 3 requests
+        - Group B sends 2 requests (total 5)
+        - Group C tries to send (should be blocked)
+        """
+        from src.ygo74.fastapi_openai_rag.domain.models.rate_limit import RateLimit, RateLimitWindow
+        from src.ygo74.fastapi_openai_rag.application.services.rate_limit_service import RateLimitService
+        from src.ygo74.fastapi_openai_rag.domain.exceptions.rate_limit_exception import RateLimitExceeded
+        from unittest.mock import MagicMock
+
+        # Create model-level rate limit with low threshold
+        model_limit = RateLimit(
+            id=1,
+            scope_type="model",
+            scope_id="gpt-4",
+            enabled=True,
+            windows=[
+                RateLimitWindow(
+                    from_time=time(0, 0, 0),
+                    to_time=time(23, 59, 59),
+                    max_requests=5,  # Low limit
+                    max_tokens=10000
+                )
+            ]
+        )
+
+        # Shared counter state
+        counter_state = {"requests": 0}
+
+        def mock_increment(scope_type, scope_id, window_start, window_duration):
+            counter_state["requests"] += 1
+            return counter_state["requests"]
+
+        # Create service with mocked dependencies
+        mock_counter = MagicMock()
+        mock_counter.increment_request_count.side_effect = mock_increment
+
+        mock_repository = MagicMock()
+        def get_by_scope(scope_type, scope_id):
+            if scope_type == "model" and scope_id == "gpt-4":
+                return model_limit
+            return None
+        mock_repository.get_by_scope.side_effect = get_by_scope
+
+        mock_uow = MagicMock()
+        mock_uow.session = MagicMock()
+        mock_uow.__enter__ = MagicMock(return_value=mock_uow)
+        mock_uow.__exit__ = MagicMock(return_value=False)
+
+        mock_config_service = MagicMock()
+        mock_config_service.get_global_rate_limits = MagicMock(return_value=None)
+
+        mock_cache = MagicMock()
+        mock_cache.get = MagicMock(return_value=None)
+        mock_cache.set = MagicMock()
+
+        service = RateLimitService(
+            uow=mock_uow,
+            repository_factory=lambda s: mock_repository,
+            counter=mock_counter,
+            cache=mock_cache,
+            config_service=mock_config_service
+        )
+
+        # Group A: 3 requests
+        for i in range(3):
+            service.check_request_limit(
+                scope_type="model",
+                scope_id="gpt-4",
+                group_id="team-a",
+                model_id="gpt-4"
+            )
+
+        # Group B: 2 requests (total 5)
+        for i in range(2):
+            service.check_request_limit(
+                scope_type="model",
+                scope_id="gpt-4",
+                group_id="team-b",
+                model_id="gpt-4"
+            )
+
+        # Verify 5 requests counted
+        assert counter_state["requests"] == 5
+
+        # Group C: Should be blocked
+        with pytest.raises(RateLimitExceeded) as exc_info:
+            service.check_request_limit(
+                scope_type="model",
+                scope_id="gpt-4",
+                group_id="team-c",
+                model_id="gpt-4"
+            )
+
+        # Verify exception details
+        assert exc_info.value.scope_type == "model"
+        assert exc_info.value.scope_id == "gpt-4"
+        assert exc_info.value.limit == 5
+        assert exc_info.value.current == 6
+
+    def test_different_models_have_independent_counters(self, client, mock_auth_user_group_a):
+        """Test that different models use separate counters.
+
+        Scenario:
+        - Model "gpt-4" has limit of 5
+        - Model "gpt-3.5-turbo" has limit of 10
+        - Send 5 to gpt-4, 10 to gpt-3.5-turbo
+        - Both should succeed (independent counters)
+        """
+        from src.ygo74.fastapi_openai_rag.domain.models.rate_limit import RateLimit, RateLimitWindow
+        from src.ygo74.fastapi_openai_rag.application.services.rate_limit_service import RateLimitService
+        from unittest.mock import MagicMock
+
+        gpt4_limit = RateLimit(
+            id=1,
+            scope_type="model",
+            scope_id="gpt-4",
+            enabled=True,
+            windows=[
+                RateLimitWindow(
+                    from_time=time(0, 0, 0),
+                    to_time=time(23, 59, 59),
+                    max_requests=5,
+                    max_tokens=10000
+                )
+            ]
+        )
+
+        gpt35_limit = RateLimit(
+            id=2,
+            scope_type="model",
+            scope_id="gpt-3.5-turbo",
+            enabled=True,
+            windows=[
+                RateLimitWindow(
+                    from_time=time(0, 0, 0),
+                    to_time=time(23, 59, 59),
+                    max_requests=10,
+                    max_tokens=20000
+                )
+            ]
+        )
+
+        # Separate counters per model
+        counter_state = {"gpt-4": 0, "gpt-3.5-turbo": 0}
+
+        def mock_increment(scope_type, scope_id, window_start, window_duration):
+            counter_state[scope_id] = counter_state.get(scope_id, 0) + 1
+            return counter_state[scope_id]
+
+        # Create service with mocked dependencies
+        mock_counter = MagicMock()
+        mock_counter.increment_request_count.side_effect = mock_increment
+
+        mock_repository = MagicMock()
+        def get_by_scope(scope_type, scope_id):
+            if scope_type == "model" and scope_id == "gpt-4":
+                return gpt4_limit
+            elif scope_type == "model" and scope_id == "gpt-3.5-turbo":
+                return gpt35_limit
+            return None
+        mock_repository.get_by_scope.side_effect = get_by_scope
+
+        mock_uow = MagicMock()
+        mock_uow.session = MagicMock()
+        mock_uow.__enter__ = MagicMock(return_value=mock_uow)
+        mock_uow.__exit__ = MagicMock(return_value=False)
+
+        mock_config_service = MagicMock()
+        mock_config_service.get_global_rate_limits = MagicMock(return_value=None)
+
+        mock_cache = MagicMock()
+        mock_cache.get = MagicMock(return_value=None)
+        mock_cache.set = MagicMock()
+
+        service = RateLimitService(
+            uow=mock_uow,
+            repository_factory=lambda s: mock_repository,
+            counter=mock_counter,
+            cache=mock_cache,
+            config_service=mock_config_service
+        )
+
+        # Send 5 requests to gpt-4
+        for i in range(5):
+            service.check_request_limit(
+                scope_type="model",
+                scope_id="gpt-4",
+                model_id="gpt-4"
+            )
+
+        # Send 10 requests to gpt-3.5-turbo
+        for i in range(10):
+            service.check_request_limit(
+                scope_type="model",
+                scope_id="gpt-3.5-turbo",
+                model_id="gpt-3.5-turbo"
+            )
+
+        # Verify separate counters
+        assert counter_state["gpt-4"] == 5
+        assert counter_state["gpt-3.5-turbo"] == 10

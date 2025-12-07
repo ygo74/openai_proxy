@@ -309,7 +309,7 @@ This enables:
 
 ---
 
-## Phase 8: User Story 6 - Model-Level Aggregation (P2)
+## Phase 8: User Story 6 - Model-Level Aggregation (P2) ✅ COMPLETE
 
 **Story Goal**: Aggregate usage across all groups for model-level limits
 
@@ -317,15 +317,22 @@ This enables:
 
 ### Tasks
 
-- [ ] T067 [US6] Update counter key generation to use model name (not group+model) for model-level limits
-- [ ] T068 [US6] Implement model-level usage aggregation in check_limit() (query model-wide counter)
-- [ ] T069 [US6] Write aggregation tests in tests/application/test_rate_limit_service.py (multi-group scenarios)
-- [ ] T070 [US6] Write integration tests for model-level aggregation in tests/interfaces/test_rate_limiting_integration.py
+- [X] T067 [US6] Update counter key generation to use model name (not group+model) for model-level limits ✅ DONE (already correct)
+- [X] T068 [US6] Implement model-level usage aggregation in check_limit() (query model-wide counter) ✅ DONE (already implemented)
+- [X] T069 [US6] Write aggregation tests in tests/application/test_rate_limit_service.py (multi-group scenarios) ✅ DONE (6 tests)
+- [X] T070 [US6] Write integration tests for model-level aggregation in tests/interfaces/test_rate_limiting_integration.py ✅ DONE (3 tests)
 
-**Validation Criteria**:
-- ✅ Model-level limit counts requests from all groups
-- ✅ Model limit reached blocks all groups
-- ✅ Different models tracked independently
+**Validation Criteria**: ✅ ALL COMPLETE
+- ✅ Model-level limit counts requests from all groups - verified in 6 service tests + 3 integration tests
+- ✅ Model limit reached blocks all groups - test_different_groups_blocked_by_same_model_limit
+- ✅ Different models tracked independently - test_different_models_have_independent_counters
+- ✅ Counter key uses only model_id (not group_id) - test_model_limit_uses_model_id_only_in_counter_key
+- ✅ Multiple groups share same model counter - test_multiple_groups_share_same_model_counter
+- ✅ Token limits also aggregate across groups - test_token_limit_aggregation_across_groups
+
+**Tests Added**: 9 new tests
+- Application: 6 tests (test_model_level_aggregation.py)
+- Integration: 3 tests (test_rate_limiting_integration.py::TestModelLevelAggregationIntegration)
 
 ---
 
@@ -568,17 +575,17 @@ After completing all phases:
 
 **Document Status:** ✅ COMPLETE
 **Total Tasks:** 95 (including refactoring)
-**Completed Tasks:** 63 (Phases 1-7 + 9 completed) ✅
+**Completed Tasks:** 67 (Phases 1-9 completed) ✅
 **MVP Tasks:** 51 (Phases 1-5 + 9) ✅ COMPLETE
-**P2 Tasks:** 16 (Phases 6-8)
+**P2 Tasks:** 16 (Phases 6-8) ✅ COMPLETE
   - Phase 6 (US3 - Hierarchical): ✅ COMPLETE (5 tasks)
   - Phase 7 (US4 - Time Windows): ✅ COMPLETE (7 tasks)
-  - Phase 8 (US6 - Aggregation): NOT STARTED (4 tasks)
+  - Phase 8 (US6 - Model-Level Aggregation): ✅ COMPLETE (4 tasks)
 **Polish Tasks:** 12 (Phase 10) - Partially complete
-**Tests Created:** 266 rate limiting tests (+12 from Phase 7)
+**Tests Created:** 275 rate limiting tests (+9 from Phase 8)
 **Test Breakdown:**
-  - Domain: 54 tests (models, config validation, window selection +2)
-  - Application: 50 tests (service logic, global config fallback, window transitions +5)
+  - Domain: 54 tests (models, config validation, window selection)
+  - Application: 56 tests (service logic, global config fallback, window transitions, model aggregation +6)
   - Infrastructure: 61 tests (cache 20, counter 18, repository 14, factories 9)
-  - Interfaces: 101 tests (admin API 17, integration 24 +5, errors 24, propagation 8, token limits 28)
-**Ready for:** Phase 8 (US6 - Model-Level Aggregation) or Phase 10 (Polish)
+  - Interfaces: 104 tests (admin API 17, integration 27 +3, errors 24, propagation 8, token limits 28)
+**Ready for:** Phase 10 (Polish & Cross-Cutting Concerns)
