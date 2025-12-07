@@ -45,15 +45,30 @@ class RateLimitService:
             config_service: Optional ConfigService instance (for testing, creates default if None)
         """
         from ...infrastructure.db.repositories.rate_limit_repository import SQLRateLimitRepository
-        from ...infrastructure.cache.rate_limit_counter import RateLimitCounter
-        from ...infrastructure.cache.rate_limit_cache import get_rate_limit_cache
+        from ...infrastructure.cache.rate_limit_cache_factory import get_rate_limit_cache
+        from ...infrastructure.cache.rate_limit_counter_factory import get_rate_limit_counter
 
         self._uow = uow
         self._repository_factory = repository_factory or (lambda session: SQLRateLimitRepository(session))
-        self._counter = counter if counter is not None else RateLimitCounter()
-        self._cache = cache if cache is not None else get_rate_limit_cache()
         self._config_service = config_service if config_service is not None else ConfigService()
-        logger.debug("RateLimitService initialized with Unit of Work, counter, cache, and config_service")
+
+        # Get Redis configuration from AppConfig
+        app_config = self._config_service.get_config()
+
+        # Initialize cache with configuration (only if not provided for testing)
+        if cache is not None:
+            self._cache = cache
+        else:
+            self._cache = get_rate_limit_cache(app_config.redis_cache)
+
+        # Initialize counter with configuration via factory (only if not provided for testing)
+        if counter is not None:
+            self._counter = counter
+        else:
+            # Factory creates appropriate counter (Redis or InMemory) based on config
+            self._counter = get_rate_limit_counter(app_config.redis_cache)
+
+        logger.debug("RateLimitService initialized with protocol-based counter and cache from factories")
 
     def check_request_limit(self,
                            scope_type: str,

@@ -63,5 +63,15 @@
                 }
             ]
         }
+    },
+    "redis_cache": {
+        "enabled": false,
+        "host": "localhost",
+        "port": 6379,
+        "db": 0,
+        "password": null,
+        "max_cache_size": 64,
+        "ttl_seconds": 30,
+        "comment": "Set enabled=true to use Redis for distributed caching. Falls back to in-memory if Redis unavailable."
     }
 }
