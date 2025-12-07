@@ -320,18 +320,37 @@ class RateLimit(BaseModel):
             raise ValueError("At least one window required when rate limit is enabled")
         return self
 
-    def get_active_window(self, current_time: time) -> Optional[RateLimitWindow]:
-        """Get the active window for the current time.
+    def get_active_window(self, current_time: time, use_default_fallback: bool = True) -> Optional[RateLimitWindow]:
+        """Get the active window for the current time with optional 24-hour fallback.
+
+        This method finds the time window matching the current time. If no window matches
+        and use_default_fallback=True, returns a default 24-hour window (00:00:00-23:59:59)
+        that uses the first window's limits as defaults.
 
         Args:
             current_time: Current time to check against windows
+            use_default_fallback: If True, return default 24-hour window when no match (default: True)
 
         Returns:
-            Active RateLimitWindow or None if no window matches
+            Active RateLimitWindow or None if no window matches and no fallback
         """
+        # Try to find matching window
         for window in self.windows:
             if window.is_active_at(current_time):
                 return window
+        
+        # No matching window - use default 24-hour fallback if enabled
+        if use_default_fallback and len(self.windows) > 0:
+            # Create default 24-hour window using first window's limits as template
+            first_window = self.windows[0]
+            default_window = RateLimitWindow(
+                from_time=time(0, 0, 0),
+                to_time=time(23, 59, 59),
+                max_requests=first_window.max_requests,
+                max_tokens=first_window.max_tokens
+            )
+            return default_window
+        
         return None
 
     @property

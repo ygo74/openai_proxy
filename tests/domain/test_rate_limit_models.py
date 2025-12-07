@@ -378,7 +378,7 @@ class TestRateLimit:
         assert active_window == morning_window
 
     def test_rate_limit_get_active_window_returns_none_when_no_match(self):
-        """Test get_active_window() returns None when no window matches."""
+        """Test get_active_window() returns None when no window matches and fallback disabled."""
         # arrange
         window = RateLimitWindow(
             from_time=time(9, 0, 0),
@@ -391,11 +391,98 @@ class TestRateLimit:
             enabled=True
         )
 
-        # act
-        active_window = rate_limit.get_active_window(time(22, 0, 0))
+        # act - explicitly disable fallback
+        active_window = rate_limit.get_active_window(time(22, 0, 0), use_default_fallback=False)
 
         # assert
         assert active_window is None
+
+    def test_rate_limit_get_active_window_uses_default_fallback(self):
+        """Test get_active_window() returns default 24-hour window when no match."""
+        # arrange
+        window = RateLimitWindow(
+            from_time=time(9, 0, 0),
+            to_time=time(17, 0, 0),
+            max_requests=100,
+            max_tokens=50000
+        )
+        rate_limit = RateLimit(
+            scope_type="global",
+            windows=[window],
+            enabled=True
+        )
+
+        # act - use default fallback (default behavior)
+        active_window = rate_limit.get_active_window(time(22, 0, 0))
+
+        # assert
+        assert active_window is not None
+        assert active_window.from_time == time(0, 0, 0)
+        assert active_window.to_time == time(23, 59, 59)
+        assert active_window.max_requests == 100  # Uses first window's limits
+        assert active_window.max_tokens == 50000
+
+    def test_rate_limit_get_active_window_multiple_windows_selects_correct(self):
+        """Test get_active_window() selects correct window with multiple windows."""
+        # arrange
+        morning_window = RateLimitWindow(
+            from_time=time(0, 0, 0),
+            to_time=time(8, 0, 0),
+            max_requests=100
+        )
+        business_hours_window = RateLimitWindow(
+            from_time=time(8, 0, 0),
+            to_time=time(18, 0, 0),
+            max_requests=1000
+        )
+        evening_window = RateLimitWindow(
+            from_time=time(18, 0, 0),
+            to_time=time(23, 59, 59),
+            max_requests=500
+        )
+        rate_limit = RateLimit(
+            scope_type="model",
+            scope_id="gpt-4",
+            windows=[morning_window, business_hours_window, evening_window],
+            enabled=True
+        )
+
+        # act & assert - morning
+        assert rate_limit.get_active_window(time(7, 30, 0)) == morning_window
+
+        # act & assert - business hours
+        assert rate_limit.get_active_window(time(14, 0, 0)) == business_hours_window
+
+        # act & assert - evening
+        assert rate_limit.get_active_window(time(20, 0, 0)) == evening_window
+
+    def test_rate_limit_get_active_window_boundary_transitions(self):
+        """Test get_active_window() handles boundary transitions between windows."""
+        # arrange
+        morning_window = RateLimitWindow(
+            from_time=time(0, 0, 0),
+            to_time=time(12, 0, 0),
+            max_requests=500
+        )
+        afternoon_window = RateLimitWindow(
+            from_time=time(12, 0, 0),
+            to_time=time(23, 59, 59),
+            max_requests=1000
+        )
+        rate_limit = RateLimit(
+            scope_type="global",
+            windows=[morning_window, afternoon_window],
+            enabled=True
+        )
+
+        # act & assert - just before transition
+        assert rate_limit.get_active_window(time(11, 59, 59)) == morning_window
+
+        # act & assert - exactly at transition (12:00:00)
+        assert rate_limit.get_active_window(time(12, 0, 0)) == afternoon_window
+
+        # act & assert - just after transition
+        assert rate_limit.get_active_window(time(12, 0, 1)) == afternoon_window
 
     def test_rate_limit_scope_identifier_for_global(self):
         """Test scope_identifier property for global scope."""
