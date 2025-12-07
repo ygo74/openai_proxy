@@ -5,6 +5,7 @@ update, and delete rate limit configurations dynamically without code deployment
 
 Endpoints:
 - GET /admin/rate-limits - List all rate limits
+- GET /admin/rate-limits/applicable - Query hierarchical limits for debugging
 - GET /admin/rate-limits/{scope_type}/{scope_id} - Get specific rate limit
 - GET /admin/rate-limits/global - Get global limits from config
 - POST /admin/rate-limits/models/{model_id} - Create/update model limit
@@ -35,6 +36,7 @@ from ..models.rate_limit_api import (
     RateLimitListResponse,
     RateLimitDeleteResponse,
     GlobalRateLimitResponse,
+    ApplicableLimitsResponse,
     RateLimitWindowResponse,
     RateLimitErrorResponse
 )
@@ -183,6 +185,109 @@ async def get_global_rate_limit(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve global rate limit: {str(e)}"
+        )
+
+
+@router.get("/applicable", response_model=ApplicableLimitsResponse)
+async def get_applicable_limits(
+    group_id: Optional[str] = None,
+    model_id: Optional[str] = None,
+    service: RateLimitService = Depends(get_rate_limit_service),
+    admin_user: AuthenticatedUser = Depends(require_admin_role)
+) -> ApplicableLimitsResponse:
+    """Query hierarchical rate limits for debugging and testing.
+
+    Returns all applicable rate limits for a given group/model combination,
+    showing the hierarchy of limits (group+model → model → global) and
+    which one will actually be enforced.
+
+    This endpoint is useful for:
+    - Debugging rate limit configuration
+    - Understanding which limit applies in specific scenarios
+    - Testing hierarchical priority before sending actual requests
+
+    Hierarchy priority (first non-null wins):
+    1. Group+model limit (most specific) - requires both group_id and model_id
+    2. Model limit (medium specificity) - requires model_id
+    3. Global limit (fallback) - always checked
+
+    Args:
+        group_id: Optional group identifier
+        model_id: Optional model identifier
+        service: Rate limit service
+        admin_user: Authenticated admin user
+
+    Returns:
+        ApplicableLimitsResponse with all hierarchy levels and effective limit
+
+    Raises:
+        HTTP 401: Unauthorized if not admin
+        HTTP 500: Internal server error
+
+    Examples:
+        GET /admin/rate-limits/applicable?group_id=team-a&model_id=gpt-4
+        → Returns group+model, model, and global limits for team-a:gpt-4
+
+        GET /admin/rate-limits/applicable?model_id=gpt-4
+        → Returns model and global limits (no group+model since group_id missing)
+
+        GET /admin/rate-limits/applicable
+        → Returns only global limit
+    """
+    logger.info(
+        f"Admin {admin_user.username} querying applicable limits "
+        f"(group_id={group_id}, model_id={model_id})"
+    )
+
+    try:
+        # Query all hierarchy levels
+        limits = service.get_applicable_limits(group_id=group_id, model_id=model_id)
+
+        # Helper function to convert RateLimit to RateLimitResponse
+        def to_response(rl: Optional[RateLimit]) -> Optional["RateLimitResponse"]:
+            if rl is None:
+                return None
+            return RateLimitResponse(
+                id=rl.id,
+                scope_type=rl.scope_type,
+                scope_id=rl.scope_id,
+                enabled=rl.enabled,
+                windows=[
+                    RateLimitWindowResponse(
+                        id=w.id,
+                        from_time=time_to_str(w.from_time),
+                        to_time=time_to_str(w.to_time),
+                        max_requests=w.max_requests,
+                        max_tokens=w.max_tokens
+                    ) for w in rl.windows
+                ]
+            )
+
+        # Convert domain models to API responses
+        group_model_response = to_response(limits.get('group_model'))
+        model_response = to_response(limits.get('model'))
+        global_response = to_response(limits.get('global'))
+
+        # Determine effective limit (first non-null in hierarchy)
+        effective = group_model_response or model_response or global_response
+
+        return ApplicableLimitsResponse(
+            group_id=group_id,
+            model_id=model_id,
+            group_model_limit=group_model_response,
+            model_limit=model_response,
+            global_limit=global_response,
+            effective_limit=effective
+        )
+
+    except Exception as e:
+        logger.error(
+            f"Error querying applicable limits for group={group_id}, model={model_id}: {e}",
+            exc_info=True
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to query applicable limits: {str(e)}"
         )
 
 

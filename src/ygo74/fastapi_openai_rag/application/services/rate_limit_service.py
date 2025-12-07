@@ -667,3 +667,61 @@ class RateLimitService:
             rate_limits = repository.get_enabled_only()
             logger.debug(f"Retrieved {len(rate_limits)} enabled rate limit configurations")
             return rate_limits
+
+    def get_applicable_limits(self,
+                             group_id: Optional[str] = None,
+                             model_id: Optional[str] = None) -> Dict[str, Optional[RateLimit]]:
+        """Query all hierarchy levels for applicable rate limits.
+
+        Implements hierarchical limit priority: group/model → model → global.
+        Returns all three levels so caller can apply priority evaluation.
+
+        Args:
+            group_id: Optional group identifier for group/model scope
+            model_id: Optional model identifier for model and group/model scopes
+
+        Returns:
+            Dict with keys 'group_model', 'model', 'global' mapping to rate limits.
+            Any level can be None if no limit is configured.
+
+        Example:
+            >>> limits = service.get_applicable_limits(group_id="team-a", model_id="gpt-4")
+            >>> # Returns: {
+            >>>   'group_model': RateLimit(...),  # Most specific
+            >>>   'model': RateLimit(...),        # Model-wide
+            >>>   'global': RateLimit(...)        # Fallback
+            >>> }
+        """
+        applicable_limits = {
+            'group_model': None,
+            'model': None,
+            'global': None
+        }
+
+        # Query group/model scope (most specific)
+        if group_id and model_id:
+            group_model_scope_id = f"{group_id}:{model_id}"
+            group_model_limit = self.get_rate_limit_config('group_model', group_model_scope_id)
+            applicable_limits['group_model'] = group_model_limit
+            logger.debug(
+                f"Group/model limit for {group_model_scope_id}: "
+                f"{'Found' if group_model_limit else 'Not found'}"
+            )
+
+        # Query model scope
+        if model_id:
+            model_limit = self.get_rate_limit_config('model', model_id)
+            applicable_limits['model'] = model_limit
+            logger.debug(
+                f"Model limit for {model_id}: "
+                f"{'Found' if model_limit else 'Not found'}"
+            )
+
+        # Query global scope (fallback)
+        global_limit = self.get_rate_limit_config('global', None)
+        applicable_limits['global'] = global_limit
+        logger.debug(
+            f"Global limit: {'Found' if global_limit else 'Not found'}"
+        )
+
+        return applicable_limits

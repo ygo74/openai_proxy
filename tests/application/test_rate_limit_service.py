@@ -951,10 +951,307 @@ class TestRateLimitService:
 # - Additional admin-specific tests if needed beyond CRUD operations
 
 # Phase 6 (US3 - Hierarchical Priority) - T058:
-# - test_get_applicable_limits_returns_group_model_first
-# - test_get_applicable_limits_falls_back_to_model
-# - test_get_applicable_limits_falls_back_to_global
-# - test_unlimited_limit_skips_to_next_level
+
+    def test_get_applicable_limits_returns_all_hierarchy_levels(self, mock_uow: MockUnitOfWork,
+                                                                 mock_repository_factory: Mock) -> None:
+        """Test get_applicable_limits queries all three hierarchy levels.
+
+        Verifies that the method queries group/model, model, and global scopes
+        and returns a dictionary with all three levels.
+        """
+        # Arrange
+        from datetime import time
+        from unittest.mock import patch
+
+        # Create rate limits for all levels
+        group_model_limit = RateLimit(
+            id=1,
+            scope_type="group_model",
+            scope_id="team-a:gpt-4",
+            enabled=True,
+            windows=[RateLimitWindow(
+                from_time=time(0, 0, 0),
+                to_time=time(23, 59, 59),
+                max_requests=100,
+                max_tokens=50000
+            )]
+        )
+
+        model_limit = RateLimit(
+            id=2,
+            scope_type="model",
+            scope_id="gpt-4",
+            enabled=True,
+            windows=[RateLimitWindow(
+                from_time=time(0, 0, 0),
+                to_time=time(23, 59, 59),
+                max_requests=500,
+                max_tokens=250000
+            )]
+        )
+
+        global_limit = RateLimit(
+            id=3,
+            scope_type="global",
+            scope_id=None,
+            enabled=True,
+            windows=[RateLimitWindow(
+                from_time=time(0, 0, 0),
+                to_time=time(23, 59, 59),
+                max_requests=1000,
+                max_tokens=500000
+            )]
+        )
+
+        service = RateLimitService(mock_uow, mock_repository_factory)
+
+        # Mock get_rate_limit_config to return appropriate limit for each scope
+        def get_config_side_effect(scope_type: str, scope_id: Optional[str]) -> Optional[RateLimit]:
+            if scope_type == "group_model" and scope_id == "team-a:gpt-4":
+                return group_model_limit
+            elif scope_type == "model" and scope_id == "gpt-4":
+                return model_limit
+            elif scope_type == "global" and scope_id is None:
+                return global_limit
+            return None
+
+        with patch.object(service, 'get_rate_limit_config', side_effect=get_config_side_effect):
+            # Act
+            limits = service.get_applicable_limits(group_id="team-a", model_id="gpt-4")
+
+        # Assert
+        assert limits is not None
+        assert isinstance(limits, dict)
+        assert 'group_model' in limits
+        assert 'model' in limits
+        assert 'global' in limits
+
+        # Verify all three levels returned
+        assert limits['group_model'] is not None
+        assert limits['group_model'].scope_type == "group_model"
+        assert limits['group_model'].windows[0].max_requests == 100
+
+        assert limits['model'] is not None
+        assert limits['model'].scope_type == "model"
+        assert limits['model'].windows[0].max_requests == 500
+
+        assert limits['global'] is not None
+        assert limits['global'].scope_type == "global"
+        assert limits['global'].windows[0].max_requests == 1000
+
+    def test_get_applicable_limits_handles_missing_group_model_limit(self, mock_uow: MockUnitOfWork,
+                                                                      mock_repository_factory: Mock) -> None:
+        """Test get_applicable_limits when group/model limit doesn't exist.
+
+        Verifies that missing group/model limit returns None for that level
+        while still returning model and global limits.
+        """
+        # Arrange
+        from datetime import time
+        from unittest.mock import patch
+
+        model_limit = RateLimit(
+            id=2,
+            scope_type="model",
+            scope_id="gpt-4",
+            enabled=True,
+            windows=[RateLimitWindow(
+                from_time=time(0, 0, 0),
+                to_time=time(23, 59, 59),
+                max_requests=500,
+                max_tokens=250000
+            )]
+        )
+
+        global_limit = RateLimit(
+            id=3,
+            scope_type="global",
+            scope_id=None,
+            enabled=True,
+            windows=[RateLimitWindow(
+                from_time=time(0, 0, 0),
+                to_time=time(23, 59, 59),
+                max_requests=1000,
+                max_tokens=500000
+            )]
+        )
+
+        service = RateLimitService(mock_uow, mock_repository_factory)
+
+        def get_config_side_effect(scope_type: str, scope_id: Optional[str]) -> Optional[RateLimit]:
+            if scope_type == "group_model":
+                return None  # No group/model limit
+            elif scope_type == "model" and scope_id == "gpt-4":
+                return model_limit
+            elif scope_type == "global" and scope_id is None:
+                return global_limit
+            return None
+
+        with patch.object(service, 'get_rate_limit_config', side_effect=get_config_side_effect):
+            # Act
+            limits = service.get_applicable_limits(group_id="team-a", model_id="gpt-4")
+
+        # Assert
+        assert limits['group_model'] is None  # Missing
+        assert limits['model'] is not None   # Present
+        assert limits['global'] is not None  # Present
+
+    def test_get_applicable_limits_handles_missing_model_limit(self, mock_uow: MockUnitOfWork,
+                                                                    mock_repository_factory: Mock) -> None:
+        """Test get_applicable_limits when model limit doesn't exist.
+
+        Verifies fallback to global limit when model-specific limit is missing.
+        """
+        # Arrange
+        from datetime import time
+        from unittest.mock import patch
+
+        global_limit = RateLimit(
+            id=3,
+            scope_type="global",
+            scope_id=None,
+            enabled=True,
+            windows=[RateLimitWindow(
+                from_time=time(0, 0, 0),
+                to_time=time(23, 59, 59),
+                max_requests=1000,
+                max_tokens=500000
+            )]
+        )
+
+        service = RateLimitService(mock_uow, mock_repository_factory)
+
+        def get_config_side_effect(scope_type: str, scope_id: Optional[str]) -> Optional[RateLimit]:
+            if scope_type == "global" and scope_id is None:
+                return global_limit
+            return None  # No group/model or model limits
+
+        with patch.object(service, 'get_rate_limit_config', side_effect=get_config_side_effect):
+            # Act
+            limits = service.get_applicable_limits(group_id="team-a", model_id="gpt-4")
+
+        # Assert
+        assert limits['group_model'] is None
+        assert limits['model'] is None
+        assert limits['global'] is not None
+
+    def test_get_applicable_limits_without_group_id_skips_group_model_query(self, mock_uow: MockUnitOfWork,
+                                                                             mock_repository_factory: Mock) -> None:
+        """Test get_applicable_limits skips group/model query when group_id not provided.
+
+        Verifies that when only model_id is provided (no group_id),
+        only model and global scopes are queried.
+        """
+        # Arrange
+        from datetime import time
+        from unittest.mock import patch, Mock as MockFunc
+
+        model_limit = RateLimit(
+            id=2,
+            scope_type="model",
+            scope_id="gpt-4",
+            enabled=True,
+            windows=[RateLimitWindow(
+                from_time=time(0, 0, 0),
+                to_time=time(23, 59, 59),
+                max_requests=500,
+                max_tokens=250000
+            )]
+        )
+
+        global_limit = RateLimit(
+            id=3,
+            scope_type="global",
+            scope_id=None,
+            enabled=True,
+            windows=[RateLimitWindow(
+                from_time=time(0, 0, 0),
+                to_time=time(23, 59, 59),
+                max_requests=1000,
+                max_tokens=500000
+            )]
+        )
+
+        service = RateLimitService(mock_uow, mock_repository_factory)
+
+        # Create a mock that tracks calls and returns values
+        mock_get_config = MockFunc()
+        call_log = []
+
+        def get_config_side_effect(scope_type: str, scope_id: Optional[str]) -> Optional[RateLimit]:
+            call_log.append((scope_type, scope_id))
+            if scope_type == "model" and scope_id == "gpt-4":
+                return model_limit
+            elif scope_type == "global" and scope_id is None:
+                return global_limit
+            return None
+
+        mock_get_config.side_effect = get_config_side_effect
+
+        with patch.object(service, 'get_rate_limit_config', mock_get_config):
+            # Act - no group_id provided
+            limits = service.get_applicable_limits(group_id=None, model_id="gpt-4")
+
+        # Assert
+        assert limits['group_model'] is None  # Not queried
+        assert limits['model'] is not None
+        assert limits['global'] is not None
+
+        # Verify group/model was NOT queried
+        assert ('group_model', 'None:gpt-4') not in call_log
+        assert ('model', 'gpt-4') in call_log
+        assert ('global', None) in call_log
+        assert len(call_log) == 2  # Only model and global
+
+    def test_get_applicable_limits_without_model_id_only_queries_global(self, mock_uow: MockUnitOfWork,
+                                                                         mock_repository_factory: Mock) -> None:
+        """Test get_applicable_limits only queries global when no model_id provided.
+
+        Verifies that without model_id, only global scope is queried.
+        """
+        # Arrange
+        from datetime import time
+        from unittest.mock import patch, Mock as MockFunc
+
+        global_limit = RateLimit(
+            id=3,
+            scope_type="global",
+            scope_id=None,
+            enabled=True,
+            windows=[RateLimitWindow(
+                from_time=time(0, 0, 0),
+                to_time=time(23, 59, 59),
+                max_requests=1000,
+                max_tokens=500000
+            )]
+        )
+
+        service = RateLimitService(mock_uow, mock_repository_factory)
+
+        # Create a mock that tracks calls and returns values
+        mock_get_config = MockFunc()
+        call_log = []
+
+        def get_config_side_effect(scope_type: str, scope_id: Optional[str]) -> Optional[RateLimit]:
+            call_log.append((scope_type, scope_id))
+            if scope_type == "global" and scope_id is None:
+                return global_limit
+            return None
+
+        mock_get_config.side_effect = get_config_side_effect
+
+        with patch.object(service, 'get_rate_limit_config', mock_get_config):
+            # Act - no group_id or model_id
+            limits = service.get_applicable_limits(group_id=None, model_id=None)
+
+        # Assert
+        assert limits['group_model'] is None
+        assert limits['model'] is None
+        assert limits['global'] is not None
+
+        # Verify only global was queried
+        assert len(call_log) == 1
+        assert call_log[0] == ('global', None)
 
 # Phase 7 (US4 - Time Window Management) - T065:
 # - test_get_active_window_returns_current_window

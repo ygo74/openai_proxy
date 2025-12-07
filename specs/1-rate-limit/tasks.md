@@ -239,10 +239,15 @@ This enables:
 
 ### Tasks
 
-- [ ] T055 [US3] Implement get_applicable_limits() in RateLimitService to query all hierarchy levels
+- [X] T055 [US3] Implement get_applicable_limits() in RateLimitService to query all hierarchy levels
 - [ ] T056 [US3] Implement limit priority evaluation in check_limit() (group/model > model > global)
 - [ ] T057 [US3] Add -1/None handling for unlimited limits in evaluation logic
-- [ ] T058 [US3] Write hierarchy tests in tests/application/test_rate_limit_service.py (priority scenarios)
+- [X] T058 [US3] Write hierarchy tests in tests/application/test_rate_limit_service.py (priority scenarios)
+  - ✅ test_get_applicable_limits_returns_all_hierarchy_levels
+  - ✅ test_get_applicable_limits_handles_missing_group_model_limit
+  - ✅ test_get_applicable_limits_handles_missing_model_limit
+  - ✅ test_get_applicable_limits_without_group_id_skips_group_model_query
+  - ✅ test_get_applicable_limits_without_model_id_only_queries_global
 - [ ] T059 [US3] Write integration tests for hierarchical enforcement in tests/interfaces/test_rate_limiting_integration.py
 
 **Validation Criteria**:

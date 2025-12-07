@@ -664,3 +664,79 @@ class ApiClient:
             return self._make_request("DELETE", f"/v1/admin/rate-limits/{scope_type}/{scope_id}")
         else:
             return self._make_request("DELETE", f"/v1/admin/rate-limits/{scope_type}")
+
+    def get_applicable_limits(
+        self,
+        group_id: Optional[str] = None,
+        model_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Query hierarchical rate limits for debugging and testing.
+
+        Returns all applicable rate limits for a given group/model combination,
+        showing the hierarchy of limits (group+model → model → global) and
+        which one will actually be enforced (effective_limit).
+
+        This method is useful for:
+        - Debugging rate limit configuration
+        - Understanding which limit applies in specific scenarios
+        - Testing hierarchical priority before sending actual requests
+
+        Hierarchy priority (first non-null wins):
+        1. Group+model limit (most specific) - requires both group_id and model_id
+        2. Model limit (medium specificity) - requires model_id
+        3. Global limit (fallback) - always checked
+
+        Args:
+            group_id: Optional group identifier
+            model_id: Optional model identifier
+
+        Returns:
+            Dictionary with keys:
+            - group_id: Requested group ID
+            - model_id: Requested model ID
+            - group_model_limit: Group+model rate limit (or None)
+            - model_limit: Model rate limit (or None)
+            - global_limit: Global rate limit (or None)
+            - effective_limit: The limit that will be enforced (first non-null)
+
+        Examples:
+            # Get all limits for team-a using gpt-4
+            >>> client.get_applicable_limits(group_id="team-a", model_id="gpt-4")
+            {
+                "group_id": "team-a",
+                "model_id": "gpt-4",
+                "group_model_limit": {...},  # Most specific
+                "model_limit": {...},
+                "global_limit": {...},
+                "effective_limit": {...}  # Same as group_model_limit
+            }
+
+            # Get limits for any group using gpt-4
+            >>> client.get_applicable_limits(model_id="gpt-4")
+            {
+                "group_id": null,
+                "model_id": "gpt-4",
+                "group_model_limit": null,  # Skipped (no group_id)
+                "model_limit": {...},
+                "global_limit": {...},
+                "effective_limit": {...}  # Falls back to model_limit
+            }
+
+            # Get only global limits
+            >>> client.get_applicable_limits()
+            {
+                "group_id": null,
+                "model_id": null,
+                "group_model_limit": null,
+                "model_limit": null,
+                "global_limit": {...},
+                "effective_limit": {...}  # Falls back to global_limit
+            }
+        """
+        params = {}
+        if group_id is not None:
+            params["group_id"] = group_id
+        if model_id is not None:
+            params["model_id"] = model_id
+
+        return self._make_request("GET", "/v1/admin/rate-limits/applicable", params=params)

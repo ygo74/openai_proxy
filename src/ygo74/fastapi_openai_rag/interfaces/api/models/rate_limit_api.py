@@ -206,6 +206,33 @@ class GlobalRateLimitResponse(BaseModel):
     windows: List[RateLimitWindowResponse] = Field(..., description="Global time windows")
 
 
+class ApplicableLimitsResponse(BaseModel):
+    """Response model for hierarchical limit query.
+
+    Returned by GET /admin/rate-limits/applicable to show which limits
+    would be evaluated for a given group/model combination.
+
+    Useful for debugging and understanding hierarchical priority:
+    - group_model limit (most specific) takes precedence
+    - Falls back to model limit if no group_model limit
+    - Falls back to global limit if no model limit
+
+    Attributes:
+        group_id: Group identifier (if provided)
+        model_id: Model identifier (if provided)
+        group_model_limit: Group+model scoped limit (highest priority)
+        model_limit: Model-scoped limit (medium priority)
+        global_limit: Global limit (lowest priority fallback)
+        effective_limit: The limit that will actually be applied (first non-null in hierarchy)
+    """
+    group_id: Optional[str] = Field(None, description="Group identifier queried")
+    model_id: Optional[str] = Field(None, description="Model identifier queried")
+    group_model_limit: Optional[RateLimitResponse] = Field(None, description="Group+model limit (highest priority)")
+    model_limit: Optional[RateLimitResponse] = Field(None, description="Model limit (medium priority)")
+    global_limit: Optional[RateLimitResponse] = Field(None, description="Global limit (lowest priority)")
+    effective_limit: Optional[RateLimitResponse] = Field(None, description="Actual limit that will be applied")
+
+
 class RateLimitErrorResponse(BaseModel):
     """Error response model for validation failures.
 

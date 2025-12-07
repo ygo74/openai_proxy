@@ -43,6 +43,7 @@ class RateLimitCommandsLoader:
         with CommandGroup(command_loader, 'rate-limit', operations_tmpl='ygo74.fastapi_openai_rag_client.commands.rate_limits#{}') as g:
             g.command('list', "list_rate_limits")
             g.command('show', "get_rate_limit")
+            g.command('applicable', "get_applicable_limits")
             g.command('create-global', "create_global_rate_limit")
             g.command('create-model', "create_model_rate_limit")
             g.command('create-group-model', "create_group_model_rate_limit")
@@ -61,6 +62,10 @@ class RateLimitCommandsLoader:
         with ArgumentsContext(command_loader, 'rate-limit show') as arg_context:
             arg_context.argument('scope_type', type=str, help='Scope type (global, model, group_model)')
             arg_context.argument('scope_id', type=str, help='Scope identifier (optional for global)')
+
+        with ArgumentsContext(command_loader, 'rate-limit applicable') as arg_context:
+            arg_context.argument('group_id', type=str, help='Optional group identifier')
+            arg_context.argument('model_id', type=str, help='Optional model identifier')
 
         with ArgumentsContext(command_loader, 'rate-limit create-global') as arg_context:
             arg_context.argument('windows', type=str, help='JSON string of time windows (e.g., \'[{"from_time":"00:00:00","to_time":"23:59:59","max_requests":1000,"max_tokens":100000}]\'')
@@ -98,6 +103,30 @@ def get_rate_limit(cmd: CLICommand, scope_type: str, scope_id: Optional[str] = N
     """Get rate limit configuration by scope."""
     api_client = get_api_client(cmd)
     return api_client.get_rate_limit(scope_type=scope_type, scope_id=scope_id)
+
+
+def get_applicable_limits(
+    cmd: CLICommand,
+    group_id: Optional[str] = None,
+    model_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """Query hierarchical rate limits for debugging and testing.
+
+    Returns all applicable rate limits for a given group/model combination,
+    showing the hierarchy of limits and which one will be enforced.
+
+    Examples:
+        # Get all limits for team-a using gpt-4
+        rag-client rate-limit applicable --group-id team-a --model-id gpt-4
+
+        # Get limits for any group using gpt-4 (skips group+model)
+        rag-client rate-limit applicable --model-id gpt-4
+
+        # Get only global limits
+        rag-client rate-limit applicable
+    """
+    api_client = get_api_client(cmd)
+    return api_client.get_applicable_limits(group_id=group_id, model_id=model_id)
 
 
 def create_global_rate_limit(cmd: CLICommand, windows: str, enabled: Optional[Union[str, bool]] = None) -> Dict[str, Any]:

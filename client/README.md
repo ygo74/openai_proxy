@@ -103,6 +103,45 @@ rag-client model remove-from-group --model-id MODEL_ID --group-id GROUP_ID
 rag-client model list-in-group --group-id GROUP_ID
 ```
 
+### Rate Limit Management
+
+```bash
+# List all rate limits
+rag-client rate-limit list
+
+# Show specific rate limit
+rag-client rate-limit show --scope-type model --scope-id gpt-4
+
+# Query hierarchical limits (debugging/testing)
+rag-client rate-limit applicable --group-id team-a --model-id gpt-4
+rag-client rate-limit applicable --model-id gpt-4  # Without group
+rag-client rate-limit applicable  # Only global
+
+# Create model-specific rate limit
+rag-client rate-limit create-model --model-id gpt-4 \
+  --windows '[{"from_time":"00:00:00","to_time":"23:59:59","max_requests":500,"max_tokens":50000}]'
+
+# Create group+model rate limit (highest priority)
+rag-client rate-limit create-group-model --group-name team-a --model-id gpt-4 \
+  --windows '[{"from_time":"00:00:00","to_time":"23:59:59","max_requests":100,"max_tokens":10000}]'
+
+# Update rate limit
+rag-client rate-limit update --scope-type model --scope-id gpt-4 --enabled false
+
+# Delete rate limit
+rag-client rate-limit delete --scope-type model --scope-id gpt-4
+```
+
+**Rate Limit Hierarchy:**
+
+The `applicable` command helps you understand which limit will be enforced:
+
+1. **Group+Model** (highest priority) - Specific to group and model
+2. **Model** (medium priority) - Applies to all requests for that model
+3. **Global** (fallback) - Applies when no more specific limit exists
+
+The `effective_limit` in the response shows which limit will actually be enforced.
+
 ## Environment Variables
 
 You can configure the client using environment variables:

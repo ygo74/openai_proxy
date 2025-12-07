@@ -200,16 +200,16 @@ class RateLimitsClient:
         windows: Optional[List[TimeWindowConfig]] = None
     ) -> RateLimit:
         """Create or update model-level rate limit.
-        
+
         Args:
             model_id: Model identifier
             max_requests: Maximum requests per window
             max_tokens: Maximum tokens per window
             windows: Time-based windows configuration
-            
+
         Returns:
             Created/updated rate limit configuration
-            
+
         Raises:
             ValidationError: Invalid parameters
             NotFoundError: Model not found
@@ -237,13 +237,13 @@ def test_create_model_limit_success(mock_http_client):
         json_data={"id": 1, "scope_type": "model", ...}
     )
     client = RateLimitsClient(http_client=mock_http_client)
-    
+
     # Act
     result = client.create_model_limit(
         model_id="gpt-4",
         max_requests=100
     )
-    
+
     # Assert
     assert result.scope_type == "model"
     mock_http_client.post.assert_called_once_with(

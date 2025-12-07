@@ -1,8 +1,8 @@
 # Constitution Amendment Report - Version 1.1.0
 
-**Date**: 2025-12-07  
-**Amendment Type**: MINOR (New Principle Added)  
-**Previous Version**: 1.0.0  
+**Date**: 2025-12-07
+**Amendment Type**: MINOR (New Principle Added)
+**Previous Version**: 1.0.0
 **New Version**: 1.1.0
 
 ---
@@ -336,8 +336,8 @@ This amendment is considered successfully implemented when:
 
 ---
 
-**Amendment Status**: ✅ **RATIFIED**  
-**Effective Date**: 2025-12-07  
+**Amendment Status**: ✅ **RATIFIED**
+**Effective Date**: 2025-12-07
 **Next Review**: After rate limits client implementation complete
 
 ---
