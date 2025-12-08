@@ -2,6 +2,7 @@
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Optional, List, Any
 import logging
+import time
 
 from ...domain.models.rate_limit import (
     RateLimit,
@@ -10,6 +11,7 @@ from ...domain.models.rate_limit import (
 from ...domain.models.rate_limit_config import GlobalRateLimitConfig
 from ...domain.unit_of_work import UnitOfWork
 from .config_service import ConfigService
+from ...infrastructure.observability.metrics_service import get_metrics_service
 
 logger = logging.getLogger(__name__)
 
@@ -106,8 +108,14 @@ class RateLimitService:
         Raises:
             RateLimitExceeded: When the rate limit is exceeded
         """
-        from datetime import datetime, time as dt_time
+        from datetime import time as dt_time
         from ...domain.exceptions.rate_limit_exception import RateLimitExceeded
+
+        # Start timing for metrics
+        start_time = time.time()
+        exceeded = False
+        final_scope_type = scope_type
+        final_scope_id = scope_id
 
         # Step 1: Get applicable limits with hierarchy
         # Support both old (scope_type/scope_id) and new (group_id/model_id) APIs
@@ -186,7 +194,6 @@ class RateLimitService:
         # Step 5: Check if limit exceeded
         if current_count > active_window.max_requests:
             # Calculate retry_after
-            import time
             current_timestamp = int(time.time())
             window_end = window_start + window_duration
             retry_after = max(1, window_end - current_timestamp)
@@ -195,6 +202,22 @@ class RateLimitService:
                 f"Rate limit exceeded: scope={effective_scope_type}, id={effective_scope_id}, "
                 f"count={current_count}, limit={active_window.max_requests}"
             )
+
+            exceeded = True
+            final_scope_type = effective_scope_type
+            final_scope_id = effective_scope_id
+
+            # Record metrics before raising exception
+            duration_ms = (time.time() - start_time) * 1000
+            metrics_service = get_metrics_service()
+            if metrics_service:
+                metrics_service.record_rate_limit_evaluation(
+                    scope_type=final_scope_type,
+                    limit_type="requests",
+                    duration_ms=duration_ms,
+                    exceeded=True,
+                    scope_id=final_scope_id
+                )
 
             raise RateLimitExceeded(
                 scope_type=effective_scope_type,
@@ -210,6 +233,19 @@ class RateLimitService:
             f"Request allowed: scope={effective_scope_type}, id={effective_scope_id}, "
             f"count={current_count}/{active_window.max_requests}"
         )
+
+        # Record metrics for successful check
+        duration_ms = (time.time() - start_time) * 1000
+        metrics_service = get_metrics_service()
+        if metrics_service:
+            metrics_service.record_rate_limit_evaluation(
+                scope_type=effective_scope_type,
+                limit_type="requests",
+                duration_ms=duration_ms,
+                exceeded=False,
+                scope_id=effective_scope_id
+            )
+
         return True
 
     def check_token_limit(self,
@@ -250,8 +286,14 @@ class RateLimitService:
         Raises:
             RateLimitExceeded: When the token limit would be exceeded
         """
-        from datetime import datetime, time as dt_time
+        from datetime import time as dt_time
         from ...domain.exceptions.rate_limit_exception import RateLimitExceeded
+
+        # Start timing for metrics
+        start_time = time.time()
+        exceeded = False
+        final_scope_type = scope_type
+        final_scope_id = scope_id
 
         # Step 1: Get applicable limits with hierarchy
         # Support both old (scope_type/scope_id) and new (group_id/model_id) APIs
@@ -332,7 +374,6 @@ class RateLimitService:
             projected_count = current_token_count + estimated_tokens
             if projected_count > active_window.max_tokens:
                 # Calculate retry_after
-                import time
                 current_timestamp = int(time.time())
                 window_end = window_start + window_duration
                 retry_after = max(1, window_end - current_timestamp)
@@ -342,6 +383,18 @@ class RateLimitService:
                     f"current={current_token_count}, estimated={estimated_tokens}, "
                     f"projected={projected_count}, limit={active_window.max_tokens}"
                 )
+
+                # Record metrics before raising exception
+                duration_ms = (time.time() - start_time) * 1000
+                metrics_service = get_metrics_service()
+                if metrics_service:
+                    metrics_service.record_rate_limit_evaluation(
+                        scope_type=effective_scope_type,
+                        limit_type="tokens",
+                        duration_ms=duration_ms,
+                        exceeded=True,
+                        scope_id=effective_scope_id
+                    )
 
                 raise RateLimitExceeded(
                     scope_type=effective_scope_type,
@@ -356,7 +409,6 @@ class RateLimitService:
             # No estimated tokens, just check current usage
             if current_token_count > active_window.max_tokens:
                 # Calculate retry_after
-                import time
                 current_timestamp = int(time.time())
                 window_end = window_start + window_duration
                 retry_after = max(1, window_end - current_timestamp)
@@ -365,6 +417,18 @@ class RateLimitService:
                     f"Token limit exceeded: scope={effective_scope_type}, id={effective_scope_id}, "
                     f"count={current_token_count}, limit={active_window.max_tokens}"
                 )
+
+                # Record metrics before raising exception
+                duration_ms = (time.time() - start_time) * 1000
+                metrics_service = get_metrics_service()
+                if metrics_service:
+                    metrics_service.record_rate_limit_evaluation(
+                        scope_type=effective_scope_type,
+                        limit_type="tokens",
+                        duration_ms=duration_ms,
+                        exceeded=True,
+                        scope_id=effective_scope_id
+                    )
 
                 raise RateLimitExceeded(
                     scope_type=effective_scope_type,
@@ -380,6 +444,19 @@ class RateLimitService:
             f"Token limit check passed: scope={effective_scope_type}, id={effective_scope_id}, "
             f"current={current_token_count}/{active_window.max_tokens}"
         )
+
+        # Record metrics for successful check
+        duration_ms = (time.time() - start_time) * 1000
+        metrics_service = get_metrics_service()
+        if metrics_service:
+            metrics_service.record_rate_limit_evaluation(
+                scope_type=effective_scope_type,
+                limit_type="tokens",
+                duration_ms=duration_ms,
+                exceeded=False,
+                scope_id=effective_scope_id
+            )
+
         return True
 
     def record_token_usage(self,
@@ -490,8 +567,7 @@ class RateLimitService:
         Returns:
             tuple: (window_start_timestamp, window_duration_seconds)
         """
-        import time
-        from datetime import datetime, timedelta
+        from datetime import timedelta
 
         # Get current time
         now = datetime.now()
@@ -536,9 +612,26 @@ class RateLimitService:
         # Try cache first
         cached = self._cache.get(scope_type, scope_id)
         if cached is not None:
+            # Cache hit
+            metrics_service = get_metrics_service()
+            if metrics_service:
+                metrics_service.record_rate_limit_cache_access(
+                    hit=True,
+                    scope_type=scope_type,
+                    scope_id=scope_id
+                )
             return cached
 
-        # Cache miss - retrieve from database
+        # Cache miss
+        metrics_service = get_metrics_service()
+        if metrics_service:
+            metrics_service.record_rate_limit_cache_access(
+                hit=False,
+                scope_type=scope_type,
+                scope_id=scope_id
+            )
+
+        # Retrieve from database
         with self._uow as uow:
             repository = self._repository_factory(uow.session)
             rate_limit = repository.get_by_scope(scope_type, scope_id)

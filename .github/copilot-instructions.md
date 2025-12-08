@@ -260,6 +260,27 @@ def test_create_model_limit_success(mock_http_client):
 
 **Client versioning**: Client version MUST match gateway version (semantic versioning in `pyproject.toml`)
 
+## 🚦 Rate Limiting System
+
+**Multi-level rate limiting** with hierarchical priority (group+model → model → global) and dynamic configuration.
+
+**Key Principles**:
+- **Hierarchical evaluation**: Most specific limit wins (group+model > model > global)
+- **Protocol-based**: `IRateLimitCache` and `IRateLimitCounter` abstractions support Redis or in-memory
+- **Fail-open**: Redis unavailable → allow requests (no 500 errors)
+- **Time windows**: Configurable windows (HH:MM-HH:MM) with max_requests and max_tokens
+- **Unlimited handling**: `-1` or `None` = skip to next hierarchy level
+- **Metrics**: OpenTelemetry metrics for evaluation latency, cache hit rate, exceeded counts
+- **Service layer**: `RateLimitService` handles all business logic, endpoints delegate to services
+- **Token recording**: Done asynchronously after response completion via service method
+
+**Performance SLAs**:
+- Evaluation latency: <10ms p99
+- Cache hit rate: >95%
+- Config propagation: <5s (via Redis pub/sub)
+
+**Documentation**: See `specs/1-rate-limit/` for detailed implementation docs, OpenAPI spec, and quickstart guide
+
 ## 🔧 Code Style
 
 - **English documentation** for all functions/classes, written in clear, concise English
