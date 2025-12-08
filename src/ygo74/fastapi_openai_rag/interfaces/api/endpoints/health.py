@@ -312,7 +312,7 @@ async def check_redis() -> Dict[str, Any] | None:
     try:
         # Get configuration to check if Redis is enabled
         config: AppConfig = config_service.get_config()
-        
+
         # Skip check if Redis is not enabled
         if not config.redis_cache.enabled:
             logger.debug("Redis is disabled in configuration, skipping health check")
@@ -322,9 +322,9 @@ async def check_redis() -> Dict[str, Any] | None:
 
         # Try to get the Redis client from the rate limit counter factory
         from ....infrastructure.cache.rate_limit_counter_factory import get_rate_limit_counter
-        
+
         counter = get_rate_limit_counter(config.redis_cache)
-        
+
         # Check if we're using Redis (not in-memory)
         from ....infrastructure.cache.redis_rate_limit_counter import RedisRateLimitCounter
         if not isinstance(counter, RedisRateLimitCounter):
@@ -340,7 +340,7 @@ async def check_redis() -> Dict[str, Any] | None:
             window_start=window_start,
             window_duration=1
         )
-        
+
         response_time = round((time.time() - start_time) * 1000, 2)
 
         if test_count is not None and (test_count > 0 or test_count == float('inf')):
