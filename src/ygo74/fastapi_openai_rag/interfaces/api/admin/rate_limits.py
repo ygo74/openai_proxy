@@ -17,16 +17,16 @@ Authentication:
 - All endpoints require admin role via require_admin_role dependency
 - Uses existing Keycloak/OAuth2 authentication
 """
-from typing import List, Optional
-from datetime import time
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 import logging
 
 from ....infrastructure.db.session import get_db
 from ....infrastructure.db.unit_of_work import SQLUnitOfWork
 from ....application.services.rate_limit_service import RateLimitService
-from ....domain.models.rate_limit import RateLimit, RateLimitWindow
+from ..mappers.rate_limit_mapper import RateLimitApiMapper
+from ....domain.models.rate_limit import RateLimit
 from ....domain.models.autenticated_user import AuthenticatedUser
 from ..security.auth import require_admin_role
 from ..models.rate_limit_api import (
@@ -36,44 +36,12 @@ from ..models.rate_limit_api import (
     RateLimitListResponse,
     RateLimitDeleteResponse,
     GlobalRateLimitResponse,
-    ApplicableLimitsResponse,
-    RateLimitWindowResponse,
-    RateLimitErrorResponse
+    ApplicableLimitsResponse
 )
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin/rate-limits", tags=["admin", "rate-limits"])
-
-
-def time_to_str(t: time) -> str:
-    """Convert datetime.time to string format HH:MM:SS.
-
-    Args:
-        t: Time object
-
-    Returns:
-        String in HH:MM:SS format
-    """
-    return t.strftime("%H:%M:%S")
-
-
-def str_to_time(time_str: str) -> time:
-    """Convert string HH:MM or HH:MM:SS to datetime.time.
-
-    Args:
-        time_str: Time string in HH:MM or HH:MM:SS format
-
-    Returns:
-        datetime.time object
-    """
-    parts = time_str.split(':')
-    if len(parts) == 2:
-        return time(int(parts[0]), int(parts[1]), 0)
-    elif len(parts) == 3:
-        return time(int(parts[0]), int(parts[1]), int(parts[2]))
-    else:
-        raise ValueError(f"Invalid time format: {time_str}. Expected HH:MM or HH:MM:SS")
 
 
 def get_rate_limit_service(db: Session = Depends(get_db)) -> RateLimitService:
@@ -113,39 +81,19 @@ async def list_rate_limits(
     """
     logger.info(f"Admin {admin_user.username} listing all rate limits")
 
-    try:
-        rate_limits = service.get_all_rate_limits()
+    # Delegate to service
+    rate_limits = service.get_all_rate_limits()
 
-        # Convert domain models to API response models
-        response_limits = [
-            RateLimitResponse(
-                id=rl.id,
-                scope_type=rl.scope_type,
-                scope_id=rl.scope_id,
-                enabled=rl.enabled,
-                windows=[
-                    RateLimitWindowResponse(
-                        id=w.id,
-                        from_time=time_to_str(w.from_time),
-                        to_time=time_to_str(w.to_time),
-                        max_requests=w.max_requests,
-                        max_tokens=w.max_tokens
-                    ) for w in rl.windows
-                ]
-            ) for rl in rate_limits
-        ]
+    # Map domain models to API response
+    response_limits = [
+        RateLimitApiMapper.domain_to_response(rl)
+        for rl in rate_limits
+    ]
 
-        return RateLimitListResponse(
-            rate_limits=response_limits,
-            total=len(response_limits)
-        )
-
-    except Exception as e:
-        logger.error(f"Error listing rate limits: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve rate limits: {str(e)}"
-        )
+    return RateLimitListResponse(
+        rate_limits=response_limits,
+        total=len(response_limits)
+    )
 
 
 @router.get("/global", response_model=GlobalRateLimitResponse)
@@ -170,22 +118,12 @@ async def get_global_rate_limit(
     """
     logger.info(f"Admin {admin_user.username} retrieving global rate limit")
 
-    try:
-        # TODO: Integrate with ConfigService when Phase 9 is implemented
-        # For now, return placeholder response
-        raise HTTPException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="Global rate limits from config.json will be available in Phase 9"
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error retrieving global rate limit: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve global rate limit: {str(e)}"
-        )
+    # TODO: Integrate with ConfigService when Phase 9 is implemented
+    # For now, return placeholder response
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="Global rate limits from config.json will be available in Phase 9"
+    )
 
 
 @router.get("/applicable", response_model=ApplicableLimitsResponse)
@@ -239,56 +177,28 @@ async def get_applicable_limits(
         f"(group_id={group_id}, model_id={model_id})"
     )
 
-    try:
-        # Query all hierarchy levels
-        limits = service.get_applicable_limits(group_id=group_id, model_id=model_id)
+    # Delegate to service
+    limits = service.get_applicable_limits(group_id=group_id, model_id=model_id)
 
-        # Helper function to convert RateLimit to RateLimitResponse
-        def to_response(rl: Optional[RateLimit]) -> Optional["RateLimitResponse"]:
-            if rl is None:
-                return None
-            return RateLimitResponse(
-                id=rl.id,
-                scope_type=rl.scope_type,
-                scope_id=rl.scope_id,
-                enabled=rl.enabled,
-                windows=[
-                    RateLimitWindowResponse(
-                        id=w.id,
-                        from_time=time_to_str(w.from_time),
-                        to_time=time_to_str(w.to_time),
-                        max_requests=w.max_requests,
-                        max_tokens=w.max_tokens
-                    ) for w in rl.windows
-                ]
-            )
+    # Map domain models to API responses
+    def to_response_optional(rl: Optional[RateLimit]) -> Optional[RateLimitResponse]:
+        return RateLimitApiMapper.domain_to_response(rl) if rl else None
 
-        # Convert domain models to API responses
-        group_model_response = to_response(limits.get('group_model'))
-        model_response = to_response(limits.get('model'))
-        global_response = to_response(limits.get('global'))
+    group_model_response = to_response_optional(limits.get('group_model'))
+    model_response = to_response_optional(limits.get('model'))
+    global_response = to_response_optional(limits.get('global'))
 
-        # Determine effective limit (first non-null in hierarchy)
-        effective = group_model_response or model_response or global_response
+    # Determine effective limit (first non-null in hierarchy)
+    effective = group_model_response or model_response or global_response
 
-        return ApplicableLimitsResponse(
-            group_id=group_id,
-            model_id=model_id,
-            group_model_limit=group_model_response,
-            model_limit=model_response,
-            global_limit=global_response,
-            effective_limit=effective
-        )
-
-    except Exception as e:
-        logger.error(
-            f"Error querying applicable limits for group={group_id}, model={model_id}: {e}",
-            exc_info=True
-        )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to query applicable limits: {str(e)}"
-        )
+    return ApplicableLimitsResponse(
+        group_id=group_id,
+        model_id=model_id,
+        group_model_limit=group_model_response,
+        model_limit=model_response,
+        global_limit=global_response,
+        effective_limit=effective
+    )
 
 
 @router.post("/models/{model_id}", response_model=RateLimitResponse, status_code=status.HTTP_201_CREATED)
@@ -319,56 +229,18 @@ async def create_or_update_model_rate_limit(
     """
     logger.info(f"Admin {admin_user.username} creating/updating rate limit for model {model_id}")
 
-    try:
-        # Convert API request to domain model
-        windows = [
-            RateLimitWindow(
-                from_time=str_to_time(w.from_time),
-                to_time=str_to_time(w.to_time),
-                max_requests=w.max_requests if w.max_requests is not None else -1,
-                max_tokens=w.max_tokens if w.max_tokens is not None else -1
-            ) for w in request_data.windows
-        ]
+    # Map API request to domain model
+    rate_limit = RateLimitApiMapper.create_request_to_domain(
+        request_data,
+        scope_type="model",
+        scope_id=model_id
+    )
 
-        rate_limit = RateLimit(
-            scope_type="model",
-            scope_id=model_id,
-            enabled=request_data.enabled,
-            windows=windows
-        )
+    # Delegate to service
+    created_limit = service.create_or_update_rate_limit(rate_limit)
 
-        # Create or update via service
-        created_limit = service.create_or_update_rate_limit(rate_limit)
-
-        # Convert domain model to API response
-        return RateLimitResponse(
-            id=created_limit.id,
-            scope_type=created_limit.scope_type,
-            scope_id=created_limit.scope_id,
-            enabled=created_limit.enabled,
-            windows=[
-                RateLimitWindowResponse(
-                    id=w.id,
-                    from_time=time_to_str(w.from_time),
-                    to_time=time_to_str(w.to_time),
-                    max_requests=w.max_requests,
-                    max_tokens=w.max_tokens
-                ) for w in created_limit.windows
-            ]
-        )
-
-    except ValueError as e:
-        logger.warning(f"Invalid request data: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
-    except Exception as e:
-        logger.error(f"Error creating/updating model rate limit: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create/update rate limit: {str(e)}"
-        )
+    # Map domain response to API
+    return RateLimitApiMapper.domain_to_response(created_limit)
 
 
 @router.post("/groups/{group_id}/models/{model_id}", response_model=RateLimitResponse, status_code=status.HTTP_201_CREATED)
@@ -401,59 +273,21 @@ async def create_or_update_group_model_rate_limit(
     """
     logger.info(f"Admin {admin_user.username} creating/updating rate limit for group {group_id}, model {model_id}")
 
-    try:
-        # Convert API request to domain model
-        windows = [
-            RateLimitWindow(
-                from_time=str_to_time(w.from_time),
-                to_time=str_to_time(w.to_time),
-                max_requests=w.max_requests if w.max_requests is not None else -1,
-                max_tokens=w.max_tokens if w.max_tokens is not None else -1
-            ) for w in request_data.windows
-        ]
+    # Scope ID format: "group_id:model_id"
+    scope_id = f"{group_id}:{model_id}"
 
-        # Scope ID format: "group_id:model_id"
-        scope_id = f"{group_id}:{model_id}"
+    # Map API request to domain model
+    rate_limit = RateLimitApiMapper.create_request_to_domain(
+        request_data,
+        scope_type="group_model",
+        scope_id=scope_id
+    )
 
-        rate_limit = RateLimit(
-            scope_type="group_model",
-            scope_id=scope_id,
-            enabled=request_data.enabled,
-            windows=windows
-        )
+    # Delegate to service
+    created_limit = service.create_or_update_rate_limit(rate_limit)
 
-        # Create or update via service
-        created_limit = service.create_or_update_rate_limit(rate_limit)
-
-        # Convert domain model to API response
-        return RateLimitResponse(
-            id=created_limit.id,
-            scope_type=created_limit.scope_type,
-            scope_id=created_limit.scope_id,
-            enabled=created_limit.enabled,
-            windows=[
-                RateLimitWindowResponse(
-                    id=w.id,
-                    from_time=time_to_str(w.from_time),
-                    to_time=time_to_str(w.to_time),
-                    max_requests=w.max_requests,
-                    max_tokens=w.max_tokens
-                ) for w in created_limit.windows
-            ]
-        )
-
-    except ValueError as e:
-        logger.warning(f"Invalid request data: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
-    except Exception as e:
-        logger.error(f"Error creating/updating group+model rate limit: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create/update rate limit: {str(e)}"
-        )
+    # Map domain response to API
+    return RateLimitApiMapper.domain_to_response(created_limit)
 
 
 @router.get("/{scope_type}/{scope_id}", response_model=RateLimitResponse)
@@ -484,48 +318,17 @@ async def get_rate_limit(
     """
     logger.info(f"Admin {admin_user.username} retrieving rate limit: {scope_type}/{scope_id}")
 
-    # Validate scope type
-    if scope_type not in ["model", "group_model", "global"]:
+    # Delegate to service (service will handle validation and errors)
+    rate_limit = service.get_rate_limit(scope_type, scope_id)
+
+    if not rate_limit:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid scope_type: {scope_type}. Must be 'model', 'group_model', or 'global'"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Rate limit not found for {scope_type}/{scope_id}"
         )
 
-    try:
-        # Get rate limit from service
-        rate_limit = service.get_rate_limit(scope_type, scope_id)
-
-        if not rate_limit:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Rate limit not found for {scope_type}/{scope_id}"
-            )
-
-        # Convert domain model to API response
-        return RateLimitResponse(
-            id=rate_limit.id,
-            scope_type=rate_limit.scope_type,
-            scope_id=rate_limit.scope_id,
-            enabled=rate_limit.enabled,
-            windows=[
-                RateLimitWindowResponse(
-                    id=w.id,
-                    from_time=time_to_str(w.from_time),
-                    to_time=time_to_str(w.to_time),
-                    max_requests=w.max_requests,
-                    max_tokens=w.max_tokens
-                ) for w in rate_limit.windows
-            ]
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error retrieving rate limit: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve rate limit: {str(e)}"
-        )
+    # Map domain to API response
+    return RateLimitApiMapper.domain_to_response(rate_limit)
 
 
 @router.patch("/{scope_type}/{scope_id}", response_model=RateLimitResponse)
@@ -561,90 +364,48 @@ async def update_rate_limit(
     """
     logger.info(f"Admin {admin_user.username} updating rate limit: {scope_type}/{scope_id}")
 
-    # Validate scope type
-    if scope_type not in ["model", "group_model", "global"]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid scope_type: {scope_type}. Must be 'model', 'group_model', or 'global'"
-        )
-
-    # Validate at least one field is provided
+    # Validate at least one field is provided (Pydantic can't do this)
     if request_data.enabled is None and request_data.windows is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="At least one field (enabled or windows) must be provided for update"
         )
 
-    try:
-        # Get existing rate limit
-        existing = service.get_rate_limit(scope_type, scope_id)
+    # Get existing rate limit
+    existing = service.get_rate_limit(scope_type, scope_id)
 
-        if not existing:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Rate limit not found for {scope_type}/{scope_id}"
-            )
-
-        # Prepare updated windows (use existing if not provided)
-        if request_data.windows is not None:
-            windows = [
-                RateLimitWindow(
-                    from_time=str_to_time(w.from_time),
-                    to_time=str_to_time(w.to_time),
-                    max_requests=w.max_requests if w.max_requests is not None else -1,
-                    max_tokens=w.max_tokens if w.max_tokens is not None else -1
-                ) for w in request_data.windows
-            ]
-        else:
-            # Preserve existing windows
-            windows = existing.windows
-
-        # Prepare updated enabled status (use existing if not provided)
-        enabled = request_data.enabled if request_data.enabled is not None else existing.enabled
-
-        # Create updated rate limit
-        updated_limit = RateLimit(
-            id=existing.id,
-            scope_type=scope_type,
-            scope_id=scope_id,
-            enabled=enabled,
-            windows=windows
-        )
-
-        # Update via service
-        result = service.create_or_update_rate_limit(updated_limit)
-
-        # Convert domain model to API response
-        return RateLimitResponse(
-            id=result.id,
-            scope_type=result.scope_type,
-            scope_id=result.scope_id,
-            enabled=result.enabled,
-            windows=[
-                RateLimitWindowResponse(
-                    id=w.id,
-                    from_time=time_to_str(w.from_time),
-                    to_time=time_to_str(w.to_time),
-                    max_requests=w.max_requests,
-                    max_tokens=w.max_tokens
-                ) for w in result.windows
-            ]
-        )
-
-    except HTTPException:
-        raise
-    except ValueError as e:
-        logger.warning(f"Invalid request data: {e}")
+    if not existing:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Rate limit not found for {scope_type}/{scope_id}"
         )
-    except Exception as e:
-        logger.error(f"Error updating rate limit: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update rate limit: {str(e)}"
-        )
+
+    # Prepare updated windows (use existing if not provided)
+    if request_data.windows is not None:
+        windows = [
+            RateLimitApiMapper.window_request_to_domain(w)
+            for w in request_data.windows
+        ]
+    else:
+        windows = existing.windows
+
+    # Prepare updated enabled status (use existing if not provided)
+    enabled = request_data.enabled if request_data.enabled is not None else existing.enabled
+
+    # Create updated domain model (reuse existing scope_type to preserve type)
+    updated_limit = RateLimit(
+        id=existing.id,
+        scope_type=existing.scope_type,  # Use existing to preserve Literal type
+        scope_id=scope_id,
+        enabled=enabled,
+        windows=windows
+    )
+
+    # Delegate to service
+    result = service.create_or_update_rate_limit(updated_limit)
+
+    # Map domain to API response
+    return RateLimitApiMapper.domain_to_response(result)
 
 
 @router.delete("/{scope_type}/{scope_id}", response_model=RateLimitDeleteResponse)
@@ -676,35 +437,18 @@ async def delete_rate_limit(
     """
     logger.info(f"Admin {admin_user.username} deleting rate limit: {scope_type}/{scope_id}")
 
-    # Validate scope type
-    if scope_type not in ["model", "group_model"]:
+    # Delegate to service
+    deleted = service.delete_rate_limit(scope_type, scope_id)
+
+    if not deleted:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid scope_type: {scope_type}. Must be 'model' or 'group_model'"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Rate limit not found for {scope_type}/{scope_id}"
         )
 
-    try:
-        # Attempt deletion
-        deleted = service.delete_rate_limit(scope_type, scope_id)
-
-        if not deleted:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Rate limit not found for {scope_type}/{scope_id}"
-            )
-
-        return RateLimitDeleteResponse(
-            success=True,
-            message=f"Rate limit deleted successfully",
-            scope_type=scope_type,
-            scope_id=scope_id
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error deleting rate limit: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete rate limit: {str(e)}"
-        )
+    return RateLimitDeleteResponse(
+        success=True,
+        message=f"Rate limit deleted successfully",
+        scope_type=scope_type,
+        scope_id=scope_id
+    )

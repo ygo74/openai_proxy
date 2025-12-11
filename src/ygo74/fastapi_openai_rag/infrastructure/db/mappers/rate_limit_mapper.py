@@ -1,4 +1,11 @@
-"""Mapper for RateLimit and RateLimitWindow domain and ORM models."""
+"""Mapper for RateLimit and RateLimitWindow domain and ORM models.
+
+This mapper belongs to the infrastructure layer and handles conversions between:
+- Domain entities (domain layer)
+- SQLAlchemy ORM models (infrastructure layer)
+
+It does NOT handle API/Pydantic conversions - those are in interfaces/api/mappers/.
+"""
 from typing import List, Optional
 from datetime import datetime, timezone
 
