@@ -2,6 +2,7 @@
 import os
 from fastapi import APIRouter
 from .endpoints import models, groups, chat_completions, users, debug_auth, health, metrics, responses, embeddings
+from .admin import rate_limits
 
 # Create main API router
 api_router = APIRouter(prefix="/v1")
@@ -23,6 +24,7 @@ api_router.include_router(models.router, prefix="/admin/models", tags=["models"]
 # Include routers with prefixes
 api_router.include_router(groups.router, prefix="/admin/groups", tags=["groups"])
 api_router.include_router(users.router, prefix="/admin/users", tags=["users"])
+api_router.include_router(rate_limits.router, tags=["admin", "rate-limits"])
 
 # Debug endpoints (development only)
 if os.environ.get('DEVELOPMENT_MODE', '').lower() == 'true':

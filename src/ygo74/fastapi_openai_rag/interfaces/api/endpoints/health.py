@@ -123,6 +123,13 @@ async def detailed_health_check(
     if deps_status["status"] != HealthStatus.HEALTHY and overall_status == HealthStatus.HEALTHY:
         overall_status = HealthStatus.DEGRADED
 
+    # Check 4: Redis (Rate Limiting) - only if enabled
+    redis_status = await check_redis()
+    if redis_status:  # Only add if Redis is enabled
+        checks.append(redis_status)
+        if redis_status["status"] != HealthStatus.HEALTHY and overall_status == HealthStatus.HEALTHY:
+            overall_status = HealthStatus.DEGRADED
+
     response_time = round((time.time() - start_time) * 1000, 2)
 
     return {
@@ -292,4 +299,83 @@ def check_dependencies() -> Dict[str, Any]:
             "name": "dependencies",
             "status": HealthStatus.UNHEALTHY,
             "message": f"Dependencies check failed: {str(e)}"
+        }
+
+async def check_redis() -> Dict[str, Any] | None:
+    """Check Redis connectivity for rate limiting.
+
+    Only performs check if Redis is enabled in configuration.
+
+    Returns:
+        Dict[str, Any] | None: Redis check result, or None if Redis is disabled
+    """
+    try:
+        # Get configuration to check if Redis is enabled
+        config: AppConfig = config_service.get_config()
+
+        # Skip check if Redis is not enabled
+        if not config.redis_cache.enabled:
+            logger.debug("Redis is disabled in configuration, skipping health check")
+            return None
+
+        start_time = time.time()
+
+        # Try to get the Redis client from the rate limit counter factory
+        from ....infrastructure.cache.rate_limit_counter_factory import get_rate_limit_counter
+
+        counter = get_rate_limit_counter(config.redis_cache)
+
+        # Check if we're using Redis (not in-memory)
+        from ....infrastructure.cache.redis_rate_limit_counter import RedisRateLimitCounter
+        if not isinstance(counter, RedisRateLimitCounter):
+            logger.debug("Using in-memory counter, skipping Redis health check")
+            return None
+
+        # Test Redis connectivity with a simple operation
+        # Use increment_request_count which is a public method
+        window_start = int(time.time())
+        test_count = counter.increment_request_count(
+            scope_type="health_check",
+            scope_id="test",
+            window_start=window_start,
+            window_duration=1
+        )
+
+        response_time = round((time.time() - start_time) * 1000, 2)
+
+        if test_count is not None and (test_count > 0 or test_count == float('inf')):
+            return {
+                "name": "redis_rate_limiting",
+                "status": HealthStatus.HEALTHY,
+                "response_time_ms": response_time,
+                "message": "Redis connection successful",
+                "details": {
+                    "host": config.redis_cache.host,
+                    "port": config.redis_cache.port,
+                    "db": config.redis_cache.db
+                }
+            }
+        else:
+            return {
+                "name": "redis_rate_limiting",
+                "status": HealthStatus.UNHEALTHY,
+                "response_time_ms": response_time,
+                "message": "Redis operation returned unexpected result",
+                "details": {
+                    "host": config.redis_cache.host,
+                    "port": config.redis_cache.port,
+                    "db": config.redis_cache.db
+                }
+            }
+
+    except Exception as e:
+        logger.error(f"Redis health check failed: {e}")
+        return {
+            "name": "redis_rate_limiting",
+            "status": HealthStatus.UNHEALTHY,
+            "response_time_ms": 0,
+            "message": f"Redis connection failed: {str(e)}",
+            "details": {
+                "error": str(e)
+            }
         }

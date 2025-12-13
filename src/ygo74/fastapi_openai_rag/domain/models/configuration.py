@@ -1,8 +1,10 @@
 """Domain model for configuration."""
 from typing import Dict, Any, Optional, List, Union
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, model_validator, Field
 import json
 import os
+from .rate_limit import FixedWindowTokenRateLimit
+from .rate_limit_config import RateLimitsConfig
 
 class ModelConfig(BaseModel):
     """Model configuration settings.
@@ -16,6 +18,7 @@ class ModelConfig(BaseModel):
         api_version (Optional[str]): API version for Azure models
         rate_limit (Optional[int]): Rate limit per minute
         capabilities (Dict[str, Any]): Model-specific capabilities
+        token_rate_limit (Optional[TokenRateLimit]): Token-based rate limiting configuration
     """
     name: str
     technical_name: str
@@ -24,6 +27,7 @@ class ModelConfig(BaseModel):
     api_key: Optional[str] = None
     rate_limit: Optional[int] = None
     capabilities: Dict[str, Any] = {}
+    token_rate_limit: Optional[FixedWindowTokenRateLimit] = None
 
 class AzureModelConfig(ModelConfig):
     """Azure-specific model configuration with management API support."""
@@ -85,6 +89,26 @@ class ForwardersConfig(BaseModel):
     print: PrintForwarderConfig = PrintForwarderConfig()
     http: List[HttpForwarderConfig] = []
 
+class RedisCacheConfig(BaseModel):
+    """Configuration for Redis cache.
+
+    Attributes:
+        enabled: Whether Redis cache is enabled
+        host: Redis server hostname
+        port: Redis server port
+        db: Redis database number
+        password: Optional Redis password
+        max_cache_size: Maximum number of local cache entries
+        ttl_seconds: Time-to-live for cache entries in seconds
+    """
+    enabled: bool = False
+    host: str = "localhost"
+    port: int = 6379
+    db: int = 0
+    password: Optional[str] = None
+    max_cache_size: int = 64
+    ttl_seconds: int = 30
+
 class AppConfig(BaseModel):
     """AppConfig is a configuration model for the application.
 
@@ -93,12 +117,22 @@ class AppConfig(BaseModel):
         db_type (str): The type of database being used
         forwarders (ForwardersConfig): Configuration for audit forwarders
         audit (AuditConfig): Configuration for audit functionality
+        global_token_rate_limit (Optional[TokenRateLimit]): Global token rate limiting configuration
+        group_token_rate_limits (Dict[str, TokenRateLimit]): Per-group token rate limiting overrides
+        redis_cache (RedisCacheConfig): Redis cache configuration
     """
     model_configs: List[Union[ModelConfig, AzureModelConfig, UniqueModelConfig]]
     db_type: str
     db_url: str
     forwarders: ForwardersConfig = ForwardersConfig()
     audit: AuditConfig = AuditConfig()
+    redis_cache: RedisCacheConfig = RedisCacheConfig()
+    global_token_rate_limit: Optional[FixedWindowTokenRateLimit] = None
+    group_token_rate_limits: Dict[str, FixedWindowTokenRateLimit] = Field(default_factory=dict)
+    rate_limits: Optional[RateLimitsConfig] = Field(
+        None,
+        description="Rate limiting configuration with time windows"
+    )
 
     @classmethod
     def load_from_json(cls, config_path: str = "config.json") -> "AppConfig":
@@ -150,12 +184,30 @@ class AppConfig(BaseModel):
             if "audit" in config_data:
                 audit_config = AuditConfig(**config_data["audit"])
 
+            # Process default rate limiting configuration
+            token_rate_limit = None
+            if "default_rate_limiting" in config_data:
+                token_rate_limit = FixedWindowTokenRateLimit(**config_data["default_rate_limiting"])
+
+            # Process rate limits configuration (new time-window based system)
+            rate_limits_config = None
+            if "rate_limits" in config_data:
+                rate_limits_config = RateLimitsConfig(**config_data["rate_limits"])
+
+            # Process Redis cache configuration
+            redis_cache_config = RedisCacheConfig()
+            if "redis_cache" in config_data:
+                redis_cache_config = RedisCacheConfig(**config_data["redis_cache"])
+
             return cls(
                 model_configs=processed_configs,
                 db_type=config_data.get("db_type", "sqlite"),
                 db_url=config_data.get("db_url"),
                 forwarders=forwarders_config,
-                audit=audit_config
+                audit=audit_config,
+                redis_cache=redis_cache_config,
+                global_token_rate_limit=token_rate_limit,
+                rate_limits=rate_limits_config
             )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -173,7 +225,8 @@ class AppConfig(BaseModel):
                 "print": self.forwarders.print.model_dump(),
                 "http": [http_config.model_dump() for http_config in self.forwarders.http]
             },
-            "audit": self.audit.model_dump()
+            "audit": self.audit.model_dump(),
+            "redis_cache": self.redis_cache.model_dump()
         }
 
     def save_to_json(self, config_path: str = "config.json") -> None:

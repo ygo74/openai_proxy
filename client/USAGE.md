@@ -92,6 +92,95 @@ rag-client model add-to-group --model-id 789 --group-id 456
 rag-client model list-in-group --group-id 456
 ```
 
+### Managing Rate Limits
+
+```bash
+# List all rate limit configurations
+rag-client rate-limit list
+
+# Show specific rate limit
+rag-client rate-limit show --scope-type model --scope-id 5
+
+# Query hierarchical limits (debugging/testing)
+# Shows which limits apply for a specific group/model combination
+rag-client rate-limit applicable --group-id team-a --model-id gpt-4
+rag-client rate-limit applicable --model-id gpt-4  # Without group
+rag-client rate-limit applicable  # Only global
+
+# Create global rate limit (applies to all models as fallback)
+rag-client rate-limit create-global --windows '[{"from_time":"00:00:00","to_time":"23:59:59","max_requests":1000,"max_tokens":100000}]'
+
+# Create model-specific rate limit
+rag-client rate-limit create-model --model-id 5 --windows '[{"from_time":"00:00:00","to_time":"23:59:59","max_requests":500,"max_tokens":50000}]'
+
+# Create group/model rate limit (highest priority)
+rag-client rate-limit create-group-model --group-name key_users --model-id 5 --windows '[{"from_time":"00:00:00","to_time":"23:59:59","max_requests":100,"max_tokens":10000}]'
+
+# Update rate limit (disable temporarily)
+rag-client rate-limit update --scope-type model --scope-id 5 --enabled false
+
+# Delete rate limit
+rag-client rate-limit delete --scope-type model --scope-id 5
+```
+
+**Rate Limit Hierarchy:**
+
+1. **Group/Model** (highest priority) - Applies when user is in authorized group for that model
+2. **Model** (medium priority) - Applies to all requests for that model
+3. **Global** (fallback) - Applies when no more specific rate limit exists
+
+**Debugging Rate Limits:**
+
+The `applicable` command is useful for:
+- **Debugging**: See which limits are configured and which one will be enforced
+- **Testing**: Verify hierarchical priority before sending actual requests
+- **Transparency**: Understand effective limits for specific scenarios
+
+Example output:
+```json
+{
+  "group_id": "team-a",
+  "model_id": "gpt-4",
+  "group_model_limit": {
+    "scope_type": "group_model",
+    "enabled": true,
+    "windows": [{"from_time": "00:00:00", "to_time": "23:59:59", "max_requests": 100}]
+  },
+  "model_limit": {
+    "scope_type": "model",
+    "enabled": true,
+    "windows": [{"from_time": "00:00:00", "to_time": "23:59:59", "max_requests": 500}]
+  },
+  "global_limit": {
+    "scope_type": "global",
+    "enabled": true,
+    "windows": [{"from_time": "00:00:00", "to_time": "23:59:59", "max_requests": 1000}]
+  },
+  "effective_limit": {
+    "scope_type": "group_model",
+    "windows": [{"max_requests": 100}]
+  }
+}
+```
+
+The `effective_limit` shows which limit will actually be enforced (first non-null in hierarchy).
+
+**Time Windows Format:**
+
+- `from_time`: Start time in HH:MM:SS format (e.g., "09:00:00")
+- `to_time`: End time in HH:MM:SS format (e.g., "17:00:00")
+- `max_requests`: Maximum number of requests in the window
+- `max_tokens`: Maximum number of tokens (input + output) in the window
+
+#### Example: Business Hours Rate Limit
+
+```bash
+rag-client rate-limit create-model --model-id 5 --windows '[
+  {"from_time":"09:00:00","to_time":"17:00:00","max_requests":1000,"max_tokens":100000},
+  {"from_time":"17:00:00","to_time":"09:00:00","max_requests":100,"max_tokens":10000}
+]'
+```
+
 ## Troubleshooting
 
 ### Authentication Issues

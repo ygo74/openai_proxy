@@ -88,6 +88,37 @@ class MetricsService:
             unit="s"
         )
 
+        # Rate limiting metrics
+        self.rate_limit_evaluations_total = self.meter.create_counter(
+            name="rate_limit_evaluations_total",
+            description="Total number of rate limit evaluations",
+            unit="1"
+        )
+
+        self.rate_limit_evaluation_duration = self.meter.create_histogram(
+            name="rate_limit_evaluation_duration_ms",
+            description="Rate limit evaluation duration in milliseconds",
+            unit="ms"
+        )
+
+        self.rate_limit_exceeded_total = self.meter.create_counter(
+            name="rate_limit_exceeded_total",
+            description="Total number of rate limit exceeded events",
+            unit="1"
+        )
+
+        self.rate_limit_cache_hits_total = self.meter.create_counter(
+            name="rate_limit_cache_hits_total",
+            description="Total number of rate limit cache hits",
+            unit="1"
+        )
+
+        self.rate_limit_cache_misses_total = self.meter.create_counter(
+            name="rate_limit_cache_misses_total",
+            description="Total number of rate limit cache misses",
+            unit="1"
+        )
+
         logger.info("Custom metrics initialized")
 
     def record_http_request(
@@ -218,6 +249,56 @@ class MetricsService:
 
         self.db_queries_total.add(1, attributes)
         self.db_query_duration.record(duration, attributes)
+
+    def record_rate_limit_evaluation(
+        self,
+        scope_type: str,
+        limit_type: str,
+        duration_ms: float,
+        exceeded: bool,
+        scope_id: Optional[str] = None
+    ) -> None:
+        """Record rate limit evaluation metrics.
+
+        Args:
+            scope_type: Type of scope (global, model, group_model)
+            limit_type: Type of limit (requests, tokens)
+            duration_ms: Evaluation duration in milliseconds
+            exceeded: Whether the rate limit was exceeded
+            scope_id: Optional scope identifier
+        """
+        attributes = {
+            "scope_type": scope_type,
+            "limit_type": limit_type,
+            "exceeded": str(exceeded).lower()
+        }
+        if scope_id:
+            attributes["scope_id"] = scope_id
+
+        self.rate_limit_evaluations_total.add(1, attributes)
+        self.rate_limit_evaluation_duration.record(duration_ms, attributes)
+
+        if exceeded:
+            self.rate_limit_exceeded_total.add(1, attributes)
+
+    def record_rate_limit_cache_access(self, hit: bool, scope_type: str, scope_id: Optional[str] = None) -> None:
+        """Record rate limit cache access metrics.
+
+        Args:
+            hit: Whether the cache access was a hit
+            scope_type: Type of scope (global, model, group_model)
+            scope_id: Optional scope identifier
+        """
+        attributes = {
+            "scope_type": scope_type
+        }
+        if scope_id:
+            attributes["scope_id"] = scope_id
+
+        if hit:
+            self.rate_limit_cache_hits_total.add(1, attributes)
+        else:
+            self.rate_limit_cache_misses_total.add(1, attributes)
 
 
 # Global metrics service instance

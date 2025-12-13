@@ -15,13 +15,17 @@ from openai.types.responses.response import Response as OpenAIResponse
 from openai.types.responses.response_stream_event import ResponseStreamEvent
 from openai.types.responses.response_completed_event import ResponseCompletedEvent
 from openai.types.completion_usage import CompletionUsage
+
 # from openai.types.create_embedding_response import CreateEmbeddingResponse
 from ...domain.models.embedding import CreateEmbeddingResponse
 
 from ...domain.unit_of_work import UnitOfWork
 from ...domain.models.autenticated_user import AuthenticatedUser
+from ...domain.models.llm_model import LlmModel
+
 from ...infrastructure.observability.metrics_service import get_metrics_service, MetricsService
 from .token_usage_service import TokenUsageService
+from .rate_limit_service import RateLimitService
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +50,9 @@ class TokenTrackingService:
         """
         self._uow = uow
         self._token_service = TokenUsageService(uow)
+        self._rate_limit_service = RateLimitService(uow)
         self._metrics_service = get_metrics_service()
+
 
     def _extract_usage_from_chat_completion(self, response: ChatCompletion) -> Optional[Dict[str, int]]:
         """Extract token usage from ChatCompletion response.
@@ -277,7 +283,7 @@ class TokenTrackingService:
                         response: SupportedResponseType,
                         user: AuthenticatedUser,
                         endpoint: str,
-                        model: Optional[str] = None,
+                        model: LlmModel,
                         start_time: Optional[float] = None,
                         success: bool = True) -> None:
         """Track token usage for a completion response.
@@ -292,7 +298,7 @@ class TokenTrackingService:
         """
         try:
             # Extract model name from response if not provided
-            model_name = model or self._extract_model_name(response, "unknown")
+            model_name = model.name or self._extract_model_name(response, "unknown")
 
             # Calculate duration if start time was provided
             duration = 0.0
@@ -337,16 +343,79 @@ class TokenTrackingService:
                     success=success
                 )
 
+            # Record token consumption in rate limit counters
+            self._record_rate_limit_usage(user, model, total_tokens)
+
             logger.info(f"Recorded token usage for user {user_id}: {total_tokens} tokens on {endpoint}")
 
         except Exception as e:
             logger.error(f"Error recording token usage: {str(e)}", exc_info=True)
 
+    def _record_rate_limit_usage(self, user: AuthenticatedUser, model: LlmModel, token_count: int) -> None:
+        """Record token consumption in rate limit counters following the same hierarchy as checks.
+
+        Records consumption for:
+        1. Group/Model scopes (for authorized groups)
+        2. Global scope (if no group/model limits exist)
+        3. Model scope (aggregated across all users)
+
+        Args:
+            user: Authenticated user
+            model: LLM model being used
+            token_count: Number of tokens consumed
+        """
+        try:
+            user_id = user.username
+
+            # Get authorized groups for this model
+            authorized_groups = []
+            if model and model.groups:
+                model_group_names = {g.name for g in model.groups}
+                authorized_groups = [g for g in user.groups if g in model_group_names]
+
+            # 1. Record for group/model scopes (user quota)
+            group_model_recorded = False
+            if model and model.id and authorized_groups:
+                for group_id in authorized_groups:
+                    scope_id = f"{group_id}:{model.id}"
+                    rate_limit = self._rate_limit_service.get_rate_limit_config("group_model", scope_id)
+                    if rate_limit and rate_limit.enabled:
+                        try:
+                            self._rate_limit_service.record_token_usage("group_model", scope_id, user_id, token_count)
+                            logger.debug(f"Recorded {token_count} tokens for group/model {scope_id}, user {user_id}")
+                            group_model_recorded = True
+                        except Exception as e:
+                            logger.debug(f"Failed to record tokens for group/model {scope_id}: {e}")
+
+            # 2. Record for global scope (fallback if no group/model)
+            if not group_model_recorded:
+                global_limit = self._rate_limit_service.get_rate_limit_config("global", None)
+                if global_limit and global_limit.enabled:
+                    try:
+                        self._rate_limit_service.record_token_usage("global", None, user_id, token_count)
+                        logger.debug(f"Recorded {token_count} tokens for global scope, user {user_id}")
+                    except Exception as e:
+                        logger.debug(f"Failed to record tokens for global scope: {e}")
+
+            # 3. Record for model scope (aggregate all users)
+            if model and model.id:
+                model_limit = self._rate_limit_service.get_rate_limit_config("model", str(model.id))
+                if model_limit and model_limit.enabled:
+                    try:
+                        # Model-level uses empty user_id to aggregate ALL users
+                        self._rate_limit_service.record_token_usage("model", str(model.id), "", token_count)
+                        logger.debug(f"Recorded {token_count} tokens for model {model.name} (aggregate)")
+                    except Exception as e:
+                        logger.debug(f"Failed to record tokens for model scope: {e}")
+
+        except Exception as e:
+            logger.error(f"Error recording rate limit usage: {e}", exc_info=True)
+
     def track_stream_completion(self,
                                event: ResponseStreamEvent,
                                user: AuthenticatedUser,
                                endpoint: str,
-                               model: str,
+                               model: LlmModel,
                                start_time: Optional[float] = None) -> bool:
         """Track token usage from a stream completion event.
 
@@ -392,7 +461,7 @@ class TokenTrackingService:
                                    chunk: ChatCompletionChunk,
                                    user: AuthenticatedUser,
                                    endpoint: str,
-                                   model: str,
+                                   model: LlmModel,
                                    start_time: Optional[float] = None) -> bool:
         """Track token usage from a chat completion stream chunk.
 

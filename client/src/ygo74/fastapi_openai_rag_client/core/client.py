@@ -502,3 +502,241 @@ class ApiClient:
             data["expires_at"] = expires_at
 
         return self._make_request("POST", f"/v1/admin/users/{user_id}/api-keys", json_data=data)
+
+    # Rate Limit API methods
+    def list_rate_limits(self, skip: int = 0, limit: int = 100) -> List[Dict[str, Any]]:
+        """Get list of rate limit configurations.
+
+        Args:
+            skip: Number of records to skip
+            limit: Maximum number of records to return
+
+        Returns:
+            List of rate limit objects
+        """
+        return self._make_request("GET", "/v1/admin/rate-limits", params={"skip": skip, "limit": limit})
+
+    def get_rate_limit(self, scope_type: str, scope_id: Optional[str] = None) -> Dict[str, Any]:
+        """Get rate limit configuration by scope.
+
+        Args:
+            scope_type: Scope type ('global', 'model', 'group_model')
+            scope_id: Scope identifier (None for global, model_id for model, group:model_id for group_model)
+
+        Returns:
+            Rate limit object
+
+        Raises:
+            ApiException: If rate limit not found (404)
+        """
+        if scope_id:
+            return self._make_request("GET", f"/v1/admin/rate-limits/{scope_type}/{scope_id}")
+        else:
+            # Global scope
+            return self._make_request("GET", f"/v1/admin/rate-limits/{scope_type}")
+
+    def create_global_rate_limit(self, windows: List[Dict[str, Any]], enabled: bool = True) -> Dict[str, Any]:
+        """Create or update global rate limit configuration.
+
+        Args:
+            windows: List of time window configurations (from_time, to_time, max_requests, max_tokens)
+            enabled: Whether the rate limit is enabled
+
+        Returns:
+            Created rate limit object
+        """
+        data = {
+            "scope_type": "global",
+            "scope_id": None,
+            "windows": windows,
+            "enabled": enabled
+        }
+        return self._make_request("POST", "/v1/admin/rate-limits/global", json_data=data)
+
+    def create_model_rate_limit(
+        self,
+        model_id: int,
+        windows: List[Dict[str, Any]],
+        enabled: bool = True
+    ) -> Dict[str, Any]:
+        """Create or update model-specific rate limit configuration.
+
+        Args:
+            model_id: Model ID
+            windows: List of time window configurations
+            enabled: Whether the rate limit is enabled
+
+        Returns:
+            Created rate limit object
+        """
+        data = {
+            "scope_type": "model",
+            "scope_id": str(model_id),
+            "windows": windows,
+            "enabled": enabled
+        }
+        return self._make_request("POST", f"/v1/admin/rate-limits/models/{model_id}", json_data=data)
+
+    def create_group_model_rate_limit(
+        self,
+        group_name: str,
+        model_id: int,
+        windows: List[Dict[str, Any]],
+        enabled: bool = True
+    ) -> Dict[str, Any]:
+        """Create or update group/model-specific rate limit configuration.
+
+        Args:
+            group_name: Group name
+            model_id: Model ID
+            windows: List of time window configurations
+            enabled: Whether the rate limit is enabled
+
+        Returns:
+            Created rate limit object
+        """
+        data = {
+            "scope_type": "group_model",
+            "scope_id": f"{group_name}:{model_id}",
+            "windows": windows,
+            "enabled": enabled
+        }
+        return self._make_request(
+            "POST",
+            f"/v1/admin/rate-limits/groups/{group_name}/models/{model_id}",
+            json_data=data
+        )
+
+    def update_rate_limit(
+        self,
+        scope_type: str,
+        scope_id: Optional[str],
+        windows: Optional[List[Dict[str, Any]]] = None,
+        enabled: Optional[bool] = None
+    ) -> Dict[str, Any]:
+        """Update existing rate limit configuration (partial update).
+
+        Uses PATCH for partial updates. You can update:
+        - Only the enabled status (--enabled true/false)
+        - Only the time windows (--windows [...])
+        - Both enabled and time windows
+
+        Args:
+            scope_type: Scope type ('global', 'model', 'group_model')
+            scope_id: Scope identifier (model_id for 'model', 'group_name:model_id' for 'group_model')
+            windows: New time window configurations (optional)
+            enabled: New enabled status (optional)
+
+        Returns:
+            Updated rate limit object
+
+        Raises:
+            ValueError: If neither windows nor enabled is provided
+        """
+        # Build partial update payload
+        data = {}
+        if windows is not None:
+            data["windows"] = windows
+        if enabled is not None:
+            data["enabled"] = enabled
+
+        # Validate at least one field is provided
+        if not data:
+            raise ValueError("At least one field (windows or enabled) must be provided for update")
+
+        # Use PATCH for partial update
+        if scope_id:
+            return self._make_request("PATCH", f"/v1/admin/rate-limits/{scope_type}/{scope_id}", json_data=data)
+        else:
+            return self._make_request("PATCH", f"/v1/admin/rate-limits/{scope_type}", json_data=data)
+
+    def delete_rate_limit(self, scope_type: str, scope_id: Optional[str] = None) -> Dict[str, Any]:
+        """Delete rate limit configuration.
+
+        Args:
+            scope_type: Scope type ('global', 'model', 'group_model')
+            scope_id: Scope identifier
+
+        Returns:
+            Deletion status
+        """
+        if scope_id:
+            return self._make_request("DELETE", f"/v1/admin/rate-limits/{scope_type}/{scope_id}")
+        else:
+            return self._make_request("DELETE", f"/v1/admin/rate-limits/{scope_type}")
+
+    def get_applicable_limits(
+        self,
+        group_id: Optional[str] = None,
+        model_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Query hierarchical rate limits for debugging and testing.
+
+        Returns all applicable rate limits for a given group/model combination,
+        showing the hierarchy of limits (group+model → model → global) and
+        which one will actually be enforced (effective_limit).
+
+        This method is useful for:
+        - Debugging rate limit configuration
+        - Understanding which limit applies in specific scenarios
+        - Testing hierarchical priority before sending actual requests
+
+        Hierarchy priority (first non-null wins):
+        1. Group+model limit (most specific) - requires both group_id and model_id
+        2. Model limit (medium specificity) - requires model_id
+        3. Global limit (fallback) - always checked
+
+        Args:
+            group_id: Optional group identifier
+            model_id: Optional model identifier
+
+        Returns:
+            Dictionary with keys:
+            - group_id: Requested group ID
+            - model_id: Requested model ID
+            - group_model_limit: Group+model rate limit (or None)
+            - model_limit: Model rate limit (or None)
+            - global_limit: Global rate limit (or None)
+            - effective_limit: The limit that will be enforced (first non-null)
+
+        Examples:
+            # Get all limits for team-a using gpt-4
+            >>> client.get_applicable_limits(group_id="team-a", model_id="gpt-4")
+            {
+                "group_id": "team-a",
+                "model_id": "gpt-4",
+                "group_model_limit": {...},  # Most specific
+                "model_limit": {...},
+                "global_limit": {...},
+                "effective_limit": {...}  # Same as group_model_limit
+            }
+
+            # Get limits for any group using gpt-4
+            >>> client.get_applicable_limits(model_id="gpt-4")
+            {
+                "group_id": null,
+                "model_id": "gpt-4",
+                "group_model_limit": null,  # Skipped (no group_id)
+                "model_limit": {...},
+                "global_limit": {...},
+                "effective_limit": {...}  # Falls back to model_limit
+            }
+
+            # Get only global limits
+            >>> client.get_applicable_limits()
+            {
+                "group_id": null,
+                "model_id": null,
+                "group_model_limit": null,
+                "model_limit": null,
+                "global_limit": {...},
+                "effective_limit": {...}  # Falls back to global_limit
+            }
+        """
+        params = {}
+        if group_id is not None:
+            params["group_id"] = group_id
+        if model_id is not None:
+            params["model_id"] = model_id
+
+        return self._make_request("GET", "/v1/admin/rate-limits/applicable", params=params)

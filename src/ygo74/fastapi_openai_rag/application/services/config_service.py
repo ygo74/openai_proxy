@@ -3,6 +3,7 @@ import os
 from typing import Dict, Optional, Union
 from ...domain.models.configuration import AppConfig, ModelConfig, AzureModelConfig, UniqueModelConfig
 from ...domain.models.configuration import AppConfig
+from ...domain.models.rate_limit_config import GlobalRateLimitConfig
 from ...infrastructure.db.session import SessionManager
 from ...infrastructure.db.init_db import init_db, create_initial_data
 
@@ -99,6 +100,24 @@ class ConfigService:
         if not self._config:
             raise ValueError("Configuration not loaded")
         return self._config
+
+    def get_global_rate_limits(self) -> Optional[GlobalRateLimitConfig]:
+        """Get global rate limit configuration.
+
+        Returns:
+            Optional[GlobalRateLimitConfig]: Global rate limits if configured, None otherwise
+        """
+        self.reload_config()  # Check for updates
+
+        if not self._config:
+            logger.warning("No configuration loaded")
+            return None
+
+        if not self._config.rate_limits:
+            logger.debug("No rate_limits section in configuration")
+            return None
+
+        return self._config.rate_limits.global_limits
 
     def init_database(self) -> None:
         """Initialize database connection and load initial data.

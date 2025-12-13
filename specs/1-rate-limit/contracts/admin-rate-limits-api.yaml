@@ -1,0 +1,744 @@
+openapi: 3.0.3
+info:
+  title: FastAPI OpenAI RAG - Rate Limiting Admin API
+  description: |
+    Admin API for managing rate limiting configurations dynamically.
+
+    ## Features
+    - Multi-level rate limiting (global, model, group+model)
+    - Request-based and token-based limits
+    - Time window management for different hour ranges
+    - Hierarchical limit priority (group+model > model > global)
+    - Cache invalidation with Redis pub/sub
+
+    ## Authentication
+    All endpoints require admin role via OAuth2/Keycloak authentication.
+
+    ## Rate Limit Hierarchy
+    When multiple limits apply, the most specific limit takes precedence:
+    1. **Group+Model** (most specific) - `POST /admin/rate-limits/groups/{group_id}/models/{model_id}`
+    2. **Model** (medium priority) - `POST /admin/rate-limits/models/{model_id}`
+    3. **Global** (fallback) - Configured in config.json, read via `GET /admin/rate-limits/global`
+
+    ## Time Windows
+    Each rate limit can have multiple time windows with different limits:
+    - Off-peak hours: 00:00-08:00 → 100 requests/hour
+    - Peak hours: 08:00-23:59 → 1000 requests/hour
+
+    Counters automatically reset when transitioning to a new window.
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: support@example.com
+
+servers:
+  - url: http://localhost:8000/v1
+    description: Development server
+  - url: https://api.example.com/v1
+    description: Production server
+
+tags:
+  - name: admin
+    description: Administrative operations requiring admin role
+  - name: rate-limits
+    description: Rate limit configuration management
+
+security:
+  - BearerAuth: []
+  - OAuth2: [admin]
+
+paths:
+  /admin/rate-limits:
+    get:
+      summary: List all rate limits
+      description: |
+        Retrieve all configured rate limits from the database.
+        Returns global, model, and group+model scope configurations.
+      operationId: listRateLimits
+      tags:
+        - admin
+        - rate-limits
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: List of rate limit configurations
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RateLimitListResponse'
+              examples:
+                success:
+                  value:
+                    rate_limits:
+                      - id: 1
+                        scope_type: model
+                        scope_id: "gpt-4"
+                        enabled: true
+                        windows:
+                          - id: 1
+                            from_time: "00:00:00"
+                            to_time: "23:59:59"
+                            max_requests: 1000
+                            max_tokens: 100000
+                    total: 1
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/rate-limits/global:
+    get:
+      summary: Get global rate limits from config
+      description: |
+        Retrieve global rate limits from config.json.
+        These limits serve as fallback when no specific limits are configured.
+      operationId: getGlobalRateLimits
+      tags:
+        - admin
+        - rate-limits
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Global rate limit configuration from config.json
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GlobalRateLimitResponse'
+              examples:
+                enabled:
+                  value:
+                    enabled: true
+                    windows:
+                      - from_time: "00:00:00"
+                        to_time: "23:59:59"
+                        max_requests: 10000
+                        max_tokens: 1000000
+                disabled:
+                  value:
+                    enabled: false
+                    windows: []
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/rate-limits/applicable:
+    get:
+      summary: Query applicable limits for debugging
+      description: |
+        Retrieve all applicable limits for a given group and/or model.
+        Shows hierarchical evaluation order (group+model → model → global).
+        Useful for debugging which limit would be enforced.
+      operationId: getApplicableLimits
+      tags:
+        - admin
+        - rate-limits
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: group_id
+          in: query
+          description: Group identifier (optional)
+          schema:
+            type: string
+          example: "engineering-team"
+        - name: model_id
+          in: query
+          description: Model identifier (optional)
+          schema:
+            type: string
+          example: "gpt-4"
+      responses:
+        '200':
+          description: Hierarchical limits for the scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApplicableLimitsResponse'
+              examples:
+                with_hierarchy:
+                  value:
+                    group_model:
+                      id: 3
+                      scope_type: group_model
+                      scope_id: "engineering-team:gpt-4"
+                      enabled: true
+                      windows:
+                        - id: 5
+                          from_time: "00:00:00"
+                          to_time: "23:59:59"
+                          max_requests: 500
+                          max_tokens: 50000
+                    model:
+                      id: 1
+                      scope_type: model
+                      scope_id: "gpt-4"
+                      enabled: true
+                      windows:
+                        - id: 1
+                          from_time: "00:00:00"
+                          to_time: "23:59:59"
+                          max_requests: 1000
+                          max_tokens: 100000
+                    global:
+                      enabled: true
+                      windows:
+                        - from_time: "00:00:00"
+                          to_time: "23:59:59"
+                          max_requests: 10000
+                          max_tokens: 1000000
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/rate-limits/models/{model_id}:
+    post:
+      summary: Create or update model-level rate limit
+      description: |
+        Create or update rate limit for a specific model.
+        Model-level limits apply to all groups using that model.
+
+        **Aggregation**: Usage is aggregated across all groups for the model.
+      operationId: createModelRateLimit
+      tags:
+        - admin
+        - rate-limits
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: model_id
+          in: path
+          required: true
+          description: Model identifier (e.g., "gpt-4", "gpt-3.5-turbo")
+          schema:
+            type: string
+          example: "gpt-4"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRateLimitRequest'
+            examples:
+              basic:
+                value:
+                  enabled: true
+                  windows:
+                    - from_time: "00:00:00"
+                      to_time: "23:59:59"
+                      max_requests: 1000
+                      max_tokens: 100000
+              time_windows:
+                value:
+                  enabled: true
+                  windows:
+                    - from_time: "00:00:00"
+                      to_time: "08:00:00"
+                      max_requests: 100
+                      max_tokens: 10000
+                    - from_time: "08:00:00"
+                      to_time: "23:59:59"
+                      max_requests: 1000
+                      max_tokens: 100000
+              unlimited_tokens:
+                value:
+                  enabled: true
+                  windows:
+                    - from_time: "00:00:00"
+                      to_time: "23:59:59"
+                      max_requests: 1000
+                      max_tokens: -1
+      responses:
+        '201':
+          description: Rate limit created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RateLimitResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/rate-limits/groups/{group_id}/models/{model_id}:
+    post:
+      summary: Create or update group+model rate limit
+      description: |
+        Create or update rate limit for a specific group and model combination.
+        This is the most specific limit and takes precedence over model and global limits.
+
+        **Group-specific**: Only applies to the specified group's usage of the model.
+      operationId: createGroupModelRateLimit
+      tags:
+        - admin
+        - rate-limits
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: group_id
+          in: path
+          required: true
+          description: Group identifier
+          schema:
+            type: string
+          example: "engineering-team"
+        - name: model_id
+          in: path
+          required: true
+          description: Model identifier
+          schema:
+            type: string
+          example: "gpt-4"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRateLimitRequest'
+            examples:
+              basic:
+                value:
+                  enabled: true
+                  windows:
+                    - from_time: "00:00:00"
+                      to_time: "23:59:59"
+                      max_requests: 500
+                      max_tokens: 50000
+      responses:
+        '201':
+          description: Rate limit created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RateLimitResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Group or model not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/rate-limits/{scope_type}/{scope_id}:
+    get:
+      summary: Get specific rate limit
+      description: Retrieve rate limit configuration for a specific scope
+      operationId: getRateLimit
+      tags:
+        - admin
+        - rate-limits
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: scope_type
+          in: path
+          required: true
+          description: Type of scope
+          schema:
+            type: string
+            enum: [global, model, group_model]
+          example: "model"
+        - name: scope_id
+          in: path
+          required: true
+          description: Scope identifier (format depends on scope_type)
+          schema:
+            type: string
+          examples:
+            model:
+              value: "gpt-4"
+            group_model:
+              value: "engineering-team:gpt-4"
+      responses:
+        '200':
+          description: Rate limit configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RateLimitResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    patch:
+      summary: Partial update rate limit
+      description: |
+        Update specific fields of a rate limit configuration.
+        Can update enabled flag and/or time windows.
+      operationId: updateRateLimit
+      tags:
+        - admin
+        - rate-limits
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: scope_type
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [global, model, group_model]
+        - name: scope_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateRateLimitRequest'
+            examples:
+              disable:
+                value:
+                  enabled: false
+              update_windows:
+                value:
+                  windows:
+                    - from_time: "00:00:00"
+                      to_time: "23:59:59"
+                      max_requests: 2000
+                      max_tokens: 200000
+      responses:
+        '200':
+          description: Rate limit updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RateLimitResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    delete:
+      summary: Delete rate limit
+      description: |
+        Delete a rate limit configuration from the database.
+        After deletion, requests fall back to the next level in hierarchy.
+      operationId: deleteRateLimit
+      tags:
+        - admin
+        - rate-limits
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: scope_type
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [global, model, group_model]
+        - name: scope_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Rate limit deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RateLimitDeleteResponse'
+              example:
+                message: "Rate limit deleted successfully"
+                scope_type: "model"
+                scope_id: "gpt-4"
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token from Keycloak/OAuth2 authentication
+
+    OAuth2:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: http://localhost:8080/realms/fastapi-rag/protocol/openid-connect/auth
+          tokenUrl: http://localhost:8080/realms/fastapi-rag/protocol/openid-connect/token
+          scopes:
+            admin: Administrative access to manage rate limits
+
+  schemas:
+    RateLimitWindow:
+      type: object
+      required:
+        - from_time
+        - to_time
+      properties:
+        from_time:
+          type: string
+          pattern: '^\d{2}:\d{2}(:\d{2})?$'
+          description: Start time in HH:MM or HH:MM:SS format
+          example: "08:00:00"
+        to_time:
+          type: string
+          pattern: '^\d{2}:\d{2}(:\d{2})?$'
+          description: End time in HH:MM or HH:MM:SS format
+          example: "23:59:59"
+        max_requests:
+          type: integer
+          nullable: true
+          description: Maximum requests per window (-1 or null for unlimited)
+          example: 1000
+        max_tokens:
+          type: integer
+          nullable: true
+          description: Maximum tokens per window (-1 or null for unlimited)
+          example: 100000
+
+    RateLimitWindowResponse:
+      type: object
+      required:
+        - id
+        - from_time
+        - to_time
+      properties:
+        id:
+          type: integer
+          description: Window database ID
+          example: 1
+        from_time:
+          type: string
+          description: Start time in HH:MM:SS format
+          example: "08:00:00"
+        to_time:
+          type: string
+          description: End time in HH:MM:SS format
+          example: "23:59:59"
+        max_requests:
+          type: integer
+          nullable: true
+          example: 1000
+        max_tokens:
+          type: integer
+          nullable: true
+          example: 100000
+
+    CreateRateLimitRequest:
+      type: object
+      required:
+        - enabled
+        - windows
+      properties:
+        enabled:
+          type: boolean
+          description: Whether the rate limit is active
+          example: true
+        windows:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/RateLimitWindow'
+          description: Time windows with different limits
+
+    UpdateRateLimitRequest:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+          description: Whether the rate limit is active
+        windows:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/RateLimitWindow'
+      description: At least one field must be provided
+
+    RateLimitResponse:
+      type: object
+      required:
+        - id
+        - scope_type
+        - scope_id
+        - enabled
+        - windows
+      properties:
+        id:
+          type: integer
+          description: Rate limit database ID
+          example: 1
+        scope_type:
+          type: string
+          enum: [global, model, group_model]
+          description: Type of scope
+          example: "model"
+        scope_id:
+          type: string
+          nullable: true
+          description: Scope identifier (null for global)
+          example: "gpt-4"
+        enabled:
+          type: boolean
+          description: Whether the rate limit is active
+          example: true
+        windows:
+          type: array
+          items:
+            $ref: '#/components/schemas/RateLimitWindowResponse'
+
+    RateLimitListResponse:
+      type: object
+      required:
+        - rate_limits
+        - total
+      properties:
+        rate_limits:
+          type: array
+          items:
+            $ref: '#/components/schemas/RateLimitResponse'
+        total:
+          type: integer
+          description: Total number of rate limits
+          example: 5
+
+    GlobalRateLimitResponse:
+      type: object
+      required:
+        - enabled
+        - windows
+      properties:
+        enabled:
+          type: boolean
+          description: Whether global rate limits are active
+          example: true
+        windows:
+          type: array
+          items:
+            $ref: '#/components/schemas/RateLimitWindow'
+
+    ApplicableLimitsResponse:
+      type: object
+      properties:
+        group_model:
+          allOf:
+            - $ref: '#/components/schemas/RateLimitResponse'
+            - nullable: true
+          description: Group+model specific limit (highest priority)
+        model:
+          allOf:
+            - $ref: '#/components/schemas/RateLimitResponse'
+            - nullable: true
+          description: Model-level limit (medium priority)
+        global:
+          allOf:
+            - $ref: '#/components/schemas/GlobalRateLimitResponse'
+            - nullable: true
+          description: Global fallback limit (lowest priority)
+
+    RateLimitDeleteResponse:
+      type: object
+      required:
+        - message
+        - scope_type
+        - scope_id
+      properties:
+        message:
+          type: string
+          example: "Rate limit deleted successfully"
+        scope_type:
+          type: string
+          example: "model"
+        scope_id:
+          type: string
+          example: "gpt-4"
+
+    ErrorResponse:
+      type: object
+      required:
+        - detail
+      properties:
+        detail:
+          type: string
+          description: Error message
+          example: "Rate limit not found"
+
+  responses:
+    BadRequest:
+      description: Invalid request parameters or validation error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "Validation error: max_requests must be positive or -1"
+
+    Unauthorized:
+      description: Missing or invalid authentication token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "Not authenticated"
+
+    Forbidden:
+      description: Insufficient permissions (admin role required)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "Admin role required"
+
+    NotFound:
+      description: Rate limit not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "Rate limit not found for scope_type=model, scope_id=gpt-4"
+
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            detail: "Failed to retrieve rate limits: Database connection error"

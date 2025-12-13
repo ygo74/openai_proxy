@@ -3,10 +3,15 @@ from typing import Any, Dict
 from fastapi import HTTPException, Request, status
 from fastapi.responses import JSONResponse
 import logging
+from datetime import datetime, timezone
+import time
+from zoneinfo import ZoneInfo
 
 from ...domain.exceptions.entity_not_found_exception import EntityNotFoundError
 from ...domain.exceptions.entity_already_exists import EntityAlreadyExistsError
 from ...domain.exceptions.validation_error import ValidationError
+from ...domain.exceptions.rate_limit_exception import RateLimitExceeded
+from ...domain.models.rate_limit import FixedRateLimitViolation
 
 logger = logging.getLogger(__name__)
 
@@ -96,4 +101,59 @@ class ExceptionHandlers:
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={"detail": f"Internal server error - see logs for details: {str(exc)}"}
+        )
+
+    @staticmethod
+    async def rate_limit_violation_handler(request: Request, exc: FixedRateLimitViolation) -> JSONResponse:
+        """Handle rate limit violation exceptions."""
+        return JSONResponse(
+            status_code=429,
+            content={
+                "error": {
+                    "message": exc.message,
+                    "type": "rate_limit_exceeded",
+                    "param": None,
+                    "code": "rate_limit_exceeded",
+                    "details": {
+                        "window": exc.window.value,
+                        "limit": exc.limit,
+                        "current_usage": exc.current_usage,
+                        "reset_time": exc.reset_time.isoformat(),
+                        "user_id": exc.user_id,
+                        "group_name": exc.group_name,
+                        "model_name": exc.model_name
+                    }
+                }
+            },
+            headers={
+                "Retry-After": str(int((exc.reset_time - datetime.now(timezone.utc)).total_seconds())),
+                "X-RateLimit-Limit": str(exc.limit),
+                "X-RateLimit-Remaining": str(max(0, exc.limit - exc.current_usage)),
+                "X-RateLimit-Reset": str(int(exc.reset_time.timestamp()))
+            }
+        )
+
+    @staticmethod
+    async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+        """Handle rate limit exceeded exceptions (new time-window system).
+
+        Returns HTTP 429 with OpenAI-compatible error response and rate limit headers.
+
+        Args:
+            request: The FastAPI request object
+            exc: The RateLimitExceeded exception
+
+        Returns:
+            JSONResponse: HTTP 429 with proper headers and error body
+        """
+        logger.warning(
+            f"Rate limit exceeded on {request.url.path}: "
+            f"scope={exc.scope_type}:{exc.scope_id}, "
+            f"type={exc.limit_type}, {exc.current}/{exc.limit}"
+        )
+
+        return JSONResponse(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            content=exc.to_error_response(),
+            headers=exc.to_http_headers()
         )

@@ -1,0 +1,418 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://fastapi-openai-rag.example.com/schemas/config.schema.json",
+  "title": "FastAPI OpenAI RAG Configuration",
+  "description": "Configuration schema for FastAPI OpenAI RAG gateway with rate limiting support",
+  "type": "object",
+  "required": ["model_configs", "db_type", "db_url"],
+  "properties": {
+    "model_configs": {
+      "type": "array",
+      "description": "List of LLM provider configurations",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["url", "api_key", "provider", "technical_name", "name"],
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Provider API endpoint URL",
+            "examples": ["https://api.openai.com", "https://xxx.openai.azure.com"]
+          },
+          "api_key": {
+            "type": "string",
+            "description": "API key for authentication",
+            "minLength": 1
+          },
+          "api_version": {
+            "type": "string",
+            "description": "API version (Azure OpenAI only)",
+            "examples": ["2024-06-01", "2024-02-15-preview"]
+          },
+          "provider": {
+            "type": "string",
+            "enum": ["azure", "openai", "anthropic", "google"],
+            "description": "LLM provider type"
+          },
+          "technical_name": {
+            "type": "string",
+            "description": "Unique technical identifier for this configuration",
+            "pattern": "^[a-z0-9_]+$"
+          },
+          "name": {
+            "type": "string",
+            "description": "Human-readable name",
+            "minLength": 1
+          },
+          "tenant_id": {
+            "type": "string",
+            "description": "Azure tenant ID (Azure only)"
+          },
+          "client_id": {
+            "type": "string",
+            "description": "Azure client ID (Azure only)"
+          },
+          "client_secret": {
+            "type": "string",
+            "description": "Azure client secret (Azure only)"
+          },
+          "subscription_id": {
+            "type": "string",
+            "description": "Azure subscription ID (Azure only)"
+          },
+          "resource_group": {
+            "type": "string",
+            "description": "Azure resource group (Azure only)"
+          },
+          "resource_name": {
+            "type": "string",
+            "description": "Azure resource name (Azure only)"
+          }
+        }
+      }
+    },
+    "db_type": {
+      "type": "string",
+      "enum": ["sqlite", "postgres", "postgresql"],
+      "description": "Database type"
+    },
+    "db_url": {
+      "type": "string",
+      "description": "Database connection URL",
+      "examples": [
+        "sqlite:///./models.db",
+        "postgresql://user:password@localhost:5432/fastapi_proxy"
+      ]
+    },
+    "forwarders": {
+      "type": "object",
+      "description": "Audit log forwarding configuration",
+      "properties": {
+        "print": {
+          "type": "object",
+          "description": "Console/log output configuration",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            },
+            "level": {
+              "type": "string",
+              "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+              "default": "DEBUG"
+            }
+          }
+        },
+        "http": {
+          "type": "array",
+          "description": "HTTP forwarding endpoints",
+          "items": {
+            "type": "object",
+            "required": ["enabled", "url"],
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "Whether this forwarder is active"
+              },
+              "url": {
+                "type": "string",
+                "format": "uri",
+                "description": "HTTP endpoint URL"
+              },
+              "headers": {
+                "type": "object",
+                "description": "HTTP headers to include",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "retry_count": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10,
+                "default": 3,
+                "description": "Number of retry attempts"
+              },
+              "timeout_seconds": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 60,
+                "default": 5,
+                "description": "Request timeout in seconds"
+              }
+            }
+          }
+        }
+      }
+    },
+    "audit": {
+      "type": "object",
+      "description": "Audit logging configuration",
+      "properties": {
+        "db_enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether to store audit logs in database"
+        },
+        "log_level": {
+          "type": "string",
+          "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+          "default": "INFO"
+        },
+        "exclude_paths": {
+          "type": "array",
+          "description": "Paths to exclude from audit logging",
+          "items": {
+            "type": "string"
+          },
+          "examples": [["/health", "/metrics"]]
+        },
+        "sensitive_headers": {
+          "type": "array",
+          "description": "Headers to redact in audit logs",
+          "items": {
+            "type": "string"
+          },
+          "examples": [["Authorization", "API-Key", "X-API-Key"]]
+        }
+      }
+    },
+    "rate_limits": {
+      "type": "object",
+      "description": "Global rate limiting configuration (fallback when no DB limits exist)",
+      "properties": {
+        "global": {
+          "type": "object",
+          "required": ["enabled", "windows"],
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Whether global rate limits are active"
+            },
+            "windows": {
+              "type": "array",
+              "description": "Time windows with different rate limits",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/definitions/TimeWindow"
+              }
+            }
+          }
+        }
+      }
+    },
+    "redis_cache": {
+      "type": "object",
+      "description": "Redis configuration for distributed caching and rate limiting counters",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether to use Redis (falls back to in-memory if false or Redis unavailable)"
+        },
+        "host": {
+          "type": "string",
+          "default": "localhost",
+          "description": "Redis server hostname"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 6379,
+          "description": "Redis server port"
+        },
+        "db": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 15,
+          "default": 0,
+          "description": "Redis database number"
+        },
+        "password": {
+          "type": ["string", "null"],
+          "description": "Redis password (null if no authentication required)"
+        },
+        "max_cache_size": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000,
+          "default": 64,
+          "description": "Maximum number of cached rate limit configurations (LRU eviction)"
+        },
+        "ttl_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600,
+          "default": 30,
+          "description": "Time-to-live for cached entries in seconds"
+        },
+        "comment": {
+          "type": "string",
+          "description": "Optional comment explaining configuration choice"
+        }
+      }
+    },
+    "observability": {
+      "type": "object",
+      "description": "OpenTelemetry observability configuration",
+      "properties": {
+        "service_name": {
+          "type": "string",
+          "default": "fastapi-openai-rag",
+          "description": "Service name for telemetry"
+        },
+        "otlp_endpoint": {
+          "type": "string",
+          "format": "uri",
+          "description": "OTLP collector endpoint URL",
+          "examples": ["http://localhost:4317", "http://otel-collector:4317"]
+        },
+        "traces_enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether to emit distributed traces"
+        },
+        "metrics_enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether to emit metrics"
+        },
+        "logs_enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether to emit structured logs"
+        }
+      }
+    },
+    "proxy": {
+      "type": "object",
+      "description": "Corporate proxy configuration for outbound HTTP requests",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "http_proxy": {
+          "type": "string",
+          "format": "uri",
+          "description": "HTTP proxy URL",
+          "examples": ["http://proxy.corp.com:8080"]
+        },
+        "https_proxy": {
+          "type": "string",
+          "format": "uri",
+          "description": "HTTPS proxy URL",
+          "examples": ["http://proxy.corp.com:8080"]
+        },
+        "no_proxy": {
+          "type": "array",
+          "description": "Domains to bypass proxy",
+          "items": {
+            "type": "string"
+          },
+          "examples": [["localhost", "127.0.0.1", "*.internal.corp.com"]]
+        }
+      }
+    },
+    "ssl": {
+      "type": "object",
+      "description": "SSL/TLS configuration for outbound HTTPS requests",
+      "properties": {
+        "verify": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether to verify SSL certificates"
+        },
+        "ca_cert_path": {
+          "type": "string",
+          "description": "Path to custom CA certificate bundle"
+        },
+        "client_cert_path": {
+          "type": "string",
+          "description": "Path to client certificate for mTLS"
+        },
+        "client_key_path": {
+          "type": "string",
+          "description": "Path to client private key for mTLS"
+        }
+      }
+    }
+  },
+  "definitions": {
+    "TimeWindow": {
+      "type": "object",
+      "required": ["from_time", "to_time"],
+      "properties": {
+        "from_time": {
+          "type": "string",
+          "pattern": "^([0-1][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$",
+          "description": "Start time in HH:MM or HH:MM:SS format (24-hour clock)",
+          "examples": ["00:00", "08:00:00", "23:59"]
+        },
+        "to_time": {
+          "type": "string",
+          "pattern": "^([0-1][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$",
+          "description": "End time in HH:MM or HH:MM:SS format (24-hour clock)",
+          "examples": ["23:59", "08:00:00", "17:30"]
+        },
+        "max_requests": {
+          "type": ["integer", "null"],
+          "minimum": -1,
+          "description": "Maximum requests per window (-1 or null for unlimited)",
+          "examples": [1000, -1, null]
+        },
+        "max_tokens": {
+          "type": ["integer", "null"],
+          "minimum": -1,
+          "description": "Maximum tokens per window (-1 or null for unlimited)",
+          "examples": [100000, -1, null]
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "model_configs": [
+        {
+          "url": "https://api.openai.com/v1",
+          "api_key": "sk-...",
+          "provider": "openai",
+          "technical_name": "openai_production",
+          "name": "OpenAI Production"
+        }
+      ],
+      "db_type": "postgres",
+      "db_url": "postgresql://user:password@localhost:5432/fastapi_proxy",
+      "rate_limits": {
+        "global": {
+          "enabled": true,
+          "windows": [
+            {
+              "from_time": "00:00",
+              "to_time": "08:00",
+              "max_requests": 100,
+              "max_tokens": 10000
+            },
+            {
+              "from_time": "08:00",
+              "to_time": "23:59",
+              "max_requests": 1000,
+              "max_tokens": 100000
+            }
+          ]
+        }
+      },
+      "redis_cache": {
+        "enabled": true,
+        "host": "localhost",
+        "port": 6379,
+        "db": 0,
+        "password": null,
+        "max_cache_size": 64,
+        "ttl_seconds": 30
+      }
+    }
+  ]
+}

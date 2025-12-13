@@ -50,5 +50,28 @@
         "log_level": "INFO",
         "exclude_paths": ["/health", "/metrics"],
         "sensitive_headers": ["Authorization", "API-Key"]
+    },
+    "rate_limits": {
+        "global": {
+            "enabled": true,
+            "windows": [
+                {
+                    "from_time": "00:00",
+                    "to_time": "23:59",
+                    "max_requests": 1000,
+                    "max_tokens": 500000
+                }
+            ]
+        }
+    },
+    "redis_cache": {
+        "enabled": false,
+        "host": "localhost",
+        "port": 6379,
+        "db": 0,
+        "password": null,
+        "max_cache_size": 64,
+        "ttl_seconds": 30,
+        "comment": "Set enabled=true to use Redis for distributed caching. Falls back to in-memory if Redis unavailable."
     }
 }
