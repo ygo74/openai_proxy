@@ -2,7 +2,7 @@
 from datetime import datetime
 from typing import Dict, Any, Optional, List, Union, Literal
 from enum import Enum
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 from openai.types.chat.chat_completion_stream_options_param import ChatCompletionStreamOptionsParam
 from .llm import TokenUsage, LLMProvider
 
@@ -118,6 +118,9 @@ class ChatCompletionRequest(BaseModel):
         logprobs (Optional[bool]): Whether to return log probabilities
         top_logprobs (Optional[int]): Number of top log probabilities to return
     """
+
+    model_config = ConfigDict(extra="allow")
+
     model: str
     messages: List[ChatMessage]
     # audio: Optional[ChatCompletionAudioParam] | Omit = omit,
