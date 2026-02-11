@@ -269,7 +269,10 @@ async def _authenticate_with_jwt_payload(
     #                              payload.get("resource_access", {}).get(client_id, {}).get("roles", []) or
     #                              [])
 
-    keycloak_groups: List[str] = (payload.get("resource_access", {}).get(client_id, {}).get("roles", []) or [])
+    keycloak_groups: List[str] = (payload.get("resource_access", {}).get(client_id, {}).get("roles", []) or
+                                  payload.get("groups") or
+                                  payload.get("realm_access", {}).get("roles", []) or
+                                  [])
 
 
     # Extract additional user info from JWT
