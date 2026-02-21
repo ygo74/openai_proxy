@@ -140,10 +140,17 @@ class BaseOpenAIClient(LLMClientProtocol):
             logger.error(f"HTTP error in text completion: {error_details}")
             raise httpx.HTTPError(f"API error: {error_details}")
         except httpx.HTTPError as e:
-            logger.error(f"HTTP error in text completion: {str(e)}")
+            logger.error(
+                f"HTTP error in text completion: type={type(e).__name__}, "
+                f"message={str(e)!r}, repr={repr(e)}, "
+                f"request={getattr(e, 'request', None)}"
+            )
             raise
         except Exception as e:
-            logger.error(f"Unexpected error in text completion: {str(e)}")
+            logger.error(
+                f"Unexpected error in text completion: type={type(e).__name__}, "
+                f"message={str(e)!r}, repr={repr(e)}"
+            )
             raise
 
 
@@ -264,10 +271,17 @@ class BaseOpenAIClient(LLMClientProtocol):
             logger.error(f"HTTP error in chat completion: {error_details}")
             raise httpx.HTTPError(f"API error: {error_details}")
         except httpx.HTTPError as e:
-            logger.error(f"HTTP error in chat completion: {str(e)}")
+            logger.error(
+                f"HTTP error in chat completion: type={type(e).__name__}, "
+                f"message={str(e)!r}, repr={repr(e)}, "
+                f"request={getattr(e, 'request', None)}"
+            )
             raise
         except Exception as e:
-            logger.error(f"Unexpected error in chat completion: {str(e)}")
+            logger.error(
+                f"Unexpected error in chat completion: type={type(e).__name__}, "
+                f"message={str(e)!r}, repr={repr(e)}"
+            )
             raise
 
     @with_enterprise_retry
@@ -369,7 +383,7 @@ class BaseOpenAIClient(LLMClientProtocol):
             response = await self._client.get(
                 url=url,
                 headers=headers,
-                timeout=30.0
+                timeout=30.0  # Shorter timeout for fast metadata endpoint
             )
             response.raise_for_status()
 
@@ -444,8 +458,18 @@ class BaseOpenAIClient(LLMClientProtocol):
             err = self._parse_error(e)
             logger.error(f"HTTP error in responses: {err}")
             raise httpx.HTTPError(f"API error: {err}")
+        except httpx.HTTPError as e:
+            logger.error(
+                f"HTTP error in responses API: type={type(e).__name__}, "
+                f"message={str(e)!r}, repr={repr(e)}, "
+                f"request={getattr(e, 'request', None)}"
+            )
+            raise
         except Exception as e:
-            logger.error(f"Unexpected error in responses API: {e}")
+            logger.error(
+                f"Unexpected error in responses API: type={type(e).__name__}, "
+                f"message={str(e)!r}, repr={repr(e)}"
+            )
             raise
 
     @with_enterprise_retry
@@ -606,10 +630,17 @@ class BaseOpenAIClient(LLMClientProtocol):
             logger.error(f"HTTP error in embedding creation: {error_details}")
             raise httpx.HTTPError(f"API error: {error_details}")
         except httpx.HTTPError as e:
-            logger.error(f"HTTP error in embedding creation: {str(e)}")
+            logger.error(
+                f"HTTP error in embedding creation: type={type(e).__name__}, "
+                f"message={str(e)!r}, repr={repr(e)}, "
+                f"request={getattr(e, 'request', None)}"
+            )
             raise
         except Exception as e:
-            logger.error(f"Unexpected error in embedding creation: {str(e)}")
+            logger.error(
+                f"Unexpected error in embedding creation: type={type(e).__name__}, "
+                f"message={str(e)!r}, repr={repr(e)}"
+            )
             raise
 
     def _build_embeddings_url(self) -> str:
