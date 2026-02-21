@@ -11,6 +11,7 @@ from .domain.exceptions.validation_error import ValidationError
 from .application.services.config_service import config_service
 from .config.logging_config import setup_logging
 from .interfaces.api.middlewares.audit_factory import AuditFactory
+from .interfaces.api.middlewares.performance_middleware import PerformanceMiddleware
 from .infrastructure.observability.telemetry_service import initialize_telemetry, get_telemetry_service
 from .infrastructure.observability.metrics_service import initialize_metrics_service
 from .interfaces.api.middlewares.metrics_middleware import MetricsMiddleware
@@ -72,7 +73,7 @@ app = FastAPI(
     redirect_slashes=True
 )
 
-# Add middlewares
+# Add middlewares (order matters: first added = last executed)
 app.add_middleware(MetricsMiddleware)
 
 # Add audit middleware using the factory
@@ -87,6 +88,10 @@ app.add_middleware(
     allow_methods=config.cors.allow_methods,
     allow_headers=config.cors.allow_headers,
 )
+
+# PerformanceMiddleware measures total time including all other middlewares
+app.add_middleware(PerformanceMiddleware, enable_detailed_logs=True)
+
 
 # Include API router
 app.include_router(api_router)

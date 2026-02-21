@@ -62,5 +62,9 @@ def configure_application_loggers(level: int) -> None:
         # Keep httpx logs at INFO level to avoid too much noise
         logging.getLogger("httpx").setLevel(logging.INFO)
         logging.getLogger("httpcore").setLevel(logging.INFO)
+        # Silence hpack (HTTP/2 protocol) verbose debug logs
+        logging.getLogger("hpack").setLevel(logging.WARNING)
+        logging.getLogger("hpack.hpack").setLevel(logging.WARNING)
+        logging.getLogger("hpack.table").setLevel(logging.WARNING)
 
     logging.info(f"Logging configured with level: {logging.getLevelName(level)}")
