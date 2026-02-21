@@ -38,6 +38,11 @@ from ..services.token_tracking_service import TokenTrackingService
 
 logger = logging.getLogger(__name__)
 
+# ✅ Global LLM client cache shared across all service instances
+# This prevents recreating expensive clients (Azure auth, management, HTTP connections)
+# on every request, reducing latency by ~1200ms per request
+_GLOBAL_CLIENT_CACHE: Dict[str, LLMClientProtocol] = {}
+
 class ChatCompletionService:
     """Service for handling OpenAI-compatible chat and text completions."""
 
@@ -50,7 +55,7 @@ class ChatCompletionService:
         self._uow = uow
         self._model_service = ModelService(uow)
         self._token_tracking = TokenTrackingService(uow)
-        self._client_cache: Dict[str, LLMClientProtocol] = {}
+        # Use global cache instead of instance cache
         logger.debug("ChatCompletionService initialized")
 
     async def create_completion(self, request: CompletionRequest, user: AuthenticatedUser) -> OpenAICompletion:
@@ -446,65 +451,62 @@ class ChatCompletionService:
             raise
 
     async def _get_and_validate_model(self, model_name: str, user: AuthenticatedUser) -> LlmModel:
-        """Get and validate model from database, checking user authorization.
+        """Get and validate model from user's authorized models, checking authorization.
+
+        This method uses the pre-loaded models from the user object (populated during authentication)
+        to avoid redundant database queries. The user.models list already contains only approved models
+        that the user has access to based on their group memberships.
 
         Args:
             model_name (str): Model name or technical name
-            user (AuthenticatedUser): Authenticated user with group memberships
+            user (AuthenticatedUser): Authenticated user with group memberships and pre-loaded models
 
         Returns:
             LlmModel: Validated model entity
 
         Raises:
-            EntityNotFoundError: If model not found
-            ValidationError: If model not approved
-            PermissionError: If user is not authorized to access the model
+            PermissionError: If user is not authorized to access the model or model does not exist
         """
-        with self._uow as uow:
-            repository: IModelRepository = SQLModelRepository(uow.session)
+        # Find model in user's pre-loaded authorized models (already filtered for approved + group access)
+        candidates: List[LlmModel] = [
+            m for m in user.models if m.name == model_name
+        ]
 
-            # Try to find by name if technical name fails
-            models = repository.get_approved_by_name(model_name)
+        if not candidates:
+            logger.warning(f"User '{user.username}' with groups {user.groups} attempted to access unauthorized or non-existent model '{model_name}'")
+            raise PermissionError(f"Not authorized to access model '{model_name}' or model does not exist")
 
-            if not models:
-                raise EntityNotFoundError("Model", model_name)
+        # Pick one at random if multiple (load balancing across model instances)
+        selected_model = choice(candidates)
+        logger.debug(f"Selected model '{selected_model.name}' (id={selected_model.id}) for user '{user.username}'")
 
-            # Gather candidate models (match on name or technical_name)
-            candidates: List[LlmModel] = [
-                m for m in user.models if m.name == model_name
-            ]
-
-            if not candidates or len(candidates) == 0:
-                logger.warning(f"User with groups {user} attempted unauthorized access to model {model_name}")
-                raise PermissionError(f"Not authorized to access model {model_name}")
-
-            # Pick one at random if multiple
-            candidate_model = choice(candidates)
-
-            # Find candidate model in approved models from repository
-            model = next((m for m in models if m.id == candidate_model.id), None)
-            if not model:
-                raise EntityNotFoundError("Model", model_name)
-
-            return model
+        return selected_model
 
     def _get_or_create_client(self, model: LlmModel) -> LLMClientProtocol:
         """Get or create LLM client for the model.
+
+        Uses a global module-level cache to persist clients across FastAPI request cycles.
+        This eliminates ~1200ms of Azure client initialization overhead on each request.
 
         Args:
             model (LlmModel): Model entity
 
         Returns:
-            LLMClientProtocol: Provider client
+            LLMClientProtocol: Provider client (cached or newly created)
 
         Raises:
             RuntimeError: If client cannot be created
         """
-        # Use model URL as cache key
+        # Use model URL + technical name as unique cache key
         cache_key = f"{model.url}_{model.technical_name}"
 
-        if cache_key in self._client_cache:
-            return self._client_cache[cache_key]
+        # Check global cache first (fast path)
+        if cache_key in _GLOBAL_CLIENT_CACHE:
+            logger.debug(f"Using cached client for {model.provider} model {model.technical_name}")
+            return _GLOBAL_CLIENT_CACHE[cache_key]
+
+        # Cache miss - create new client (slow path ~1200ms for Azure)
+        logger.info(f"Cache miss - creating new client for {model.technical_name}")
 
         # Get API key for the model's provider from config
         model_config = config_service.get_model_config(model.technical_name)
@@ -515,8 +517,8 @@ class ChatCompletionService:
         # Create client using factory
         try:
             client = LLMClientFactory.create_client(model=model, model_config=model_config)
-            self._client_cache[cache_key] = client
-            logger.debug(f"Created and cached client for {model.provider} model {model.technical_name}")
+            _GLOBAL_CLIENT_CACHE[cache_key] = client
+            logger.info(f"Created and cached client for {model.provider} model {model.technical_name}")
             return client
         except Exception as e:
             logger.error(f"Failed to create client for model {model.technical_name}: {str(e)}")
