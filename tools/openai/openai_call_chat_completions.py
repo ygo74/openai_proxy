@@ -27,6 +27,7 @@ import json
 import logging
 import os
 import sys
+import time
 from datetime import datetime
 from mimetypes import guess_type
 from typing import Any, Dict, List, Optional, Union, cast
@@ -268,7 +269,11 @@ def test_basic_chat(client: OpenAI, args: argparse.Namespace) -> Optional[ChatCo
             return None
         else:
             # Handle non-streaming
+            start_time = time.time()
             completion = client.chat.completions.create(**kwargs)
+            end_time = time.time()
+            process_time = (end_time - start_time) * 1000  # Convert to
+            print(f"API call completed in {process_time:.2f} ms")
             print(f"\n=== Chat Completion (Non-Streaming) ===")
             print(completion.choices[0].message.content)
             print_usage_info(completion)
@@ -435,7 +440,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", default="gpt-4o", help="Model name")
     parser.add_argument("--question", default="What is 2+2?", help="Primary question/prompt")
     parser.add_argument("--proxy-url", default="http://localhost:8000", help="Proxy base URL (without /v1)")
-    parser.add_argument("--api-key", default="sk-16AwYoZqNoVKjfMz-Mr8TeuaXk3O6JeLwPdQSAQiF0s", help="API key")
+    parser.add_argument("--api-key", default="sk-920xAa9zy_C8jixH9Q-9Jdp09_y7RxjXRTKK39HHp54", help="API key")
     parser.add_argument("--system-message", default="You are a helpful assistant.", help="System message")
 
     # Generation parameters
