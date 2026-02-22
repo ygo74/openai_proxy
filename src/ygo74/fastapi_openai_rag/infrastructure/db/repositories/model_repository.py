@@ -138,3 +138,37 @@ class SQLModelRepository(SQLBaseRepository[LlmModel, ModelORM], IModelRepository
         result = self._session.execute(stmt)
         orm_models = result.scalars().all()
         return [self._mapper.to_domain(orm_model) for orm_model in orm_models]
+
+    def get_approved_by_group_names(self, group_names: List[str]) -> List[LlmModel]:
+        """Get all approved models accessible by any of the specified groups.
+
+        Optimized single-query method to avoid N+1 queries. Fetches distinct models
+        that are approved and linked to at least one of the specified groups.
+
+        Args:
+            group_names (List[str]): List of group names
+
+        Returns:
+            List[LlmModel]: List of distinct approved models accessible by the groups
+        """
+        if not group_names:
+            return []
+
+        # Import GroupORM here to avoid circular dependency
+        from ..models.group_orm import GroupORM
+
+        # Single optimized query with JOIN and WHERE IN clause
+        stmt = (
+            select(ModelORM)
+            .join(ModelORM.groups)
+            .where(
+                ModelORM.status == LlmModelStatus.APPROVED,
+                GroupORM.name.in_(group_names)
+            )
+            .options(selectinload(ModelORM.groups))
+            .distinct()
+        )
+
+        result = self._session.execute(stmt)
+        orm_models = result.scalars().all()
+        return [self._mapper.to_domain(orm_model) for orm_model in orm_models]

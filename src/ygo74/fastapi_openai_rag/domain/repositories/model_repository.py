@@ -69,3 +69,19 @@ class IModelRepository(BaseRepository[LlmModel]):
             List[LlmModel]: List of approved models with the given name
         """
         pass
+
+    @abstractmethod
+    def get_approved_by_group_names(self, group_names: List[str]) -> List[LlmModel]:
+        """Get all approved models accessible by any of the specified groups.
+
+        Optimized method that fetches all models in a single query instead of N+1 queries.
+        Returns distinct models (no duplicates) that are approved and linked to at least
+        one of the specified groups.
+
+        Args:
+            group_names (List[str]): List of group names
+
+        Returns:
+            List[LlmModel]: List of distinct approved models accessible by the groups
+        """
+        pass

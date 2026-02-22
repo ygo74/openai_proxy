@@ -119,6 +119,7 @@ class BaseOpenAIClient(LLMClientProtocol):
         logger.debug(f"Request payload: {payload}")
 
         try:
+            start_time = time.perf_counter()
             response = await self._client.post(
                 url=url,
                 headers=headers,
@@ -126,8 +127,11 @@ class BaseOpenAIClient(LLMClientProtocol):
                 timeout=120.0
             )
             response.raise_for_status()
-
             data = response.json()
+
+            duration = (time.perf_counter() - start_time) * 1000  # Convert to milliseconds
+            logger.info(f"Text completion request completed in {duration:.2f} ms")
+
             try:
                 return OpenAICompletion.model_validate(data)  # type: ignore[attr-defined]
             except AttributeError:
@@ -250,6 +254,7 @@ class BaseOpenAIClient(LLMClientProtocol):
         logger.debug(f"Making chat completion request to {url}")
 
         try:
+            start_time = time.perf_counter()
             response = await self._client.post(
                 url=url,
                 headers=headers,
@@ -257,8 +262,10 @@ class BaseOpenAIClient(LLMClientProtocol):
                 timeout=120.0
             )
             response.raise_for_status()
-
             data = response.json()
+            duration = (time.perf_counter() - start_time) * 1000  # Convert to milliseconds
+            logger.info(f"Chat completion request completed in {duration:.2f} ms")
+
             try:
                 return OpenAIChatCompletion.model_validate(data)  # type: ignore[attr-defined]
             except AttributeError:
@@ -445,9 +452,12 @@ class BaseOpenAIClient(LLMClientProtocol):
         logger.debug(f"responses() call -> url={url} keys={list(body.keys())}")
 
         try:
+            start_time = time.perf_counter()
             res = await self._client.post(url=url, headers=headers, json=body, timeout=120.0)
             res.raise_for_status()
             data = res.json()
+            duration = (time.perf_counter() - start_time) * 1000  # Convert to milliseconds
+            logger.info(f"responses() completed in {duration:.2f}")
             try:
                 return OpenAIResponse.model_validate(data)  # type: ignore[attr-defined]
             except AttributeError:
