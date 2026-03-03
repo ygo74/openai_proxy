@@ -149,7 +149,9 @@ class ChatCompletionRequest(BaseModel):
     stream: Optional[bool] = False
     stream_options: Optional[ChatCompletionStreamOptionsParam] = None
     temperature: Optional[float] = Field(None, ge=0, le=2)
-    timeout: Optional[float] = None
+    timeout: Optional[float] = Field(
+        None, description="Optional per-request timeout override (seconds)."
+    )
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
     tools: Optional[List[ChatCompletionTool]] = None
     top_logprobs: Optional[int] = Field(None, ge=0, le=5)

@@ -142,14 +142,15 @@ class SQLModelRepository(SQLBaseRepository[LlmModel, ModelORM], IModelRepository
     def get_approved_by_group_names(self, group_names: List[str]) -> List[LlmModel]:
         """Get all approved models accessible by any of the specified groups.
 
-        Optimized single-query method to avoid N+1 queries. Fetches distinct models
-        that are approved and linked to at least one of the specified groups.
+        This implementation avoids DISTINCT on full model rows (which can fail on
+        PostgreSQL when JSON columns are present) by deduplicating only model IDs
+        in a subquery.
 
         Args:
-            group_names (List[str]): List of group names
+            group_names (List[str]): List of group names.
 
         Returns:
-            List[LlmModel]: List of distinct approved models accessible by the groups
+            List[LlmModel]: List of distinct approved models accessible by the groups.
         """
         if not group_names:
             return []
@@ -157,16 +158,22 @@ class SQLModelRepository(SQLBaseRepository[LlmModel, ModelORM], IModelRepository
         # Import GroupORM here to avoid circular dependency
         from ..models.group_orm import GroupORM
 
-        # Single optimized query with JOIN and WHERE IN clause
-        stmt = (
-            select(ModelORM)
+        # Deduplicate only on IDs (safe with JSON columns on PostgreSQL)
+        model_ids_subquery = (
+            select(ModelORM.id)
             .join(ModelORM.groups)
             .where(
                 ModelORM.status == LlmModelStatus.APPROVED,
-                GroupORM.name.in_(group_names)
+                GroupORM.name.in_(group_names),
             )
-            .options(selectinload(ModelORM.groups))
             .distinct()
+        )
+
+        # Fetch full models + groups
+        stmt = (
+            select(ModelORM)
+            .options(selectinload(ModelORM.groups))
+            .where(ModelORM.id.in_(model_ids_subquery))
         )
 
         result = self._session.execute(stmt)
