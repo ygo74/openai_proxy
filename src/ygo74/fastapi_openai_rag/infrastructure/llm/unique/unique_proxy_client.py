@@ -114,6 +114,7 @@ class UniqueProxyClient(LLMClientProtocol):
             )
 
             latency_ms = (time.time() - start_time) * 1000
+            logger.info(f"Chat completion request completed in {latency_ms:.2f} ms")
 
             # Convert SDK response to domain model
             return self._parse_chat_response(response, latency_ms)

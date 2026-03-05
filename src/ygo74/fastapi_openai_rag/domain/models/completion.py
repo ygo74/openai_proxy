@@ -44,6 +44,9 @@ class CompletionRequest(BaseModel):
     stream_options: Optional[ChatCompletionStreamOptionsParam] = None
     suffix: Optional[str] = None
     temperature: Optional[float] = Field(1.0, ge=0, le=2)
+    timeout: Optional[float] = Field(
+        None, description="Optional per-request timeout override (seconds)."
+    )
     top_p: Optional[float] = Field(1.0, ge=0, le=1)
     user: Optional[str] = None
 

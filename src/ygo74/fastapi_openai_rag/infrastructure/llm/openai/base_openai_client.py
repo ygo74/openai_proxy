@@ -115,8 +115,8 @@ class BaseOpenAIClient(LLMClientProtocol):
         headers = self._get_headers()
         payload = self._prepare_completion_payload(request)
 
-        logger.debug(f"Making text completion request to {url}")
-        logger.debug(f"Request payload: {payload}")
+        request_timeout = int(request.timeout) if request.timeout else None
+        logger.debug(f"Making text completion request to {url} with timeout={request_timeout}s")
 
         try:
             start_time = time.perf_counter()
@@ -124,7 +124,7 @@ class BaseOpenAIClient(LLMClientProtocol):
                 url=url,
                 headers=headers,
                 json=payload,
-                timeout=120.0
+                timeout=request_timeout
             )
             response.raise_for_status()
             data = response.json()
@@ -174,16 +174,15 @@ class BaseOpenAIClient(LLMClientProtocol):
         payload = self._prepare_completion_payload(request)
         payload["stream"] = True
 
-        logger.debug(f"Starting streaming text completion to {url}")
-        logger.debug(f"Stream request payload: {payload}")
-        logger.debug(f"Stream request headers: {headers}")
+        request_timeout = int(request.timeout) if request.timeout else None
+        logger.debug(f"Starting streaming text completion to {url} with timeout={request_timeout}s")
 
         return self._client.stream(
             "POST",
             url=url,
             headers=headers,
             json=payload,
-            timeout=120.0
+            timeout=request_timeout
         )
 
     async def completion_stream(self, request: CompletionRequest) -> AsyncGenerator[OpenAICompletion, None]:
@@ -251,7 +250,8 @@ class BaseOpenAIClient(LLMClientProtocol):
         headers = self._get_headers()
         payload = self._prepare_chat_payload(request)
 
-        logger.debug(f"Making chat completion request to {url}")
+        request_timeout = int(request.timeout) if request.timeout else None
+        logger.debug(f"Making chat completion request to {url} with timeout={request_timeout}s")
 
         try:
             start_time = time.perf_counter()
@@ -259,7 +259,7 @@ class BaseOpenAIClient(LLMClientProtocol):
                 url=url,
                 headers=headers,
                 json=payload,
-                timeout=120.0
+                timeout=request_timeout
             )
             response.raise_for_status()
             data = response.json()
@@ -307,16 +307,15 @@ class BaseOpenAIClient(LLMClientProtocol):
         payload = self._prepare_chat_payload(request)
         payload["stream"] = True
 
-        logger.debug(f"Starting streaming chat completion to {url}")
-        logger.debug(f"Stream request payload: {payload}")
-        logger.debug(f"Stream request headers: {headers}")
+        request_timeout = int(request.timeout) if request.timeout else None
+        logger.debug(f"Starting streaming chat completion to {url} with timeout={request_timeout}s")
 
         return self._client.stream(
             "POST",
             url=url,
             headers=headers,
             json=payload,
-            timeout=120.0
+            timeout=request_timeout
         )
 
     async def chat_completion_stream(self, request: ChatCompletionRequest) -> AsyncGenerator[ChatCompletionChunk, None]:
@@ -449,11 +448,17 @@ class BaseOpenAIClient(LLMClientProtocol):
         body = payload.to_openai_kwargs()
         body["stream"] = False
 
-        logger.debug(f"responses() call -> url={url} keys={list(body.keys())}")
+        request_timeout = int(payload.timeout) if payload.timeout else None
+        logger.debug(f"Starting response call to {url} with timeout={request_timeout}s")
 
         try:
             start_time = time.perf_counter()
-            res = await self._client.post(url=url, headers=headers, json=body, timeout=120.0)
+            res = await self._client.post(
+                url=url,
+                headers=headers,
+                json=body,
+                timeout=request_timeout
+            )
             res.raise_for_status()
             data = res.json()
             duration = (time.perf_counter() - start_time) * 1000  # Convert to milliseconds
@@ -499,14 +504,15 @@ class BaseOpenAIClient(LLMClientProtocol):
         body = payload.to_openai_kwargs()
         body["stream"] = True
 
-        logger.debug(f"responses_stream() opening stream -> url={url}")
+        request_timeout = int(payload.timeout) if payload.timeout else None
+        logger.debug(f"Starting streaming response call to {url} with timeout={request_timeout}s")
 
         return self._client.stream(
             "POST",
             url=url,
             headers=headers,
             json=body,
-            timeout=120.0
+            timeout=request_timeout
         )
 
     async def responses_stream(self, payload: Dict[str, Any]) -> AsyncGenerator[ResponseStreamEvent, None]:
