@@ -207,13 +207,13 @@ class CloudRetryHandler:
 class LLMRetryHandler(CloudRetryHandler):
     """Specialized retry handler for LLM API calls."""
 
-    def __init__(self):
+    def __init__(self, max_attempts: int = 4, base_delay: float = 2.0, max_delay: float = 120.0, **kwargs: Any):
         """Initialize LLM retry handler with optimized settings."""
         super().__init__(
-            max_attempts=4,  # More attempts for LLM calls
+            max_attempts=max_attempts,  # More attempts for LLM calls
             strategy=RetryStrategy.EXPONENTIAL_BACKOFF,
-            base_delay=2.0,  # Longer base delay for LLM services
-            max_delay=120.0,  # Longer max delay
+            base_delay=base_delay,  # Longer base delay for LLM services
+            max_delay=max_delay,  # Longer max delay
             jitter=True,
             backoff_multiplier=2.0
         )
@@ -232,38 +232,41 @@ class KeycloakRetryHandler(CloudRetryHandler):
         )
 
 def with_enterprise_retry(func: Callable) -> Callable:
-    """Decorator that uses the client's enterprise configuration for retry.
+    """Decorator that applies retry logic based on the instance's retry_handler attribute.
 
-    This decorator automatically detects if retry is enabled and uses the
-    configured retry handler from the client instance, or creates one if needed.
+    The decorated method's ``self`` must optionally expose a ``retry_handler``
+    attribute (typically a :class:`CloudRetryHandler`).  When present the call
+    is wrapped with retry logic; otherwise the function executes directly.
+
+    This follows *Option B* (late-binding via attribute) so that the retry
+    handler can be injected by the factory at construction time without the
+    infrastructure layer depending on application-level configuration classes.
 
     Args:
-        func (Callable): Method to decorate (must be a method of a class with enterprise_config)
+        func: Async method to decorate (first positional arg is ``self``).
 
     Returns:
-        Decorated function with intelligent retry
+        Wrapped async function with conditional retry.
     """
+
     @functools.wraps(func)
-    async def wrapper(self, *args, **kwargs):
-        # Check if the instance has enterprise config and retry is enabled
-        if (hasattr(self, 'enterprise_config') and
-            self.enterprise_config.enable_retry):
+    async def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        retry_handler: Optional[CloudRetryHandler] = getattr(self, "retry_handler", None)
 
-            # Get or create retry handler and persist it in the config
-            if not getattr(self.enterprise_config, "retry_handler", None):
-                self.enterprise_config.retry_handler = LLMRetryHandler()
-            retry_handler = self.enterprise_config.retry_handler
-
-            logger.debug(f"with_enterprise_retry: Using retry handler {retry_handler} for {func.__name__}")
-
-            # Apply retry using the handler
+        if retry_handler is not None:
+            logger.debug(
+                "with_enterprise_retry: Using retry handler %s for %s",
+                retry_handler,
+                func.__name__,
+            )
             retry_decorator = retry_handler.create_async_retry_decorator()
             return await retry_decorator(func)(self, *args, **kwargs)
-        else:
-            # No retry, execute directly
-            return await func(self, *args, **kwargs)
+
+        # No retry handler — execute directly
+        return await func(self, *args, **kwargs)
 
     return wrapper
+
 
 # Convenience decorator with default LLM settings (fallback)
 def with_llm_retry(func: Callable) -> Callable:

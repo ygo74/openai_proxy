@@ -7,7 +7,7 @@ from ....domain.models.completion import CompletionRequest
 
 from ..openai.base_openai_client import BaseOpenAIClient
 from .azure_management_client import AzureManagementClient
-from ..enterprise_config import EnterpriseConfig
+from ..retry_handler import CloudRetryHandler
 import logging
 
 logger = logging.getLogger(__name__)
@@ -20,9 +20,9 @@ class AzureOpenAIClient(BaseOpenAIClient):
         api_key: str,
         base_url: str,
         api_version: str,
-        management_client: Optional[AzureManagementClient] = None,
-        enterprise_config: Optional[EnterpriseConfig] = None
-    ):
+        management_client: Optional["AzureManagementClient"] = None,
+        retry_handler: Optional[CloudRetryHandler] = None,
+    ) -> None:
         """Initialize Azure OpenAI client with API version support.
 
         Args:
@@ -30,18 +30,18 @@ class AzureOpenAIClient(BaseOpenAIClient):
             base_url (str): Base URL for the Azure OpenAI API
             api_version (str): Azure API version (e.g., "2024-06-01")
             management_client (Optional[AzureManagementClient]): Optional management client for deployment listing
-            enterprise_config (Optional[EnterpriseConfig]): Enterprise configuration
+            retry_handler (Optional[CloudRetryHandler]): Optional retry handler for API requests
         """
         # Call parent constructor with Azure provider
         super().__init__(
             api_key=api_key,
             base_url=base_url,
-            provider=LLMProvider.AZURE,
-            enterprise_config=enterprise_config
+            provider=LLMProvider.AZURE
         )
 
         self.api_version = api_version
         self.management_client = management_client
+        self.retry_handler: Optional[CloudRetryHandler] = retry_handler
 
         logger.debug(f"AzureOpenAIClient initialized at {base_url} with API version {api_version}")
 
@@ -109,6 +109,9 @@ class AzureOpenAIClient(BaseOpenAIClient):
         # Remove model from payload as it's in the URL for Azure
         payload.pop("model", None)
 
+        # Remove timeout from payload if present, as it's used for the HTTP request timeout, not the API payload
+        payload.pop("timeout", None)
+
         # Azure-specific adjustments
         # Remove parameters that Azure doesn't support or handle differently
         unsupported_params = ["best_of", "suffix", "echo", "logit_bias"]
@@ -172,6 +175,9 @@ class AzureOpenAIClient(BaseOpenAIClient):
 
         # Remove model from payload as it's in the URL for Azure
         payload.pop("model", None)
+
+        # Remove timeout from payload if present, as it's used for the HTTP request timeout, not the API payload
+        payload.pop("timeout", None)
 
         if "messages" in payload:
             payload["messages"] = [

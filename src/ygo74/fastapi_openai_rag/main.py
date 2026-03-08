@@ -18,6 +18,7 @@ from .interfaces.api.middlewares.metrics_middleware import MetricsMiddleware
 from .interfaces.api.middlewares.audit import AuditMiddleware
 from .config.settings import settings
 from datetime import datetime
+from .infrastructure.llm.http_client_factory import HttpClientFactory
 
 # Setup logging before anything else
 setup_logging()
@@ -30,7 +31,16 @@ async def lifespan(app: FastAPI):
     """Application lifespan events."""
     # Startup
     try:
-        # Initialize observability first
+        # Load configuration first (needed for enterprise settings)
+        config_service.reload_config()
+        logger.info("Application configuration loaded successfully")
+
+        # Initialize the singleton shared HTTP client using enterprise settings from config.json
+        app_config = config_service.get_config()
+        HttpClientFactory.initialize(app_config.enterprise_settings)
+        logger.info("Shared HTTP client initialized successfully")
+
+        # Initialize observability
         telemetry_service = initialize_telemetry(settings.observability)
         logger.info("Observability initialized successfully")
 
@@ -42,15 +52,9 @@ async def lifespan(app: FastAPI):
         if telemetry_service:
             telemetry_service.instrument_fastapi(app)
 
-        # Load configuration at startup
-        config_service.reload_config()
-        logger.info("Application configuration loaded successfully")
-
         # Initialize database
         config_service.init_database()
         logger.info("Database initialized successfully!")
-
-        # Other startup tasks...
 
     except Exception as e:
         logger.error(f"Failed to initialize application: {str(e)}")
@@ -58,7 +62,10 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Shutdown - clean up resources here if needed
+    # Shutdown
+    await HttpClientFactory.close_shared_client()
+    logger.info("Shared HTTP client closed")
+
     telemetry_service = get_telemetry_service()
     if telemetry_service:
         telemetry_service.shutdown()

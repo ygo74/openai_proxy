@@ -11,7 +11,7 @@ from ....infrastructure.db.unit_of_work import SQLUnitOfWork
 from ....application.services.model_service import ModelService
 from ....application.services.chat_completion_service import ChatCompletionService
 from ....domain.models.llm_model import LlmModel, LlmModelStatus
-from ....domain.models.configuration import AppConfig
+from ....domain.models.configuration import AppConfiguration
 from ....domain.models.llm import LLMProvider
 from ..decorators.decorators import endpoint_handler
 from ..security.auth import auth_jwt_or_api_key, require_admin_role
@@ -337,7 +337,7 @@ async def refresh_models(
     service: ModelService = Depends(get_model_service)
 ) -> Dict[str, Any]:
     """Refresh available models from configured providers."""
-    config = AppConfig.load_from_json()
+    config = AppConfiguration.load_from_json()
     await service.fetch_available_models(config.model_configs)
     return {"message": "Models refreshed successfully"}
 

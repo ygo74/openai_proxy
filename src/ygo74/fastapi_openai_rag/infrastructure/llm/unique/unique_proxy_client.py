@@ -19,8 +19,7 @@ from ....domain.models.completion import (
 from ....domain.models.llm import LLMProvider, TokenUsage
 from ....domain.protocols.llm_client import LLMClientProtocol
 from ..http_client_factory import HttpClientFactory
-from ..retry_handler import with_enterprise_retry, LLMRetryHandler
-from ..enterprise_config import EnterpriseConfig
+from ..retry_handler import CloudRetryHandler, with_enterprise_retry
 import logging
 
 logger = logging.getLogger(__name__)
@@ -28,10 +27,15 @@ logger = logging.getLogger(__name__)
 class UniqueProxyClient(LLMClientProtocol):
     """Unique AI proxy client with SDK integration for Unique's API."""
 
-    def __init__(self, api_key: str, app_id: str,company_id: str,
-                 user_id: str,
-                 base_url: str,
-                 enterprise_config: Optional[EnterpriseConfig] = None):
+    def __init__(
+        self,
+        api_key: str,
+        app_id: str,
+        company_id: str,
+        user_id: str,
+        base_url: str,
+        retry_handler: Optional[CloudRetryHandler] = None,
+    ) -> None:
         """Initialize Unique proxy client with enterprise configuration.
 
         Args:
@@ -39,8 +43,6 @@ class UniqueProxyClient(LLMClientProtocol):
             company_id (str): Company ID for Unique API calls
             user_id (Optional[str]): Default user ID for API calls
             base_url (Optional[str]): Base URL for the Unique API (if different from default)
-            provider (LLMProvider): Provider type (defaults to UNIQUE)
-            enterprise_config (Optional[EnterpriseConfig]): Enterprise configuration
         """
         self.api_key = api_key
         self.app_id = app_id
@@ -48,12 +50,7 @@ class UniqueProxyClient(LLMClientProtocol):
         self.user_id = user_id
         self.base_url = base_url
         self.provider = LLMProvider.UNIQUE
-
-        # Use default enterprise config if none provided
-        if enterprise_config is None:
-            enterprise_config = EnterpriseConfig()
-
-        self.enterprise_config = enterprise_config
+        self.retry_handler: Optional[CloudRetryHandler] = retry_handler
 
         # Initialize the Unique SDK
         self._initialize_sdk()

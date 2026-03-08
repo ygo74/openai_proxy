@@ -252,7 +252,8 @@ def test_basic_chat(client: OpenAI, args: argparse.Namespace) -> Optional[ChatCo
         "messages": messages,
         "max_tokens": args.max_tokens,
         "temperature": args.temperature,
-        "stream": args.stream
+        "stream": args.stream,
+        "extra_body": {"timeout": 120}
     }
 
     # Add response format if JSON is requested

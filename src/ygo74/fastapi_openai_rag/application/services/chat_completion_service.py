@@ -17,6 +17,7 @@ from ...domain.repositories.model_repository import IModelRepository
 from ...domain.exceptions.entity_not_found_exception import EntityNotFoundError
 from ...domain.exceptions.validation_error import ValidationError
 from ...domain.protocols.llm_client import LLMClientProtocol
+from ...domain.models.configuration import EnterpriseSettings
 from ...infrastructure.db.repositories.model_repository import SQLModelRepository
 from ...infrastructure.llm.client_factory import LLMClientFactory
 from .config_service import config_service
@@ -516,7 +517,11 @@ class ChatCompletionService:
 
         # Create client using factory
         try:
-            client = LLMClientFactory.create_client(model=model, model_config=model_config)
+            # Get enterprise seetings configuration
+            app_config = config_service.get_config()
+            enterprise_settings: EnterpriseSettings | None = app_config.enterprise_settings if app_config else None
+
+            client = LLMClientFactory.create_client(model=model, model_config=model_config, enterprise_settings=enterprise_settings)
             _GLOBAL_CLIENT_CACHE[cache_key] = client
             logger.info(f"Created and cached client for {model.provider} model {model.technical_name}")
             return client

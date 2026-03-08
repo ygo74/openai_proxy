@@ -7,11 +7,12 @@ from ...domain.models.group import Group
 from ...domain.repositories.model_repository import IModelRepository
 from ...domain.unit_of_work import UnitOfWork
 from ...infrastructure.db.repositories.model_repository import SQLModelRepository
-from ...domain.models.configuration import ModelConfig
+from ...domain.models.configuration import ModelConfig, EnterpriseSettings
 from ...domain.exceptions.entity_not_found_exception import EntityNotFoundError
 from ...domain.exceptions.entity_already_exists import EntityAlreadyExistsError
 from ...domain.exceptions.validation_error import ValidationError
 from ...domain.protocols.llm_client import LLMClientProtocol
+from .config_service import config_service
 from ...infrastructure.llm.client_factory import LLMClientFactory
 from .group_service import GroupService
 import logging
@@ -265,6 +266,10 @@ class ModelService:
         """
         logger.debug("Starting to fetch available models using LLM clients.")
 
+        # Get enterprise seetings configuration
+        app_config = config_service.get_config()
+        enterprise_settings: EnterpriseSettings | None = app_config.enterprise_settings if app_config else None
+
         for model_config in model_configs:
             logger.debug(f"Fetching models from provider: {model_config.provider} at {model_config.url}")
 
@@ -289,7 +294,7 @@ class ModelService:
                 )
 
                 # Use async context manager for proper resource cleanup
-                async with LLMClientFactory.create_client(model=temp_model, model_config=model_config) as client:
+                async with LLMClientFactory.create_client(model=temp_model, model_config=model_config, enterprise_settings=enterprise_settings) as client:
                     # For Azure, use deployments; for others, use models
                     if provider_enum == LLMProvider.AZURE:
                         models_data: List[Dict[str, Any]] = await client.list_deployments()

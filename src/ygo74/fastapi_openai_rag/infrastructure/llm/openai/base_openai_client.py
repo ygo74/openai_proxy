@@ -30,7 +30,6 @@ from openai.types.completion import Completion as OpenAICompletion
 
 from ..http_client_factory import HttpClientFactory
 from ..retry_handler import with_enterprise_retry, LLMRetryHandler
-from ..enterprise_config import EnterpriseConfig
 import logging
 
 logger = logging.getLogger(__name__)
@@ -59,39 +58,22 @@ class BaseOpenAIClient(LLMClientProtocol):
         api_key: str,
         base_url: str,
         provider: LLMProvider,
-        enterprise_config: Optional[EnterpriseConfig] = None
     ):
-        """Initialize base OpenAI client with enterprise configuration.
+        """Initialize base OpenAI client using the shared HTTP client.
 
         Args:
             api_key (str): API key for authentication
             base_url (str): Base URL for the API
             provider (LLMProvider): Provider type
-            enterprise_config (Optional[EnterpriseConfig]): Enterprise configuration
         """
         self.api_key = api_key
         self.base_url = base_url.rstrip('/')
         self.provider = provider
 
-        # Use default enterprise config if none provided
-        if enterprise_config is None:
-            enterprise_config = EnterpriseConfig()
+        # Use the singleton shared HTTP client instead of creating a new one
+        self._client = HttpClientFactory.get_client()
 
-        self.enterprise_config = enterprise_config
-
-        # Create HTTP client using factory with enterprise settings
-        self._client = HttpClientFactory.create_async_client(
-            target_url=self.base_url,
-            timeout=120.0,
-            proxy_url=enterprise_config.proxy_url,
-            proxy_auth=enterprise_config.proxy_auth,
-            verify_ssl=enterprise_config.verify_ssl,
-            ca_cert_file=enterprise_config.ca_cert_file,
-            client_cert_file=enterprise_config.client_cert_file,
-            client_key_file=enterprise_config.client_key_file
-        )
-
-        logger.debug(f"BaseOpenAIClient initialized for {provider} at {base_url}")
+        logger.debug(f"BaseOpenAIClient initialized for {provider} at {base_url} (using shared HTTP client)")
 
         self._stream_validation_error_count: int = 0  # limit noisy logs
         self._has_model_validate: bool = callable(getattr(ResponseStreamEvent, 'model_validate', None))
@@ -919,6 +901,9 @@ class BaseOpenAIClient(LLMClientProtocol):
         # Convert to dict and filter None values
         payload = request.model_dump(exclude_none=True)
 
+        # Remove timeout from payload if present, as it's used for the HTTP request timeout, not the API payload
+        payload.pop("timeout", None)
+
         # Convert messages to API format
         if "messages" in payload:
             payload["messages"] = [
@@ -936,13 +921,14 @@ class BaseOpenAIClient(LLMClientProtocol):
         Returns:
             Dict[str, Any]: API payload
         """
-        return request.model_dump(exclude_none=True)
+        payload = request.model_dump(exclude_none=True)
+        # Remove timeout from payload if present, as it's used for the HTTP request timeout, not the API payload
+        payload.pop("timeout", None)
+        return payload
 
     async def close(self) -> None:
-        """Close the HTTP client and cleanup resources."""
-        if hasattr(self, '_client') and self._client:
-            await self._client.aclose()
-            logger.debug(f"Client closed for {self.provider}")
+        """No-op: the shared HTTP client lifecycle is managed by HttpClientFactory."""
+        logger.debug(f"close() called for {self.provider} — shared client not closed (managed by HttpClientFactory)")
 
     async def __aenter__(self):
         """Async context manager entry."""
@@ -954,6 +940,5 @@ class BaseOpenAIClient(LLMClientProtocol):
         exc_val: Optional[BaseException],
         exc_tb: Optional[TracebackType]
     ) -> Optional[bool]:
-        """Async context manager exit."""
-        await self.close()
+        """Async context manager exit — no-op for shared client."""
         return None

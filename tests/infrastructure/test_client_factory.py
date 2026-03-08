@@ -5,26 +5,25 @@ import ssl
 from datetime import datetime, timezone
 
 from src.ygo74.fastapi_openai_rag.infrastructure.llm.client_factory import (
-    LLMClientFactory, EnterpriseConfig
+    LLMClientFactory
 )
+from src.ygo74.fastapi_openai_rag.domain.models.configuration import EnterpriseSettings
 from src.ygo74.fastapi_openai_rag.domain.models.llm import LLMProvider
 from src.ygo74.fastapi_openai_rag.domain.models.llm_model import LlmModel
 from src.ygo74.fastapi_openai_rag.domain.models.configuration import ModelConfig, AzureModelConfig
 
 
 class TestEnterpriseConfig:
-    """Test EnterpriseConfig dataclass."""
+    """Test EnterpriseSettings dataclass."""
 
     def test_enterprise_config_default_values(self):
         """Test enterprise config default values."""
         # arrange & act
-        config = EnterpriseConfig()
+        config = EnterpriseSettings()
 
         # assert
         assert config.enable_retry is True
-        assert config.retry_handler is None
         assert config.proxy_url is None
-        assert config.proxy_auth is None
         assert config.verify_ssl is True
         assert config.ca_cert_file is None
         assert config.client_cert_file is None
@@ -33,7 +32,7 @@ class TestEnterpriseConfig:
     def test_enterprise_config_should_auto_detect_proxy_default(self):
         """Test should auto-detect proxy with default settings."""
         # arrange & act
-        config = EnterpriseConfig()
+        config = EnterpriseSettings()
 
         # assert
         assert config.should_auto_detect_proxy() is True
@@ -41,7 +40,7 @@ class TestEnterpriseConfig:
     def test_enterprise_config_should_auto_detect_proxy_explicit_empty(self):
         """Test should not auto-detect proxy when explicitly set to empty."""
         # arrange & act
-        config = EnterpriseConfig(proxy_url="")
+        config = EnterpriseSettings(proxy_url="")
 
         # assert
         assert config.should_auto_detect_proxy() is False
@@ -49,7 +48,7 @@ class TestEnterpriseConfig:
     def test_enterprise_config_should_auto_detect_proxy_explicit_url(self):
         """Test should not auto-detect proxy when URL is set."""
         # arrange & act
-        config = EnterpriseConfig(proxy_url="http://proxy.example.com:8080")
+        config = EnterpriseSettings(proxy_url="http://proxy.example.com:8080")
 
         # assert
         assert config.should_auto_detect_proxy() is False
