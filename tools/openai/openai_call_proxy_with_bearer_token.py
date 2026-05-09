@@ -26,8 +26,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Configuration
-# Load environment variables from .env file if present
-load_dotenv()
+# Environment variables will be loaded from --env-file if specified, or from shell
 
 KEYCLOAK_URL = os.getenv("KEYCLOAK_URL", "http://localhost:8080")
 KEYCLOAK_REALM = os.getenv("KEYCLOAK_REALM", "fastapi-openai-rag")
@@ -239,7 +238,10 @@ def main():
     """Main function."""
 
     parser = argparse.ArgumentParser(description="Direct OpenAI client for FastAPI proxy with Bearer token")
-    parser.add_argument("--model_url", default="http://localhost:8000/v1", help="Model url to connect")
+    parser.add_argument("--env-file", type=str, default=None,
+                        help="Path to .env file to load (e.g. ../.env or ../.env_azure)")
+    parser.add_argument("--model_url", default=None,
+                        help="Model url to connect. Falls back to OPENAI_API_BASE env var")
     parser.add_argument("--model", default="gpt-4o", help="Model name to use")
     parser.add_argument("--question", default="Who are you and what is your cutoff date?",
                         help="Question to ask the model")
@@ -251,6 +253,30 @@ def main():
 
     if args.verbose:
         logger.setLevel(logging.DEBUG)
+
+    # Load .env file if specified
+    if args.env_file:
+        from pathlib import Path
+        env_path = Path(args.env_file) if Path(args.env_file).is_absolute() else Path(__file__).parent / args.env_file
+        if env_path.is_file():
+            load_dotenv(dotenv_path=str(env_path), override=True)
+            logger.info(f"Loading environment from: {env_path}")
+        else:
+            logger.error(f"Environment file not found: {env_path}")
+            return 1
+
+    # Reload Keycloak config from env vars (may have been updated by --env-file)
+    global KEYCLOAK_URL, KEYCLOAK_REALM, KEYCLOAK_CLIENT_ID, KEYCLOAK_CLIENT_SECRET
+    KEYCLOAK_URL = os.getenv("KEYCLOAK_URL", "http://localhost:8080")
+    KEYCLOAK_REALM = os.getenv("KEYCLOAK_REALM", "fastapi-openai-rag")
+    KEYCLOAK_CLIENT_ID = os.getenv("KEYCLOAK_CLIENT_ID", "fastapi-app")
+    KEYCLOAK_CLIENT_SECRET = os.getenv("KEYCLOAK_CLIENT_SECRET", None)
+
+    # Resolve model URL: CLI args > env vars
+    model_url = args.model_url or os.getenv("OPENAI_API_BASE", "http://localhost:8000/v1")
+    base_url = model_url.rstrip("/")
+    if not base_url.endswith("/v1"):
+        base_url = f"{base_url}/v1"
 
     print(f"Script will use the model: {args.model}")
     print(f"Script will answer to the question: {args.question}")
@@ -267,7 +293,6 @@ def main():
     access_token = token_data["access_token"]
 
     # Initialize OpenAI client with our proxy
-    base_url = args.model_url
     client = create_openai_client(base_url, access_token)
 
     # Prepare messages

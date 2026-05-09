@@ -10,6 +10,7 @@ Param(
 
 # Basic question
 python .\tools\openai\openai_call_chat_completions.py `
+       --env-file ..\.env `
        --model $model
 
 # Streaming
@@ -17,6 +18,7 @@ if ($TestStreaming) {
     python .\tools\openai\openai_call_chat_completions.py `
         --question "peux tu traduire en français: The following example demonstrates how to use the fictitious MCP server to query information about the Azure REST API. This allows the model to retrieve and reason over repository content in real time." `
         --model $model `
+        --env-file ..\.env `
         --stream
 }
 
@@ -25,6 +27,7 @@ if ($TestFileUpload) {
     python .\tools\openai\openai_call_chat_completions.py `
        --question "describe this file" `
        --model $model `
+       --env-file ..\.env `
        --file-path "C:\Users\Administrator\Pictures\226px-Jenkins_logo.svg.png"
 }
 
@@ -34,6 +37,7 @@ if ($TestFileUpload -and $TestStreaming) {
     python .\tools\openai\openai_call_chat_completions.py `
        --question "describe this file" `
        --model $model `
+       --env-file ..\.env `
        --file-path "C:\Users\Administrator\Pictures\226px-Jenkins_logo.svg.png" `
        --stream
 }
@@ -43,6 +47,7 @@ if ($TestFollowUp) {
     python .\tools\openai\openai_call_chat_completions.py `
       --question "peux tu traduire en français: The following example demonstrates how to use the fictitious MCP server to query information about the Azure REST API. This allows the model to retrieve and reason over repository content in real time." `
       --model $model `
+      --env-file ..\.env `
       --follow-up "et en espagnol"
 }
 
@@ -51,6 +56,7 @@ if ($TestFunctionCalling) {
     python .\tools\openai\openai_call_chat_completions.py `
        --question "what time is it at paris" `
        --model $model `
+       --env-file ..\.env `
        --function-tool
 }
 
@@ -60,5 +66,6 @@ if ($TestFunctionCalling -and $TestFollowUp) {
        --question "what time is it at paris" `
        --model $model `
        --function-tool `
+       --env-file ..\.env `
        --follow-up "dans combien de temps il est minuit?"
 }

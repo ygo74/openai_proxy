@@ -4,6 +4,7 @@ venv
 config.json
 *.db
 .env
+.env_azure
 .env.prod
 *egg-info
 *langchain_call_azure_openai.py

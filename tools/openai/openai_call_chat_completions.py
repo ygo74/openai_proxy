@@ -13,11 +13,15 @@ Features tested:
 - Response format control (JSON)
 
 Usage examples:
-python openai_call_chat_completions.py --question "What is 2+2?"
-python openai_call_chat_completions.py --question "What time is it in Paris?" --function-tools --auto-execute
+python openai_call_chat_completions.py --env-file ../.env --question "What is 2+2?"
+python openai_call_chat_completions.py --env-file ../.env_azure --question "What time is it in Paris?" --function-tools --auto-execute
 python openai_call_chat_completions.py --question "Latest tech news" --stream
 python openai_call_chat_completions.py --question "Hi, I'm Alice" --follow-up "What's my name?"
 python openai_call_chat_completions.py --question "Describe this image" --file-path ./image.jpg
+
+Environment variables (loaded from .env file or shell):
+  OPENAI_API_BASE   - Base URL for the API (e.g. http://localhost:8000/v1)
+  OPENAI_API_KEY    - API key for authentication
 """
 from __future__ import annotations
 
@@ -28,6 +32,7 @@ import logging
 import os
 import sys
 import time
+from pathlib import Path
 from datetime import datetime
 from mimetypes import guess_type
 from typing import Any, Dict, List, Optional, Union, cast
@@ -437,11 +442,17 @@ def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Native OpenAI SDK Chat Completions API tester")
 
+    # Environment file
+    parser.add_argument("--env-file", type=str, default=None,
+                        help="Path to .env file to load (e.g. ../.env or ../.env_azure)")
+
     # Basic parameters
     parser.add_argument("--model", default="gpt-4o", help="Model name")
     parser.add_argument("--question", default="What is 2+2?", help="Primary question/prompt")
-    parser.add_argument("--proxy-url", default="http://localhost:8000", help="Proxy base URL (without /v1)")
-    parser.add_argument("--api-key", default="sk-920xAa9zy_C8jixH9Q-9Jdp09_y7RxjXRTKK39HHp54", help="API key")
+    parser.add_argument("--proxy-url", default=None,
+                        help="Proxy base URL (without /v1). Falls back to OPENAI_API_BASE env var")
+    parser.add_argument("--api-key", default=None,
+                        help="API key. Falls back to OPENAI_API_KEY env var")
     parser.add_argument("--system-message", default="You are a helpful assistant.", help="System message")
 
     # Generation parameters
@@ -476,10 +487,35 @@ def main() -> int:
     if args.verbose:
         logger.setLevel(logging.DEBUG)
 
+    # Load .env file if specified
+    if args.env_file:
+        env_path = Path(args.env_file)
+        if not env_path.is_absolute():
+            env_path = Path(__file__).parent / env_path
+        if env_path.is_file():
+            logger.info(f"Loading environment from: {env_path}")
+            from dotenv import load_dotenv
+            load_dotenv(dotenv_path=str(env_path), override=True)
+        else:
+            logger.error(f"Environment file not found: {env_path}")
+            return 1
+
+    # Resolve API key and base URL: CLI args > env vars
+    api_key = args.api_key or os.getenv("OPENAI_API_KEY")
+    proxy_url = args.proxy_url or os.getenv("OPENAI_API_BASE", "http://localhost:8000/v1")
+
+    if not api_key:
+        logger.error("API key is required. Use --api-key or set OPENAI_API_KEY (via --env-file or shell).")
+        return 1
+
+    # Normalize base_url to end with /v1
+    base_url = proxy_url.rstrip("/")
+    if not base_url.endswith("/v1"):
+        base_url = f"{base_url}/v1"
+
     # Initialize OpenAI client pointing to proxy
-    base_url = f"{args.proxy_url.rstrip('/')}/v1"
     client = OpenAI(
-        api_key=args.api_key,
+        api_key=api_key,
         base_url=base_url,
         max_retries=0
     )
