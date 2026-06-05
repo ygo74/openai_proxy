@@ -2,9 +2,10 @@
 import os
 import json
 import time
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, cast
 import logging
 import requests
+from requests.auth import AuthBase
 from pathlib import Path
 from datetime import datetime, timedelta
 import keyring
@@ -12,24 +13,75 @@ import base64
 import hashlib
 import urllib.parse
 from knack.log import get_logger
+from .exceptions import AIGatewayClientError
 
-import requests
-try:
-    from requests_kerberos import HTTPKerberosAuth, OPTIONAL
-    HAS_KERBEROS = True
-except ImportError:
-    HAS_KERBEROS = False
+logger = get_logger(__name__)
+
+# # import requests
+# # try:
+# #     from requests_kerberos import HTTPKerberosAuth, OPTIONAL
+# #     HAS_LINUX_KERBEROS = True
+# # except ImportError:
+# #     HAS_LINUX_KERBEROS = False
+# HAS_LINUX_KERBEROS = False
+
+# try:
+#     from requests_negotiate_sspi import HttpNegotiateAuth
+#     HAS_WINDOWS_KERBEROS = True
+# except ImportError:
+#     HAS_WINDOWS_KERBEROS = False
+
+# HAS_KERBEROS = HAS_LINUX_KERBEROS or HAS_WINDOWS_KERBEROS
 
 import urllib3
 
+
+def _create_kerberos_auth() -> AuthBase:
+    """Detect and return the appropriate Kerberos auth handler.
+
+    Tries ``requests_negotiate_sspi`` (Windows) first, then
+    ``requests_kerberos`` (Linux). Raises if neither is installed.
+
+    Returns:
+        A Kerberos auth handler compatible with ``requests.Session``.
+
+    Raises:
+        AIToolkitConfigError: If no Kerberos library is available.
+    """
+    try:
+        from requests_negotiate_sspi import HttpNegotiateAuth  # noqa: PLC0415
+
+        logger.debug("Using requests-negotiate-sspi (Windows SSPI)")
+        return cast("AuthBase", HttpNegotiateAuth())
+    except ImportError:
+        pass
+
+    try:
+        from requests_kerberos import OPTIONAL, HTTPKerberosAuth  # noqa: PLC0415
+
+        logger.debug("Using requests-kerberos (Linux/MIT Kerberos)")
+        return cast("AuthBase", HTTPKerberosAuth(mutual_authentication=OPTIONAL))
+    except ImportError:
+        pass
+
+    raise AIGatewayClientError(
+        "No Kerberos authentication library found. Install one of:\n"
+        "  - Linux:   pip install ubp-genai-hub-ai-toolkit[kerberos]\n"
+        "  - Windows: pip install ubp-genai-hub-ai-toolkit[kerberos-win]\n"
+        "On Linux, also ensure MIT Kerberos is installed and run 'kinit' "
+        "to obtain a ticket.\n"
+        "On Windows, verify you are logged into your Active Directory domain."
+    )
+
+
+
 session = requests.Session()
-session.verify = False
-if HAS_KERBEROS:
-    session.auth = HTTPKerberosAuth(mutual_authentication=OPTIONAL)
-
-
-
-logger = get_logger(__name__)
+session.verify = True
+# if HAS_KERBEROS:
+#     if HAS_LINUX_KERBEROS:
+#         session.auth = HTTPKerberosAuth(mutual_authentication=OPTIONAL)
+#     else:
+#         session.auth = HttpNegotiateAuth()
 
 # Constants for token cache and config
 CONFIG_DIR = Path.home() / ".rag-client"
@@ -160,11 +212,11 @@ class AuthContext:
         Raises:
             RuntimeError: If authentication fails or code cannot be extracted
         """
-        if not HAS_KERBEROS:
-            raise RuntimeError("Kerberos authentication requires requests-kerberos package")
+        # Kerberos configuration
+        session.auth = _create_kerberos_auth()
 
         # Perform Kerberos authentication without following redirects
-        resp = session.get(auth_url, allow_redirects=False)
+        resp = session.get(auth_url, allow_redirects=False, verify=True)
 
         # Check for redirect response
         if resp.status_code in (301, 302, 303, 307, 308):
@@ -220,7 +272,7 @@ class AuthContext:
             data["client_secret"] = client_secret
 
         try:
-            resp = session.post(token_url, data=data)
+            resp = session.post(token_url, data=data, verify=True)
             resp.raise_for_status()
             return resp.json()
         except requests.RequestException as e:
@@ -237,9 +289,6 @@ class AuthContext:
         Returns:
             bool: True if authentication was successful
         """
-        if not HAS_KERBEROS:
-            logger.error("Kerberos authentication is not available. Please install requests-kerberos.")
-            return False
 
         try:
             # 1) Generate PKCE parameters
