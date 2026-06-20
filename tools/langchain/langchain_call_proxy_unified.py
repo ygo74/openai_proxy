@@ -206,11 +206,15 @@ def _invoke_with_optional_tools(chat_client: Any, messages: List[Any], stream: b
 def parse_args() -> argparse.Namespace:
     """Parse CLI arguments."""
     parser = argparse.ArgumentParser(description="Unified proxy capability tester")
+    parser.add_argument("--env-file", type=str, default=None,
+                        help="Path to .env file to load (e.g. ../.env or ../.env_azure)")
     parser.add_argument("--model", default="gpt-4o", help="Model name")
     parser.add_argument("--question", default="Who are you?", help="Question to send")
     parser.add_argument("--file-path", dest="file_path", help="Optional image or PDF path")
-    parser.add_argument("--proxy-url", default="http://localhost:8000", help="Proxy base URL (without /v1)")
-    parser.add_argument("--api-key", default="sk-16AwYoZqNoVKjfMz-Mr8TeuaXk3O6JeLwPdQSAQiF0s", help="Proxy API key")
+    parser.add_argument("--proxy-url", default=None,
+                        help="Proxy base URL (without /v1). Falls back to OPENAI_API_BASE env var")
+    parser.add_argument("--api-key", default=None,
+                        help="API key. Falls back to OPENAI_API_KEY env var")
     parser.add_argument("--mode", choices=["chat", "completion", "auto"], default="chat", help="Force chat, completion or auto")
     parser.add_argument("--stream", action="store_true", help="Use streaming for chat mode")
     parser.add_argument("--enable-tools", action="store_true", help="Enable tool binding")
