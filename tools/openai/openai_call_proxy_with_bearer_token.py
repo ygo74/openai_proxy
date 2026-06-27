@@ -212,7 +212,8 @@ def invoke_chat_completion(client: OpenAI, model: str, messages: list, stream: b
                 model=model,
                 messages=messages,
                 temperature=temperature,
-                stream=True
+                stream=True,
+                timeout=300
             )
 
             # Return the stream directly for the caller to process
@@ -222,7 +223,8 @@ def invoke_chat_completion(client: OpenAI, model: str, messages: list, stream: b
             response = client.chat.completions.create(
                 model=model,
                 messages=messages,
-                temperature=temperature
+                temperature=temperature,
+                extra_body={"timeout": 300, "guided_choice": ["CAT1", "CAT2"]},
             )
 
             execution_time = time.time() - start_time

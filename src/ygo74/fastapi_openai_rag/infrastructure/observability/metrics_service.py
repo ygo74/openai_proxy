@@ -27,13 +27,13 @@ class MetricsService:
         # HTTP Request metrics
         self.http_requests_total = self.meter.create_counter(
             name="http_requests_total",
-            description="Total number of HTTP requests",
+            description="Total number of requests by method, status and handler.",
             unit="1"
         )
 
         self.http_request_duration = self.meter.create_histogram(
             name="http_request_duration_seconds",
-            description="HTTP request duration in seconds",
+            description="Latency with only few buckets by handler. Made to be only used if aggregation by handler is important.",
             unit="s"
         )
 

@@ -50,6 +50,12 @@ class _ResponseStreamEventFallback(BaseModel):
     delta: Optional[str] = None
     obfuscation: Optional[str] = None
 
+# Default timeout values for LLM gateway operations (in seconds)
+DEFAULT_CONNECT_TIMEOUT: float = 10.0
+DEFAULT_READ_TIMEOUT: float = 300.0
+DEFAULT_WRITE_TIMEOUT: float = 30.0
+DEFAULT_POOL_TIMEOUT: float = 10.0
+
 class BaseOpenAIClient(LLMClientProtocol):
     """Base OpenAI client with shared functionality for all OpenAI-compatible providers."""
 
@@ -62,18 +68,47 @@ class BaseOpenAIClient(LLMClientProtocol):
         """Initialize base OpenAI client using the shared HTTP client.
 
         Args:
-            api_key (str): API key for authentication
-            base_url (str): Base URL for the API
-            provider (LLMProvider): Provider type
+            api_key: API key for authentication.
+            base_url: Base URL for the API.
+            provider: Provider type.
+            enterprise_config: Enterprise configuration including proxy/SSL/timeout settings.
         """
         self.api_key = api_key
         self.base_url = base_url.rstrip('/')
         self.provider = provider
 
-        # Use the singleton shared HTTP client instead of creating a new one
-        self._client = HttpClientFactory.get_client()
+        # Use default enterprise config if none provided
+        if enterprise_config is None:
+            enterprise_config = EnterpriseConfig()
 
-        logger.debug(f"BaseOpenAIClient initialized for {provider} at {base_url} (using shared HTTP client)")
+        self.enterprise_config = enterprise_config
+
+        # Build granular timeout: prefer enterprise_config values, fall back to gateway defaults
+        self._default_timeout: httpx.Timeout = httpx.Timeout(
+            connect=getattr(enterprise_config, 'connect_timeout', None) or DEFAULT_CONNECT_TIMEOUT,
+            read=getattr(enterprise_config, 'read_timeout', None) or DEFAULT_READ_TIMEOUT,
+            write=getattr(enterprise_config, 'write_timeout', None) or DEFAULT_WRITE_TIMEOUT,
+            pool=getattr(enterprise_config, 'pool_timeout', None) or DEFAULT_POOL_TIMEOUT,
+        )
+
+        # Create HTTP client using factory with enterprise settings
+        self._client = HttpClientFactory.create_async_client(
+            target_url=self.base_url,
+            timeout=self._default_timeout,
+            proxy_url=enterprise_config.proxy_url,
+            proxy_auth=enterprise_config.proxy_auth,
+            verify_ssl=enterprise_config.verify_ssl,
+            ca_cert_file=enterprise_config.ca_cert_file,
+            client_cert_file=enterprise_config.client_cert_file,
+            client_key_file=enterprise_config.client_key_file
+        )
+
+        logger.debug(
+            "BaseOpenAIClient initialized for %s at %s (timeout connect=%.0fs read=%.0fs write=%.0fs pool=%.0fs)",
+            provider, base_url,
+            self._default_timeout.connect, self._default_timeout.read,
+            self._default_timeout.write, self._default_timeout.pool,
+        )
 
         self._stream_validation_error_count: int = 0  # limit noisy logs
         self._has_model_validate: bool = callable(getattr(ResponseStreamEvent, 'model_validate', None))
@@ -103,10 +138,7 @@ class BaseOpenAIClient(LLMClientProtocol):
         try:
             start_time = time.perf_counter()
             response = await self._client.post(
-                url=url,
-                headers=headers,
-                json=payload,
-                timeout=request_timeout
+                **self._build_request_kwargs(url, headers, payload, request_timeout)
             )
             response.raise_for_status()
             data = response.json()
@@ -159,12 +191,12 @@ class BaseOpenAIClient(LLMClientProtocol):
         request_timeout = int(request.timeout) if request.timeout else None
         logger.debug(f"Starting streaming text completion to {url} with timeout={request_timeout}s")
 
+        kwargs = self._build_request_kwargs(url, headers, payload, request_timeout)
+        kwargs.pop("json")  # stream() uses json as positional-style kwarg
         return self._client.stream(
             "POST",
-            url=url,
-            headers=headers,
+            **kwargs,
             json=payload,
-            timeout=request_timeout
         )
 
     async def completion_stream(self, request: CompletionRequest) -> AsyncGenerator[OpenAICompletion, None]:
@@ -238,10 +270,7 @@ class BaseOpenAIClient(LLMClientProtocol):
         try:
             start_time = time.perf_counter()
             response = await self._client.post(
-                url=url,
-                headers=headers,
-                json=payload,
-                timeout=request_timeout
+                **self._build_request_kwargs(url, headers, payload, request_timeout)
             )
             response.raise_for_status()
             data = response.json()
@@ -292,12 +321,12 @@ class BaseOpenAIClient(LLMClientProtocol):
         request_timeout = int(request.timeout) if request.timeout else None
         logger.debug(f"Starting streaming chat completion to {url} with timeout={request_timeout}s")
 
+        kwargs = self._build_request_kwargs(url, headers, payload, request_timeout)
+        kwargs.pop("json")
         return self._client.stream(
             "POST",
-            url=url,
-            headers=headers,
+            **kwargs,
             json=payload,
-            timeout=request_timeout
         )
 
     async def chat_completion_stream(self, request: ChatCompletionRequest) -> AsyncGenerator[ChatCompletionChunk, None]:
@@ -436,10 +465,7 @@ class BaseOpenAIClient(LLMClientProtocol):
         try:
             start_time = time.perf_counter()
             res = await self._client.post(
-                url=url,
-                headers=headers,
-                json=body,
-                timeout=request_timeout
+                **self._build_request_kwargs(url, headers, body, request_timeout)
             )
             res.raise_for_status()
             data = res.json()
@@ -489,12 +515,12 @@ class BaseOpenAIClient(LLMClientProtocol):
         request_timeout = int(payload.timeout) if payload.timeout else None
         logger.debug(f"Starting streaming response call to {url} with timeout={request_timeout}s")
 
+        kwargs = self._build_request_kwargs(url, headers, body, request_timeout)
+        kwargs.pop("json")
         return self._client.stream(
             "POST",
-            url=url,
-            headers=headers,
+            **kwargs,
             json=body,
-            timeout=request_timeout
         )
 
     async def responses_stream(self, payload: Dict[str, Any]) -> AsyncGenerator[ResponseStreamEvent, None]:
@@ -925,6 +951,43 @@ class BaseOpenAIClient(LLMClientProtocol):
         # Remove timeout from payload if present, as it's used for the HTTP request timeout, not the API payload
         payload.pop("timeout", None)
         return payload
+
+    @staticmethod
+    def _build_request_kwargs(
+        url: str,
+        headers: Dict[str, str],
+        payload: Dict[str, Any],
+        request_timeout: Optional[int],
+    ) -> Dict[str, Any]:
+        """Build keyword arguments for an httpx request, omitting timeout when unset.
+
+        When request_timeout is provided by the caller, it overrides only the read
+        timeout while keeping connect/write/pool at their client defaults. This avoids
+        both infinite waits and premature connection-phase failures.
+
+        Args:
+            url: Target URL.
+            headers: HTTP headers.
+            payload: JSON body.
+            request_timeout: Per-request read timeout in seconds, or None to use client default.
+
+        Returns:
+            Dict ready to be unpacked into httpx .post() / .stream() calls.
+        """
+        kwargs: Dict[str, Any] = {
+            "url": url,
+            "headers": headers,
+            "json": payload,
+        }
+        if request_timeout is not None:
+            # Override only the read phase; keep connect/write/pool at client defaults
+            kwargs["timeout"] = httpx.Timeout(
+                connect=DEFAULT_CONNECT_TIMEOUT,
+                read=float(request_timeout),
+                write=DEFAULT_WRITE_TIMEOUT,
+                pool=DEFAULT_POOL_TIMEOUT,
+            )
+        return kwargs
 
     async def close(self) -> None:
         """No-op: the shared HTTP client lifecycle is managed by HttpClientFactory."""

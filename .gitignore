@@ -6,6 +6,7 @@ config.json
 .env
 .env_azure
 .env.prod
+.env*
 *egg-info
 *langchain_call_azure_openai.py
 *langchain_call_azure_openai*
