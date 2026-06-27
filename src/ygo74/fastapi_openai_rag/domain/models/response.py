@@ -16,7 +16,6 @@ from pydantic import BaseModel, Field, model_validator, field_validator
 from openai.types.responses.response_input_param import ResponseInputParam
 from openai.types.responses.response_prompt_param import ResponsePromptParam
 from openai.types.responses.response_text_config_param import ResponseTextConfigParam
-from openai.types.responses.tool_param import ToolParam
 from openai.types.responses import response_create_params
 from openai.types.responses.response_includable import ResponseIncludable
 from openai.types.shared_params.reasoning import Reasoning
@@ -70,7 +69,10 @@ class ResponsesCreatePayload(BaseModel):
     truncation: Optional[TruncationStrategy] = None
 
     # Tools / functions ------------------------------------------------------
-    tools: Optional[List[ToolParam]] = None
+    # Accept any tool dict: the proxy forwards tools transparently to the upstream API.
+    # Some clients (e.g. Codex CLI) send non-standard tool types like "namespace"
+    # that are not part of the OpenAI SDK ToolParam union.
+    tools: Optional[List[Dict[str, Any]]] = None
     tool_choice: Optional[ResponseToolChoice] = None
     parallel_tool_calls: Optional[bool] = True
 
