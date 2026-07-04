@@ -114,7 +114,7 @@ class AzureOpenAIClient(BaseOpenAIClient):
 
         # Azure-specific adjustments
         # Remove parameters that Azure doesn't support or handle differently
-        unsupported_params = ["best_of", "suffix", "echo", "logit_bias"]
+        unsupported_params = ["best_of", "suffix", "echo", "logit_bias", "ignore_eos"]
         for param in unsupported_params:
             payload.pop(param, None)
 
@@ -178,6 +178,12 @@ class AzureOpenAIClient(BaseOpenAIClient):
 
         # Remove timeout from payload if present, as it's used for the HTTP request timeout, not the API payload
         payload.pop("timeout", None)
+
+        # Azure-specific adjustments
+        # Remove parameters that Azure doesn't support or handle differently
+        unsupported_params = ["best_of", "suffix", "echo", "logit_bias", "ignore_eos"]
+        for param in unsupported_params:
+            payload.pop(param, None)
 
         if "messages" in payload:
             payload["messages"] = [

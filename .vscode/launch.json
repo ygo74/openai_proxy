@@ -32,7 +32,7 @@
                 "LOG_LEVEL": "DEBUG",
                 "DEVELOPMENT_MODE": "true"
             },
-            "python": "${workspaceFolder}/venv/openai_proxy/bin/python",
+            "python": "${workspaceFolder}/venv/fastapi/Scripts/python.exe",
             "justMyCode": false,
             "stopOnEntry": false
         },

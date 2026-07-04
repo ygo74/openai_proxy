@@ -68,47 +68,16 @@ class BaseOpenAIClient(LLMClientProtocol):
         """Initialize base OpenAI client using the shared HTTP client.
 
         Args:
-            api_key: API key for authentication.
-            base_url: Base URL for the API.
-            provider: Provider type.
-            enterprise_config: Enterprise configuration including proxy/SSL/timeout settings.
+            api_key (str): API key for authentication
+            base_url (str): Base URL for the API
+            provider (LLMProvider): Provider type
         """
         self.api_key = api_key
         self.base_url = base_url.rstrip('/')
         self.provider = provider
 
-        # Use default enterprise config if none provided
-        if enterprise_config is None:
-            enterprise_config = EnterpriseConfig()
-
-        self.enterprise_config = enterprise_config
-
-        # Build granular timeout: prefer enterprise_config values, fall back to gateway defaults
-        self._default_timeout: httpx.Timeout = httpx.Timeout(
-            connect=getattr(enterprise_config, 'connect_timeout', None) or DEFAULT_CONNECT_TIMEOUT,
-            read=getattr(enterprise_config, 'read_timeout', None) or DEFAULT_READ_TIMEOUT,
-            write=getattr(enterprise_config, 'write_timeout', None) or DEFAULT_WRITE_TIMEOUT,
-            pool=getattr(enterprise_config, 'pool_timeout', None) or DEFAULT_POOL_TIMEOUT,
-        )
-
-        # Create HTTP client using factory with enterprise settings
-        self._client = HttpClientFactory.create_async_client(
-            target_url=self.base_url,
-            timeout=self._default_timeout,
-            proxy_url=enterprise_config.proxy_url,
-            proxy_auth=enterprise_config.proxy_auth,
-            verify_ssl=enterprise_config.verify_ssl,
-            ca_cert_file=enterprise_config.ca_cert_file,
-            client_cert_file=enterprise_config.client_cert_file,
-            client_key_file=enterprise_config.client_key_file
-        )
-
-        logger.debug(
-            "BaseOpenAIClient initialized for %s at %s (timeout connect=%.0fs read=%.0fs write=%.0fs pool=%.0fs)",
-            provider, base_url,
-            self._default_timeout.connect, self._default_timeout.read,
-            self._default_timeout.write, self._default_timeout.pool,
-        )
+        self._client = HttpClientFactory.get_client()
+        logger.debug(f"BaseOpenAIClient initialized for {provider} at {base_url} (using shared HTTP client)")
 
         self._stream_validation_error_count: int = 0  # limit noisy logs
         self._has_model_validate: bool = callable(getattr(ResponseStreamEvent, 'model_validate', None))
