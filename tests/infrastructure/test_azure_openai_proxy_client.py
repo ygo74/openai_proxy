@@ -4,7 +4,6 @@ from unittest.mock import Mock, AsyncMock, patch
 from datetime import datetime, timezone
 
 from src.ygo74.fastapi_openai_rag.infrastructure.llm.azure_openai.azure_openai_proxy_client import AzureOpenAIClient
-from src.ygo74.fastapi_openai_rag.infrastructure.llm.client_factory import EnterpriseConfig
 from src.ygo74.fastapi_openai_rag.domain.models.llm import LLMProvider
 from src.ygo74.fastapi_openai_rag.domain.models.chat_completion import ChatCompletionRequest, ChatMessage
 from src.ygo74.fastapi_openai_rag.domain.models.completion import CompletionRequest
@@ -33,8 +32,6 @@ class TestAzureOpenAIClient:
 
     def test_azure_openai_proxy_client_init_custom_config(self):
         """Test Azure OpenAI proxy client initialization with custom config."""
-        # arrange
-        enterprise_config = EnterpriseConfig(enable_retry=False)
 
         # act
         with patch('src.ygo74.fastapi_openai_rag.infrastructure.llm.azure_openai_proxy_client.HttpClientFactory'):
@@ -42,8 +39,7 @@ class TestAzureOpenAIClient:
                 api_key="test-key",
                 base_url="https://test.openai.azure.com/",  # with trailing slash
                 api_version="2024-06-01",
-                provider=LLMProvider.AZURE,
-                enterprise_config=enterprise_config
+                provider=LLMProvider.AZURE
             )
 
         # assert
@@ -51,7 +47,6 @@ class TestAzureOpenAIClient:
         assert client.base_url == "https://test.openai.azure.com"  # trailing slash removed
         assert client.api_version == "2024-06-01"
         assert client.provider == LLMProvider.AZURE
-        assert client.enterprise_config.enable_retry is False
 
     def test_azure_openai_proxy_client_build_url(self):
         """Test URL building for Azure OpenAI API."""

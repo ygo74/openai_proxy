@@ -6,52 +6,40 @@ from typing import Dict, Any, List, Optional, Union, Type, cast
 from types import TracebackType
 from .azure_auth_client import AzureAuthClient
 from ..http_client_factory import HttpClientFactory
-from ..retry_handler import with_enterprise_retry  # Ajout de l'import du décorateur
+from ..retry_handler import CloudRetryHandler, with_enterprise_retry
 
 logger = logging.getLogger(__name__)
 
 class AzureManagementClient:
     """Client for Azure Management API to manage Cognitive Services deployments."""
 
-    def __init__(self, auth_client: AzureAuthClient, subscription_id: str, resource_group: str, account_name: str,
-                 proxy_url: Optional[str] = None,
-                 proxy_auth: Optional[httpx.Auth] = None,
-                 verify_ssl: Union[bool, str, ssl.SSLContext] = True,
-                 ca_cert_file: Optional[str] = None,
-                 client_cert_file: Optional[str] = None,
-                 client_key_file: Optional[str] = None):
+    def __init__(
+        self,
+        auth_client: "AzureAuthClient",
+        subscription_id: str,
+        resource_group: str,
+        account_name: str,
+        retry_handler: Optional[CloudRetryHandler] = None,
+    ):
         """Initialize Azure Management client.
 
         Args:
-            auth_client (AzureAuthClient): Authentication client
-            subscription_id (str): Azure subscription ID
-            resource_group (str): Resource group name
-            account_name (str): Cognitive Services account name
-            proxy_url (Optional[str]): Corporate proxy URL
-            proxy_auth (Optional[httpx.Auth]): Proxy authentication
-            verify_ssl (Union[bool, str, ssl.SSLContext]): SSL verification setting
-            ca_cert_file (Optional[str]): Path to custom CA certificate file
-            client_cert_file (Optional[str]): Path to client certificate file
-            client_key_file (Optional[str]): Path to client private key file
+            auth_client: Azure AD authentication client
+            subscription_id: Azure subscription ID
+            resource_group: Azure resource group name
+            account_name: Azure OpenAI account name
+            retry_handler: Optional retry handler for resilient HTTP calls
         """
         self.auth_client = auth_client
         self.subscription_id = subscription_id
         self.resource_group = resource_group
         self.account_name = account_name
+        self.retry_handler: Optional[CloudRetryHandler] = retry_handler
 
-        # Create HTTP client using factory with enterprise settings
-        self._client = HttpClientFactory.create_async_client(
-            target_url="https://management.azure.com",
-            timeout=60.0,
-            proxy_url=proxy_url,
-            proxy_auth=proxy_auth,
-            verify_ssl=verify_ssl,
-            ca_cert_file=ca_cert_file,
-            client_cert_file=client_cert_file,
-            client_key_file=client_key_file
-        )
+        # Use the singleton shared HTTP client
+        self._client = HttpClientFactory.get_client()
 
-        logger.debug(f"AzureManagementClient initialized for subscription {subscription_id}")
+        logger.debug(f"AzureManagementClient initialized for subscription {subscription_id} (using shared HTTP client)")
 
     @with_enterprise_retry
     async def list_deployments(self) -> List[Dict[str, Any]]:
@@ -150,20 +138,13 @@ class AzureManagementClient:
             raise
 
     async def close(self) -> None:
-        """Close the HTTP client."""
-        if hasattr(self, '_client') and self._client:
-            await self._client.aclose()
+        """No-op: the shared HTTP client lifecycle is managed by HttpClientFactory."""
+        pass
 
     async def __aenter__(self):
         """Async context manager entry."""
         return self
 
     async def __aexit__(self, exc_type: Optional[Type[BaseException]], exc_val: Optional[BaseException], exc_tb: Optional[TracebackType]) -> None:
-        """Async context manager exit.
-
-        Args:
-            exc_type (Optional[Type[BaseException]]): Exception type if raised
-            exc_val (Optional[BaseException]): Exception instance if raised
-            exc_tb (Optional[TracebackType]): Traceback if raised
-        """
-        await self.close()
+        """Async context manager exit — no-op for shared client."""
+        pass

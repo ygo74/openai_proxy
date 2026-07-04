@@ -498,23 +498,26 @@ class UserService:
     def get_models_for_user(self, user_groups: List[str]) -> List[LlmModel]:
         """Get models accessible to a user based on group membership.
 
+        Optimized method that uses a single database query instead of N+1 queries.
         Admins get all approved models. Regular users get approved models
-        linked to any of their groups. Duplicates are removed by model ID.
+        linked to any of their groups.
 
         Args:
             user_groups (List[str]): Group names the user belongs to
 
         Returns:
-            List[LlmModel]: Accessible models for the user
+            List[LlmModel]: Accessible models for the user (distinct, no duplicates)
         """
         logger.debug(f"Getting models for user with groups: {user_groups}")
-        if not self._model_repository_factory or not self._group_repository_factory:
-            raise RuntimeError("Model/Group repository factories must be provided to UserService")
+        if not self._model_repository_factory:
+            raise RuntimeError("Model repository factory must be provided to UserService")
 
-        result_models: List[LlmModel] = []
+        if not user_groups:
+            logger.debug("No groups provided, returning empty list")
+            return []
+
         with self._uow as uow:
             model_repository: IModelRepository = self._model_repository_factory(uow.session)
-            group_repository: IGroupRepository = self._group_repository_factory(uow.session)
 
             # Admin shortcut: return all approved models
             if "admin" in user_groups:
@@ -523,20 +526,8 @@ class UserService:
                 logger.debug(f"Admin user, returning {len(result_models)} approved models")
                 return result_models
 
-            # Regular users: aggregate models from each group
-            accessible_models = {}  # key: model_id, value: LlmModel
-            for group_name in user_groups:
-                group = group_repository.get_by_name(group_name)
-                if not group:
-                    logger.warning(f"User group '{group_name}' not found in database")
-                    continue
-
-                group_models: List[LlmModel] = model_repository.get_by_group_id(group.id)  # type: ignore[arg-type]
-                for model in group_models:
-                    if model.status == LlmModelStatus.APPROVED:
-                        accessible_models[model.id] = model
-
-            result_models = list(accessible_models.values())
-            logger.debug(f"Regular user, returning {len(result_models)} models from user's groups")
+            # Regular users: fetch all approved models for all groups in ONE query
+            result_models = model_repository.get_approved_by_group_names(user_groups)
+            logger.debug(f"Regular user, returning {len(result_models)} approved models from {len(user_groups)} groups (single query)")
 
         return result_models

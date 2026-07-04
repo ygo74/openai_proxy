@@ -3,6 +3,7 @@ from typing import Dict, Any, Optional, List, Union
 from pydantic import BaseModel, model_validator
 import json
 import os
+from pydantic import Field
 
 class ModelConfig(BaseModel):
     """Model configuration settings.
@@ -85,33 +86,70 @@ class ForwardersConfig(BaseModel):
     print: PrintForwarderConfig = PrintForwarderConfig()
     http: List[HttpForwarderConfig] = []
 
-class AppConfig(BaseModel):
-    """AppConfig is a configuration model for the application.
+class CORSConfig(BaseModel):
+    """CORS configuration settings."""
+    allow_origins: List[str] = ["*"]
+    allow_methods: List[str] = ["*"]
+    allow_headers: List[str] = ["*"]
+    allow_credentials: bool = False
+
+class EnterpriseSettings(BaseModel):
+    """Enterprise HTTP settings loadable from config.json.
 
     Attributes:
-        model_configs (List[Union[ModelConfig, AzureModelConfig, UniqueModelConfig]]): List of model configurations
-        db_type (str): The type of database being used
-        forwarders (ForwardersConfig): Configuration for audit forwarders
-        audit (AuditConfig): Configuration for audit functionality
+        proxy_url: Corporate proxy URL (None=auto-detect, ""=no proxy)
+        verify_ssl: Enable SSL verification
+        ca_cert_file: Path to custom CA certificate file
+        client_cert_file: Path to client certificate for mutual TLS
+        client_key_file: Path to client private key for mutual TLS
+        timeout: Default HTTP request timeout in seconds
     """
+    model_config = {"extra": "ignore"}
+
+    enable_retry: Optional[bool] = True
+    retry_max_attempts: Optional[int] = 3
+    retry_base_delay: Optional[float] = 2.0
+    retry_max_delay: Optional[float] = 100.0
+    proxy_url: Optional[str] = None
+    verify_ssl: bool = True
+    ca_cert_file: Optional[str] = None
+    client_cert_file: Optional[str] = None
+    client_key_file: Optional[str] = None
+    timeout: float = 120.0
+
+    def should_auto_detect_proxy(self) -> bool:
+        """Check if proxy should be auto-detected from environment variables.
+
+        Returns:
+            bool: True if should auto-detect proxy
+        """
+        # Auto-detect if proxy_url is None (default)
+        # Don't auto-detect if proxy_url is explicitly set (even empty string)
+        return self.proxy_url is None
+
+
+class AppConfiguration(BaseModel):
+    """Root application configuration loaded from config.json."""
     model_configs: List[Union[ModelConfig, AzureModelConfig, UniqueModelConfig]]
     db_type: str
     db_url: str
     forwarders: ForwardersConfig = ForwardersConfig()
     audit: AuditConfig = AuditConfig()
+    cors: CORSConfig = CORSConfig()
+    enterprise_settings: EnterpriseSettings = Field(default_factory=EnterpriseSettings)
 
     @classmethod
-    def load_from_json(cls, config_path: str = "config.json") -> "AppConfig":
+    def load_from_json(cls, config_path: str = "config.json") -> "AppConfiguration":
         """Load settings from a JSON file with proper config type discrimination.
 
         Args:
             config_path (str): Path to JSON configuration file
 
         Returns:
-            AppConfig: Application settings instance
+            AppConfiguration: Application settings instance
         """
         if not os.path.exists(config_path):
-            return cls(model_configs=[], db_type="sqlite")
+            return cls(model_configs=[], db_type="sqlite", db_url="")
 
         with open(config_path, "r") as config_file:
             config_data = json.load(config_file)
@@ -150,12 +188,24 @@ class AppConfig(BaseModel):
             if "audit" in config_data:
                 audit_config = AuditConfig(**config_data["audit"])
 
+            # Process CORS configuration
+            cors_config = CORSConfig()
+            if "cors" in config_data:
+                cors_config = CORSConfig(**config_data["cors"])
+
+            # Process enterprise configuration
+            enterprise_config = EnterpriseSettings()
+            if "enterprise" in config_data:
+                enterprise_config = EnterpriseSettings(**config_data["enterprise"])
+
             return cls(
                 model_configs=processed_configs,
                 db_type=config_data.get("db_type", "sqlite"),
-                db_url=config_data.get("db_url"),
+                db_url=config_data.get("db_url", ""),
                 forwarders=forwarders_config,
-                audit=audit_config
+                audit=audit_config,
+                cors=cors_config,
+                enterprise=enterprise_config,
             )
 
     def to_dict(self) -> Dict[str, Any]:

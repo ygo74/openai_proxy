@@ -30,7 +30,6 @@ from openai.types.completion import Completion as OpenAICompletion
 
 from ..http_client_factory import HttpClientFactory
 from ..retry_handler import with_enterprise_retry, LLMRetryHandler
-from ..enterprise_config import EnterpriseConfig
 import logging
 
 logger = logging.getLogger(__name__)
@@ -51,6 +50,12 @@ class _ResponseStreamEventFallback(BaseModel):
     delta: Optional[str] = None
     obfuscation: Optional[str] = None
 
+# Default timeout values for LLM gateway operations (in seconds)
+DEFAULT_CONNECT_TIMEOUT: float = 10.0
+DEFAULT_READ_TIMEOUT: float = 300.0
+DEFAULT_WRITE_TIMEOUT: float = 30.0
+DEFAULT_POOL_TIMEOUT: float = 10.0
+
 class BaseOpenAIClient(LLMClientProtocol):
     """Base OpenAI client with shared functionality for all OpenAI-compatible providers."""
 
@@ -59,39 +64,20 @@ class BaseOpenAIClient(LLMClientProtocol):
         api_key: str,
         base_url: str,
         provider: LLMProvider,
-        enterprise_config: Optional[EnterpriseConfig] = None
     ):
-        """Initialize base OpenAI client with enterprise configuration.
+        """Initialize base OpenAI client using the shared HTTP client.
 
         Args:
             api_key (str): API key for authentication
             base_url (str): Base URL for the API
             provider (LLMProvider): Provider type
-            enterprise_config (Optional[EnterpriseConfig]): Enterprise configuration
         """
         self.api_key = api_key
         self.base_url = base_url.rstrip('/')
         self.provider = provider
 
-        # Use default enterprise config if none provided
-        if enterprise_config is None:
-            enterprise_config = EnterpriseConfig()
-
-        self.enterprise_config = enterprise_config
-
-        # Create HTTP client using factory with enterprise settings
-        self._client = HttpClientFactory.create_async_client(
-            target_url=self.base_url,
-            timeout=120.0,
-            proxy_url=enterprise_config.proxy_url,
-            proxy_auth=enterprise_config.proxy_auth,
-            verify_ssl=enterprise_config.verify_ssl,
-            ca_cert_file=enterprise_config.ca_cert_file,
-            client_cert_file=enterprise_config.client_cert_file,
-            client_key_file=enterprise_config.client_key_file
-        )
-
-        logger.debug(f"BaseOpenAIClient initialized for {provider} at {base_url}")
+        self._client = HttpClientFactory.get_client()
+        logger.debug(f"BaseOpenAIClient initialized for {provider} at {base_url} (using shared HTTP client)")
 
         self._stream_validation_error_count: int = 0  # limit noisy logs
         self._has_model_validate: bool = callable(getattr(ResponseStreamEvent, 'model_validate', None))
@@ -115,19 +101,20 @@ class BaseOpenAIClient(LLMClientProtocol):
         headers = self._get_headers()
         payload = self._prepare_completion_payload(request)
 
-        logger.debug(f"Making text completion request to {url}")
-        logger.debug(f"Request payload: {payload}")
+        request_timeout = int(request.timeout) if request.timeout else None
+        logger.debug(f"Making text completion request to {url} with timeout={request_timeout}s")
 
         try:
+            start_time = time.perf_counter()
             response = await self._client.post(
-                url=url,
-                headers=headers,
-                json=payload,
-                timeout=120.0
+                **self._build_request_kwargs(url, headers, payload, request_timeout)
             )
             response.raise_for_status()
-
             data = response.json()
+
+            duration = (time.perf_counter() - start_time) * 1000  # Convert to milliseconds
+            logger.info(f"Text completion request completed in {duration:.2f} ms")
+
             try:
                 return OpenAICompletion.model_validate(data)  # type: ignore[attr-defined]
             except AttributeError:
@@ -140,10 +127,17 @@ class BaseOpenAIClient(LLMClientProtocol):
             logger.error(f"HTTP error in text completion: {error_details}")
             raise httpx.HTTPError(f"API error: {error_details}")
         except httpx.HTTPError as e:
-            logger.error(f"HTTP error in text completion: {str(e)}")
+            logger.error(
+                f"HTTP error in text completion: type={type(e).__name__}, "
+                f"message={str(e)!r}, repr={repr(e)}, "
+                f"request={getattr(e, 'request', None)}"
+            )
             raise
         except Exception as e:
-            logger.error(f"Unexpected error in text completion: {str(e)}")
+            logger.error(
+                f"Unexpected error in text completion: type={type(e).__name__}, "
+                f"message={str(e)!r}, repr={repr(e)}"
+            )
             raise
 
 
@@ -163,16 +157,15 @@ class BaseOpenAIClient(LLMClientProtocol):
         payload = self._prepare_completion_payload(request)
         payload["stream"] = True
 
-        logger.debug(f"Starting streaming text completion to {url}")
-        logger.debug(f"Stream request payload: {payload}")
-        logger.debug(f"Stream request headers: {headers}")
+        request_timeout = int(request.timeout) if request.timeout else None
+        logger.debug(f"Starting streaming text completion to {url} with timeout={request_timeout}s")
 
+        kwargs = self._build_request_kwargs(url, headers, payload, request_timeout)
+        kwargs.pop("json")  # stream() uses json as positional-style kwarg
         return self._client.stream(
             "POST",
-            url=url,
-            headers=headers,
+            **kwargs,
             json=payload,
-            timeout=120.0
         )
 
     async def completion_stream(self, request: CompletionRequest) -> AsyncGenerator[OpenAICompletion, None]:
@@ -240,18 +233,19 @@ class BaseOpenAIClient(LLMClientProtocol):
         headers = self._get_headers()
         payload = self._prepare_chat_payload(request)
 
-        logger.debug(f"Making chat completion request to {url}")
+        request_timeout = int(request.timeout) if request.timeout else None
+        logger.debug(f"Making chat completion request to {url} with timeout={request_timeout}s")
 
         try:
+            start_time = time.perf_counter()
             response = await self._client.post(
-                url=url,
-                headers=headers,
-                json=payload,
-                timeout=120.0
+                **self._build_request_kwargs(url, headers, payload, request_timeout)
             )
             response.raise_for_status()
-
             data = response.json()
+            duration = (time.perf_counter() - start_time) * 1000  # Convert to milliseconds
+            logger.info(f"Chat completion request completed in {duration:.2f} ms")
+
             try:
                 return OpenAIChatCompletion.model_validate(data)  # type: ignore[attr-defined]
             except AttributeError:
@@ -264,10 +258,17 @@ class BaseOpenAIClient(LLMClientProtocol):
             logger.error(f"HTTP error in chat completion: {error_details}")
             raise httpx.HTTPError(f"API error: {error_details}")
         except httpx.HTTPError as e:
-            logger.error(f"HTTP error in chat completion: {str(e)}")
+            logger.error(
+                f"HTTP error in chat completion: type={type(e).__name__}, "
+                f"message={str(e)!r}, repr={repr(e)}, "
+                f"request={getattr(e, 'request', None)}"
+            )
             raise
         except Exception as e:
-            logger.error(f"Unexpected error in chat completion: {str(e)}")
+            logger.error(
+                f"Unexpected error in chat completion: type={type(e).__name__}, "
+                f"message={str(e)!r}, repr={repr(e)}"
+            )
             raise
 
     @with_enterprise_retry
@@ -286,16 +287,15 @@ class BaseOpenAIClient(LLMClientProtocol):
         payload = self._prepare_chat_payload(request)
         payload["stream"] = True
 
-        logger.debug(f"Starting streaming chat completion to {url}")
-        logger.debug(f"Stream request payload: {payload}")
-        logger.debug(f"Stream request headers: {headers}")
+        request_timeout = int(request.timeout) if request.timeout else None
+        logger.debug(f"Starting streaming chat completion to {url} with timeout={request_timeout}s")
 
+        kwargs = self._build_request_kwargs(url, headers, payload, request_timeout)
+        kwargs.pop("json")
         return self._client.stream(
             "POST",
-            url=url,
-            headers=headers,
+            **kwargs,
             json=payload,
-            timeout=120.0
         )
 
     async def chat_completion_stream(self, request: ChatCompletionRequest) -> AsyncGenerator[ChatCompletionChunk, None]:
@@ -369,7 +369,7 @@ class BaseOpenAIClient(LLMClientProtocol):
             response = await self._client.get(
                 url=url,
                 headers=headers,
-                timeout=30.0
+                timeout=30.0  # Shorter timeout for fast metadata endpoint
             )
             response.raise_for_status()
 
@@ -428,12 +428,18 @@ class BaseOpenAIClient(LLMClientProtocol):
         body = payload.to_openai_kwargs()
         body["stream"] = False
 
-        logger.debug(f"responses() call -> url={url} keys={list(body.keys())}")
+        request_timeout = int(payload.timeout) if payload.timeout else None
+        logger.debug(f"Starting response call to {url} with timeout={request_timeout}s")
 
         try:
-            res = await self._client.post(url=url, headers=headers, json=body, timeout=120.0)
+            start_time = time.perf_counter()
+            res = await self._client.post(
+                **self._build_request_kwargs(url, headers, body, request_timeout)
+            )
             res.raise_for_status()
             data = res.json()
+            duration = (time.perf_counter() - start_time) * 1000  # Convert to milliseconds
+            logger.info(f"responses() completed in {duration:.2f}")
             try:
                 return OpenAIResponse.model_validate(data)  # type: ignore[attr-defined]
             except AttributeError:
@@ -444,8 +450,18 @@ class BaseOpenAIClient(LLMClientProtocol):
             err = self._parse_error(e)
             logger.error(f"HTTP error in responses: {err}")
             raise httpx.HTTPError(f"API error: {err}")
+        except httpx.HTTPError as e:
+            logger.error(
+                f"HTTP error in responses API: type={type(e).__name__}, "
+                f"message={str(e)!r}, repr={repr(e)}, "
+                f"request={getattr(e, 'request', None)}"
+            )
+            raise
         except Exception as e:
-            logger.error(f"Unexpected error in responses API: {e}")
+            logger.error(
+                f"Unexpected error in responses API: type={type(e).__name__}, "
+                f"message={str(e)!r}, repr={repr(e)}"
+            )
             raise
 
     @with_enterprise_retry
@@ -465,14 +481,15 @@ class BaseOpenAIClient(LLMClientProtocol):
         body = payload.to_openai_kwargs()
         body["stream"] = True
 
-        logger.debug(f"responses_stream() opening stream -> url={url}")
+        request_timeout = int(payload.timeout) if payload.timeout else None
+        logger.debug(f"Starting streaming response call to {url} with timeout={request_timeout}s")
 
+        kwargs = self._build_request_kwargs(url, headers, body, request_timeout)
+        kwargs.pop("json")
         return self._client.stream(
             "POST",
-            url=url,
-            headers=headers,
+            **kwargs,
             json=body,
-            timeout=120.0
         )
 
     async def responses_stream(self, payload: Dict[str, Any]) -> AsyncGenerator[ResponseStreamEvent, None]:
@@ -606,10 +623,17 @@ class BaseOpenAIClient(LLMClientProtocol):
             logger.error(f"HTTP error in embedding creation: {error_details}")
             raise httpx.HTTPError(f"API error: {error_details}")
         except httpx.HTTPError as e:
-            logger.error(f"HTTP error in embedding creation: {str(e)}")
+            logger.error(
+                f"HTTP error in embedding creation: type={type(e).__name__}, "
+                f"message={str(e)!r}, repr={repr(e)}, "
+                f"request={getattr(e, 'request', None)}"
+            )
             raise
         except Exception as e:
-            logger.error(f"Unexpected error in embedding creation: {str(e)}")
+            logger.error(
+                f"Unexpected error in embedding creation: type={type(e).__name__}, "
+                f"message={str(e)!r}, repr={repr(e)}"
+            )
             raise
 
     def _build_embeddings_url(self) -> str:
@@ -872,6 +896,9 @@ class BaseOpenAIClient(LLMClientProtocol):
         # Convert to dict and filter None values
         payload = request.model_dump(exclude_none=True)
 
+        # Remove timeout from payload if present, as it's used for the HTTP request timeout, not the API payload
+        payload.pop("timeout", None)
+
         # Convert messages to API format
         if "messages" in payload:
             payload["messages"] = [
@@ -889,13 +916,51 @@ class BaseOpenAIClient(LLMClientProtocol):
         Returns:
             Dict[str, Any]: API payload
         """
-        return request.model_dump(exclude_none=True)
+        payload = request.model_dump(exclude_none=True)
+        # Remove timeout from payload if present, as it's used for the HTTP request timeout, not the API payload
+        payload.pop("timeout", None)
+        return payload
+
+    @staticmethod
+    def _build_request_kwargs(
+        url: str,
+        headers: Dict[str, str],
+        payload: Dict[str, Any],
+        request_timeout: Optional[int],
+    ) -> Dict[str, Any]:
+        """Build keyword arguments for an httpx request, omitting timeout when unset.
+
+        When request_timeout is provided by the caller, it overrides only the read
+        timeout while keeping connect/write/pool at their client defaults. This avoids
+        both infinite waits and premature connection-phase failures.
+
+        Args:
+            url: Target URL.
+            headers: HTTP headers.
+            payload: JSON body.
+            request_timeout: Per-request read timeout in seconds, or None to use client default.
+
+        Returns:
+            Dict ready to be unpacked into httpx .post() / .stream() calls.
+        """
+        kwargs: Dict[str, Any] = {
+            "url": url,
+            "headers": headers,
+            "json": payload,
+        }
+        if request_timeout is not None:
+            # Override only the read phase; keep connect/write/pool at client defaults
+            kwargs["timeout"] = httpx.Timeout(
+                connect=DEFAULT_CONNECT_TIMEOUT,
+                read=float(request_timeout),
+                write=DEFAULT_WRITE_TIMEOUT,
+                pool=DEFAULT_POOL_TIMEOUT,
+            )
+        return kwargs
 
     async def close(self) -> None:
-        """Close the HTTP client and cleanup resources."""
-        if hasattr(self, '_client') and self._client:
-            await self._client.aclose()
-            logger.debug(f"Client closed for {self.provider}")
+        """No-op: the shared HTTP client lifecycle is managed by HttpClientFactory."""
+        logger.debug(f"close() called for {self.provider} — shared client not closed (managed by HttpClientFactory)")
 
     async def __aenter__(self):
         """Async context manager entry."""
@@ -907,6 +972,5 @@ class BaseOpenAIClient(LLMClientProtocol):
         exc_val: Optional[BaseException],
         exc_tb: Optional[TracebackType]
     ) -> Optional[bool]:
-        """Async context manager exit."""
-        await self.close()
+        """Async context manager exit — no-op for shared client."""
         return None

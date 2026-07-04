@@ -3,6 +3,7 @@
 from openai import OpenAI
 import logging
 import argparse
+import os
 from typing import Dict, Any, Optional
 import requests
 import json
@@ -36,10 +37,40 @@ def local_image_to_data_url(image_path):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", help="Model's name as defined in Azure Deployment model", default="gpt-4o")
+    parser.add_argument("--env-file", type=str, default=None,
+                        help="Path to .env file to load (e.g. ../.env or ../.env_azure)")
+    parser.add_argument("--model", help="Model's name", default="gpt-4o")
     parser.add_argument("--question", help="Question to ask the model", required=False, default="Can you describe this image?")
     parser.add_argument("--image_path", help="Path to the image file", required=True)
+    parser.add_argument("--proxy-url", default=None,
+                        help="Proxy base URL (without /v1). Falls back to OPENAI_API_BASE env var")
+    parser.add_argument("--api-key", default=None,
+                        help="API key. Falls back to OPENAI_API_KEY env var")
     args = parser.parse_args()
+
+    # Load .env file if specified
+    if args.env_file:
+        from pathlib import Path
+        env_path = Path(args.env_file) if Path(args.env_file).is_absolute() else Path(__file__).parent / args.env_file
+        if env_path.is_file():
+            from dotenv import load_dotenv
+            load_dotenv(dotenv_path=str(env_path), override=True)
+        else:
+            print(f"Environment file not found: {env_path}")
+            return
+
+    # Resolve API key and base URL: CLI args > env vars
+    api_key = args.api_key or os.getenv("OPENAI_API_KEY")
+    proxy_url = args.proxy_url or os.getenv("OPENAI_API_BASE", "http://localhost:8000/v1")
+
+    if not api_key:
+        print("API key is required. Use --api-key or set OPENAI_API_KEY (via --env-file or shell).")
+        return
+
+    # Normalize base_url
+    base_url = proxy_url.rstrip("/")
+    if not base_url.endswith("/v1"):
+        base_url = f"{base_url}/v1"
 
     print(f"Script will use the model : {args.model}")
     print(f"Script will answer to the question: {args.question}")
@@ -71,8 +102,8 @@ def main():
     # Initialize model
     print("Initialize llm")
     llm = OpenAI(
-        base_url="http://localhost:8000/v1",
-        api_key="sk-16AwYoZqNoVKjfMz-Mr8TeuaXk3O6JeLwPdQSAQiF0s"
+        base_url=base_url,
+        api_key=api_key
     )
 
 

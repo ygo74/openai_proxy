@@ -56,7 +56,7 @@
                 "PYTHONPATH": "${workspaceFolder}/src",
                 "ENV": "production"
             },
-            "python": "${workspaceFolder}/venv/fastapi/Scripts/python.exe",
+            "python": "${workspaceFolder}/venv/openai_proxy/bin/python",
             "justMyCode": true,
             "stopOnEntry": false
         },
@@ -83,7 +83,7 @@
                 "LOG_LEVEL": "DEBUG",
                 "DEVELOPMENT_MODE": "true"
             },
-            "python": "${workspaceFolder}/venv/fastapi/Scripts/python.exe",
+            "python": "${workspaceFolder}/venv/openai_proxy/bin/python",
             "justMyCode": false,
             "stopOnEntry": false
         },

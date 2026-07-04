@@ -27,10 +27,15 @@ services:
       KC_HTTP_ENABLED: true
       KC_HOSTNAME_STRICT: false
       KC_HOSTNAME_STRICT_HTTPS: false
+      KC_HTTPS_CERTIFICATE_FILE: /opt/keycloak/conf/server.crt
+      KC_HTTPS_CERTIFICATE_KEY_FILE: /opt/keycloak/conf/server.key
     ports:
       - "8080:8080"
+      - "8443:8443"
     volumes:
       - keycloak_data:/opt/keycloak/data
+      - ./backends/keycloak/ssl/keycloak.crt:/opt/keycloak/conf/server.crt
+      - ./backends/keycloak/ssl/keycloak.key:/opt/keycloak/conf/server.key
     networks:
       - observability-net
 

@@ -4,10 +4,13 @@ venv
 config.json
 *.db
 .env
+.env_azure
 .env.prod
+.env*
 *egg-info
 *langchain_call_azure_openai.py
 *langchain_call_azure_openai*
+*test_raw_http_azure*
 *call_azure_openai*
 unique/**
 

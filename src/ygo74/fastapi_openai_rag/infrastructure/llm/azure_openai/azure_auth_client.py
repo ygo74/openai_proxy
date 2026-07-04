@@ -5,55 +5,39 @@ import logging
 from typing import Optional, Union
 from datetime import datetime, timedelta
 from ..http_client_factory import HttpClientFactory
-from ..retry_handler import with_enterprise_retry
+from ..retry_handler import CloudRetryHandler, with_enterprise_retry
 
 logger = logging.getLogger(__name__)
 
 class AzureAuthClient:
     """Azure AD authentication client for management API access."""
 
-    def __init__(self, tenant_id: str, client_id: str, client_secret: str,
-                 proxy_url: Optional[str] = None,
-                 proxy_auth: Optional[httpx.Auth] = None,
-                 verify_ssl: Union[bool, str, ssl.SSLContext] = True,
-                 ca_cert_file: Optional[str] = None,
-                 client_cert_file: Optional[str] = None,
-                 client_key_file: Optional[str] = None):
-        """Initialize Azure AD authentication client.
+    def __init__(
+        self,
+        tenant_id: str,
+        client_id: str,
+        client_secret: str,
+        retry_handler: Optional[CloudRetryHandler] = None,
+    ):
+        """Initialize Azure AD authentication client using the shared HTTP client.
 
         Args:
-            tenant_id (str): Azure AD tenant ID
-            client_id (str): Service principal client ID
-            client_secret (str): Service principal client secret
-            proxy_url (Optional[str]): Corporate proxy URL
-            proxy_auth (Optional[httpx.Auth]): Proxy authentication
-            verify_ssl (Union[bool, str, ssl.SSLContext]): SSL verification setting
-            ca_cert_file (Optional[str]): Path to custom CA certificate file
-            client_cert_file (Optional[str]): Path to client certificate file
-            client_key_file (Optional[str]): Path to client private key file
+            tenant_id: Azure AD tenant ID
+            client_id: Service principal client ID
+            client_secret: Service principal client secret
+            retry_handler: Optional retry handler for resilient HTTP calls
         """
         self.tenant_id = tenant_id
         self.client_id = client_id
         self.client_secret = client_secret
+        self.retry_handler: Optional[CloudRetryHandler] = retry_handler
         self._access_token: Optional[str] = None
         self._token_expiry: Optional[datetime] = None
 
-        # Target URL for proxy configuration
-        target_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+        # Use the singleton shared HTTP client
+        self._client = HttpClientFactory.get_client()
 
-        # Create HTTP client using factory with enterprise settings
-        self._client = HttpClientFactory.create_async_client(
-            target_url=target_url,
-            timeout=30.0,
-            proxy_url=proxy_url,
-            proxy_auth=proxy_auth,
-            verify_ssl=verify_ssl,
-            ca_cert_file=ca_cert_file,
-            client_cert_file=client_cert_file,
-            client_key_file=client_key_file
-        )
-
-        logger.debug(f"AzureAuthClient initialized for tenant {tenant_id}")
+        logger.debug(f"AzureAuthClient initialized for tenant {tenant_id} (using shared HTTP client)")
 
     @with_enterprise_retry
     async def get_access_token(self) -> str:
@@ -117,14 +101,13 @@ class AzureAuthClient:
             raise
 
     async def close(self) -> None:
-        """Close the HTTP client."""
-        if hasattr(self, '_client') and self._client:
-            await self._client.aclose()
+        """No-op: the shared HTTP client lifecycle is managed by HttpClientFactory."""
+        pass
 
     async def __aenter__(self):
         """Async context manager entry."""
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Async context manager exit."""
-        await self.close()
+        """Async context manager exit — no-op for shared client."""
+        pass

@@ -1,7 +1,7 @@
 from typing import List, Optional
 
 from ygo74.fastapi_openai_rag.application.services.audit_service import AuditService
-from ygo74.fastapi_openai_rag.domain.models.configuration import AppConfig, HttpForwarderConfig
+from ygo74.fastapi_openai_rag.domain.models.configuration import AppConfiguration, HttpForwarderConfig
 from ygo74.fastapi_openai_rag.infrastructure.db.repositories.audit_log_repository import AuditLogRepository
 from ygo74.fastapi_openai_rag.interfaces.api.middlewares.audit import (
     AuditMiddleware, BaseForwarder, PrintForwarder, HTTPForwarder
@@ -37,12 +37,12 @@ class AuditFactory:
         return AuditFactory.create_audit_service()
 
     @staticmethod
-    def create_forwarders(config: AppConfig) -> List[BaseForwarder]:
+    def create_forwarders(config: AppConfiguration) -> List[BaseForwarder]:
         """
         Create a list of forwarders based on configuration.
 
         Args:
-            config: AppConfig instance with forwarder settings
+            config: AppConfiguration instance with forwarder settings
 
         Returns:
             List of configured forwarders
@@ -70,7 +70,7 @@ class AuditFactory:
     @staticmethod
     def create_audit_middleware(
         app: FastAPI,
-        config: Optional[AppConfig] = None,
+        config: Optional[AppConfiguration] = None,
         audit_service: Optional[AuditService] = None,
         forwarders: Optional[List[BaseForwarder]] = None
     ):

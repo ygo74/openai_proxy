@@ -80,10 +80,37 @@ class OutputSchema(BaseModel):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", help="Model's name as defined in Azure Deployment model", default="gpt-4o")
+    parser.add_argument("--env-file", type=str, default=None,
+                        help="Path to .env file to load (e.g. ../.env or ../.env_azure)")
+    parser.add_argument("--model", help="Model's name", default="gpt-4o")
     parser.add_argument("--question", help="Question to ask the model", required=False, default="Who are you and what is your cutoff date?")
+    parser.add_argument("--proxy-url", default=None,
+                        help="Proxy base URL. Falls back to OPENAI_API_BASE env var")
     parser.add_argument("--stream", help="Use streaming mode instead of normal invoke", action="store_true")
     args = parser.parse_args()
+
+    # Load .env file if specified
+    if args.env_file:
+        from pathlib import Path
+        from dotenv import load_dotenv
+        env_path = Path(args.env_file) if Path(args.env_file).is_absolute() else Path(__file__).parent / args.env_file
+        if env_path.is_file():
+            load_dotenv(dotenv_path=str(env_path), override=True)
+        else:
+            print(f"Environment file not found: {env_path}")
+            return
+
+    # Reload Keycloak config from env
+    global KEYCLOAK_URL, REALM_NAME, CLIENT_ID, CLIENT_SECRET
+    KEYCLOAK_URL = os.getenv("KEYCLOAK_URL", "http://localhost:8080")
+    REALM_NAME = os.getenv("KEYCLOAK_REALM", "fastapi-openai-rag")
+    CLIENT_ID = os.getenv("KEYCLOAK_CLIENT_ID", "fastapi-app")
+    CLIENT_SECRET = os.getenv("KEYCLOAK_CLIENT_SECRET", "fastapi-secret-key")
+
+    proxy_url = args.proxy_url or os.getenv("OPENAI_API_BASE", "http://localhost:8000/v1")
+    base_url = proxy_url.rstrip("/")
+    if not base_url.endswith("/v1"):
+        base_url = f"{base_url}/v1"
 
     print(f"Script will use the model: {args.model}")
     print(f"Script will answer to the question: {args.question}")
@@ -91,7 +118,7 @@ def main():
 
 
     # Get access token
-    token_data = get_access_token("admin_user", "admin123")
+    token_data = get_access_token("regular_user", "regular123")
     if token_data is None:
         print("Failed to get access token. Exiting.")
         return
@@ -135,7 +162,7 @@ def main():
     # debug_client.event_hooks["request"] = [log_request]
 
     llm = ChatOpenAI(
-        base_url="http://localhost:8000/v1",
+        base_url=base_url,
         api_key=access_token,  # Non utilisé car on a déjà le bearer token dans les en-têtes
         model=args.model,
         temperature=0,

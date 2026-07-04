@@ -2,7 +2,7 @@
 from datetime import datetime
 from typing import Dict, Any, Optional, List, Union, Literal
 from enum import Enum
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 from openai.types.chat.chat_completion_stream_options_param import ChatCompletionStreamOptionsParam
 from .llm import TokenUsage, LLMProvider
 
@@ -13,6 +13,7 @@ class ChatMessageRole(str, Enum):
     ASSISTANT = "assistant"
     FUNCTION = "function"
     TOOL = "tool"
+    DEVELOPER = "developer"
 
 class MessageContentText(BaseModel):
     """Text content part."""
@@ -117,27 +118,47 @@ class ChatCompletionRequest(BaseModel):
         logprobs (Optional[bool]): Whether to return log probabilities
         top_logprobs (Optional[int]): Number of top log probabilities to return
     """
+
+    model_config = ConfigDict(extra="allow")
+
     model: str
     messages: List[ChatMessage]
+    # audio: Optional[ChatCompletionAudioParam] | Omit = omit,
+    frequency_penalty: Optional[float] = Field(None, ge=-2.0, le=2.0)
+    function_call: Optional[Union[str, Dict[str, str]]] = None
+    functions: Optional[List[ChatCompletionFunction]] = None
+    logit_bias: Optional[Dict[str, float]] = None
+    logprobs: Optional[bool] = None
+    max_completion_tokens: Optional[int] = Field(None, ge=1)
     max_tokens: Optional[int] = Field(None, ge=1)
-    temperature: Optional[float] = Field(None, ge=0, le=2)
-    top_p: Optional[float] = Field(None, ge=0, le=1)
+    # metadata: Optional[Metadata] | Omit = omit,
+    # modalities: Optional[List[Literal["text", "audio"]]] | Omit = omit,
     n: Optional[int] = Field(1, ge=1, le=128)
+    # parallel_tool_calls: bool | Omit = omit,
+    # prediction: Optional[ChatCompletionPredictionContentParam] | Omit = omit,
+    presence_penalty: Optional[float] = Field(None, ge=-2.0, le=2.0)
+    # prompt_cache_key: str | Omit = omit,
+    # prompt_cache_retention: Optional[Literal["in-memory", "24h"]] | Omit = omit,
+    # reasoning_effort: Optional[ReasoningEffort] | Omit = omit,
+    response_format: Optional[Dict[str, Any]] = None
+    # safety_identifier: str | Omit = omit,
+    seed: Optional[int] = None
+    # service_tier: Optional[Literal["auto", "default", "flex", "scale", "priority"]] | Omit = omit,
+    stop: Optional[Union[str, List[str]]] = None
+    # store: Optional[bool] | Omit = omit,
     stream: Optional[bool] = False
     stream_options: Optional[ChatCompletionStreamOptionsParam] = None
-    stop: Optional[Union[str, List[str]]] = None
-    presence_penalty: Optional[float] = Field(None, ge=-2.0, le=2.0)
-    frequency_penalty: Optional[float] = Field(None, ge=-2.0, le=2.0)
-    logit_bias: Optional[Dict[str, float]] = None
-    user: Optional[str] = None
-    functions: Optional[List[ChatCompletionFunction]] = None
-    function_call: Optional[Union[str, Dict[str, str]]] = None
-    tools: Optional[List[ChatCompletionTool]] = None
+    temperature: Optional[float] = Field(None, ge=0, le=2)
+    timeout: Optional[float] = Field(
+        None, description="Optional per-request timeout override (seconds)."
+    )
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
-    response_format: Optional[Dict[str, str]] = None
-    seed: Optional[int] = None
-    logprobs: Optional[bool] = None
+    tools: Optional[List[ChatCompletionTool]] = None
     top_logprobs: Optional[int] = Field(None, ge=0, le=5)
+    top_p: Optional[float] = Field(None, ge=0, le=1)
+    user: Optional[str] = None
+    # verbosity: Optional[Literal["low", "medium", "high"]] | Omit = omit,
+    # web_search_options: completion_create_params.WebSearchOptions | Omit = omit
 
     @model_validator(mode="before")
     def _validate_stream_options(cls, values: Dict[str, Any]) -> Dict[str, Any]:

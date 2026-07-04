@@ -8,7 +8,7 @@ from tenacity import RetryError
 from src.ygo74.fastapi_openai_rag.infrastructure.llm.retry_handler import (
     CloudRetryHandler, LLMRetryHandler, RetryStrategy, with_enterprise_retry, with_llm_retry
 )
-from src.ygo74.fastapi_openai_rag.infrastructure.llm.client_factory import EnterpriseConfig
+from src.ygo74.fastapi_openai_rag.domain.models.configuration import EnterpriseSettings
 
 
 class TestCloudRetryHandler:
@@ -136,7 +136,7 @@ class TestWithEnterpriseRetry:
     async def test_with_enterprise_retry_enabled_success(self):
         """Test enterprise retry decorator when retry is enabled and succeeds."""
         # arrange
-        enterprise_config = EnterpriseConfig(enable_retry=True)
+        enterprise_config = EnterpriseSettings(enable_retry=True)
         enterprise_config.retry_handler = CloudRetryHandler(max_attempts=1)
 
         class MockClient:
@@ -162,7 +162,7 @@ class TestWithEnterpriseRetry:
     async def test_with_enterprise_retry_disabled(self):
         """Test enterprise retry decorator when retry is disabled."""
         # arrange
-        enterprise_config = EnterpriseConfig(enable_retry=False)
+        enterprise_config = EnterpriseSettings(enable_retry=False)
         enterprise_config.retry_handler = CloudRetryHandler(max_attempts=1)
 
         class MockClient:
@@ -210,7 +210,7 @@ class TestWithEnterpriseRetry:
     async def test_with_enterprise_retry_with_exception(self):
         """Test enterprise retry decorator with retryable exception that eventually succeeds."""
         # arrange
-        enterprise_config = EnterpriseConfig(enable_retry=True)
+        enterprise_config = EnterpriseSettings(enable_retry=True)
         enterprise_config.retry_handler = CloudRetryHandler(max_attempts=1)
 
         class MockClient:
@@ -237,7 +237,7 @@ class TestWithEnterpriseRetry:
     async def test_with_enterprise_retry_with_max_retries_exceeded(self):
         """Test enterprise retry decorator when max retries are exceeded."""
         # arrange
-        enterprise_config = EnterpriseConfig(enable_retry=True)
+        enterprise_config = EnterpriseSettings(enable_retry=True)
         enterprise_config.retry_handler = CloudRetryHandler(max_attempts=1)
 
         class MockClient:

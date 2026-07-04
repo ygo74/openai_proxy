@@ -13,11 +13,15 @@ Features tested:
 - Response format control (JSON)
 
 Usage examples:
-python openai_call_chat_completions.py --question "What is 2+2?"
-python openai_call_chat_completions.py --question "What time is it in Paris?" --function-tools --auto-execute
+python openai_call_chat_completions.py --env-file ../.env --question "What is 2+2?"
+python openai_call_chat_completions.py --env-file ../.env_azure --question "What time is it in Paris?" --function-tools --auto-execute
 python openai_call_chat_completions.py --question "Latest tech news" --stream
 python openai_call_chat_completions.py --question "Hi, I'm Alice" --follow-up "What's my name?"
-python openai_call_chat_completions.py --question "Describe this image" --image-path ./image.jpg
+python openai_call_chat_completions.py --question "Describe this image" --file-path ./image.jpg
+
+Environment variables (loaded from .env file or shell):
+  OPENAI_API_BASE   - Base URL for the API (e.g. http://localhost:8000/v1)
+  OPENAI_API_KEY    - API key for authentication
 """
 from __future__ import annotations
 
@@ -27,6 +31,8 @@ import json
 import logging
 import os
 import sys
+import time
+from pathlib import Path
 from datetime import datetime
 from mimetypes import guess_type
 from typing import Any, Dict, List, Optional, Union, cast
@@ -47,6 +53,7 @@ logger = logging.getLogger("chat_completions_api_openai_test")
 
 # File type constants
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+PDF_EXTENSIONS = {".pdf"}
 
 # Time zone mapping for function calling
 TIMEZONE_DATA: Dict[str, str] = {
@@ -119,10 +126,20 @@ def file_to_data_url(path: str) -> str:
     return f"data:{mime};base64,{b64}"
 
 
-def build_messages(question: str, image_path: Optional[str] = None,
+def build_messages(question: str, file_path: Optional[str] = None,
                   system_message: Optional[str] = None,
                   previous_messages: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
-    """Build messages array for Chat Completions API."""
+    """Build messages array for Chat Completions API.
+
+    Args:
+        question (str): User question/prompt
+        file_path (Optional[str]): Path to image or PDF file
+        system_message (Optional[str]): System message
+        previous_messages (Optional[List[Dict[str, Any]]]): Previous conversation messages
+
+    Returns:
+        List[Dict[str, Any]]: Messages array for Chat Completions API
+    """
     messages = []
 
     # Add system message if provided
@@ -134,14 +151,16 @@ def build_messages(question: str, image_path: Optional[str] = None,
         messages.extend(previous_messages)
 
     # Create user message with text content
-    if not image_path:
+    if not file_path:
         messages.append({"role": "user", "content": question})
     else:
-        # Create multimodal content with image
-        if os.path.isfile(image_path):
-            _, ext = os.path.splitext(image_path.lower())
+        # Create multimodal content with image or PDF
+        if os.path.isfile(file_path):
+            _, ext = os.path.splitext(file_path.lower())
+
             if ext in IMAGE_EXTENSIONS:
-                data_url = file_to_data_url(image_path)
+                # Handle image files
+                data_url = file_to_data_url(file_path)
                 messages.append({
                     "role": "user",
                     "content": [
@@ -155,10 +174,26 @@ def build_messages(question: str, image_path: Optional[str] = None,
                         }
                     ]
                 })
+            elif ext in PDF_EXTENSIONS:
+                # Handle PDF files
+                data_url = file_to_data_url(file_path)
+                messages.append({
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": question},
+                        {
+                            "type": "file",  # Some models use image_url for PDFs
+                            "file": {
+                                "filename": os.path.basename(file_path),
+                                "file_data": data_url
+                            }
+                        }
+                    ]
+                })
             else:
-                raise ValueError(f"Unsupported image file extension: {ext}")
+                raise ValueError(f"Unsupported file extension: {ext}. Supported: {IMAGE_EXTENSIONS | PDF_EXTENSIONS}")
         else:
-            raise FileNotFoundError(f"Image file not found: {image_path}")
+            raise FileNotFoundError(f"File not found: {file_path}")
 
     return messages
 
@@ -213,7 +248,7 @@ def test_basic_chat(client: OpenAI, args: argparse.Namespace) -> Optional[ChatCo
 
     messages = build_messages(
         args.question,
-        args.image_path,
+        args.file_path,
         args.system_message
     )
 
@@ -222,7 +257,8 @@ def test_basic_chat(client: OpenAI, args: argparse.Namespace) -> Optional[ChatCo
         "messages": messages,
         "max_tokens": args.max_tokens,
         "temperature": args.temperature,
-        "stream": args.stream
+        "stream": args.stream,
+        "extra_body": {"timeout": 120}
     }
 
     # Add response format if JSON is requested
@@ -239,7 +275,11 @@ def test_basic_chat(client: OpenAI, args: argparse.Namespace) -> Optional[ChatCo
             return None
         else:
             # Handle non-streaming
+            start_time = time.time()
             completion = client.chat.completions.create(**kwargs)
+            end_time = time.time()
+            process_time = (end_time - start_time) * 1000  # Convert to
+            print(f"API call completed in {process_time:.2f} ms")
             print(f"\n=== Chat Completion (Non-Streaming) ===")
             print(completion.choices[0].message.content)
             print_usage_info(completion)
@@ -254,7 +294,7 @@ def test_function_calling(client: OpenAI, args: argparse.Namespace) -> Optional[
     """Test function calling functionality."""
     logger.info("=== Testing Function Calling ===")
 
-    messages = build_messages(args.question, args.image_path, args.system_message)
+    messages = build_messages(args.question, args.file_path, args.system_message)
     function_tools = build_function_tools()
 
     kwargs: Dict[str, Any] = {
@@ -356,7 +396,7 @@ def test_follow_up(client: OpenAI, args: argparse.Namespace, previous_completion
     # Create messages array with previous interaction
     messages = build_messages(
         args.question,
-        args.image_path,
+        args.file_path,
         args.system_message
     )
 
@@ -402,11 +442,17 @@ def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Native OpenAI SDK Chat Completions API tester")
 
+    # Environment file
+    parser.add_argument("--env-file", type=str, default=None,
+                        help="Path to .env file to load (e.g. ../.env or ../.env_azure)")
+
     # Basic parameters
     parser.add_argument("--model", default="gpt-4o", help="Model name")
     parser.add_argument("--question", default="What is 2+2?", help="Primary question/prompt")
-    parser.add_argument("--proxy-url", default="http://localhost:8000", help="Proxy base URL (without /v1)")
-    parser.add_argument("--api-key", default="sk-16AwYoZqNoVKjfMz-Mr8TeuaXk3O6JeLwPdQSAQiF0s", help="API key")
+    parser.add_argument("--proxy-url", default=None,
+                        help="Proxy base URL (without /v1). Falls back to OPENAI_API_BASE env var")
+    parser.add_argument("--api-key", default=None,
+                        help="API key. Falls back to OPENAI_API_KEY env var")
     parser.add_argument("--system-message", default="You are a helpful assistant.", help="System message")
 
     # Generation parameters
@@ -414,7 +460,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature")
 
     # Multimodal
-    parser.add_argument("--image-path", help="Optional image file path")
+    parser.add_argument("--file-path", help="Path to image or PDF file for multimodal input")
 
     # Tools and function calling
     parser.add_argument("--function-tools", action="store_true", help="Enable function calling tools")
@@ -441,10 +487,35 @@ def main() -> int:
     if args.verbose:
         logger.setLevel(logging.DEBUG)
 
+    # Load .env file if specified
+    if args.env_file:
+        env_path = Path(args.env_file)
+        if not env_path.is_absolute():
+            env_path = Path(__file__).parent / env_path
+        if env_path.is_file():
+            logger.info(f"Loading environment from: {env_path}")
+            from dotenv import load_dotenv
+            load_dotenv(dotenv_path=str(env_path), override=True)
+        else:
+            logger.error(f"Environment file not found: {env_path}")
+            return 1
+
+    # Resolve API key and base URL: CLI args > env vars
+    api_key = args.api_key or os.getenv("OPENAI_API_KEY")
+    proxy_url = args.proxy_url or os.getenv("OPENAI_API_BASE", "http://localhost:8000/v1")
+
+    if not api_key:
+        logger.error("API key is required. Use --api-key or set OPENAI_API_KEY (via --env-file or shell).")
+        return 1
+
+    # Normalize base_url to end with /v1
+    base_url = proxy_url.rstrip("/")
+    if not base_url.endswith("/v1"):
+        base_url = f"{base_url}/v1"
+
     # Initialize OpenAI client pointing to proxy
-    base_url = f"{args.proxy_url.rstrip('/')}/v1"
     client = OpenAI(
-        api_key=args.api_key,
+        api_key=api_key,
         base_url=base_url,
         max_retries=0
     )

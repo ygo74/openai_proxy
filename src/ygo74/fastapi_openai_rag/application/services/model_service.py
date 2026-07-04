@@ -7,11 +7,12 @@ from ...domain.models.group import Group
 from ...domain.repositories.model_repository import IModelRepository
 from ...domain.unit_of_work import UnitOfWork
 from ...infrastructure.db.repositories.model_repository import SQLModelRepository
-from ...domain.models.configuration import ModelConfig
+from ...domain.models.configuration import ModelConfig, EnterpriseSettings
 from ...domain.exceptions.entity_not_found_exception import EntityNotFoundError
 from ...domain.exceptions.entity_already_exists import EntityAlreadyExistsError
 from ...domain.exceptions.validation_error import ValidationError
 from ...domain.protocols.llm_client import LLMClientProtocol
+from .config_service import config_service
 from ...infrastructure.llm.client_factory import LLMClientFactory
 from .group_service import GroupService
 import logging
@@ -87,10 +88,11 @@ class ModelService:
                 logger.error("Missing required fields for model creation")
                 raise ValidationError("URL, name, technical_name, and provider are required for new models")
 
-            models = repository.get_by_technical_name(technical_name)
+            models = repository.get_by_model_provider(name=name, technical_name=technical_name)
+
             if models:
-                logger.warning(f"Model with technical_name {technical_name} already exists")
-                raise EntityAlreadyExistsError("Model", f"technical_name {technical_name}")
+                logger.warning(f"Model with name {name} and technical_name {technical_name} already exists")
+                raise EntityAlreadyExistsError("Model", f"name {name} and technical_name {technical_name}")
 
             new_model = self._create_model_instance(
                 url=url,
@@ -264,6 +266,10 @@ class ModelService:
         """
         logger.debug("Starting to fetch available models using LLM clients.")
 
+        # Get enterprise seetings configuration
+        app_config = config_service.get_config()
+        enterprise_settings: EnterpriseSettings | None = app_config.enterprise_settings if app_config else None
+
         for model_config in model_configs:
             logger.debug(f"Fetching models from provider: {model_config.provider} at {model_config.url}")
 
@@ -288,7 +294,7 @@ class ModelService:
                 )
 
                 # Use async context manager for proper resource cleanup
-                async with LLMClientFactory.create_client(model=temp_model, model_config=model_config) as client:
+                async with LLMClientFactory.create_client(model=temp_model, model_config=model_config, enterprise_settings=enterprise_settings) as client:
                     # For Azure, use deployments; for others, use models
                     if provider_enum == LLMProvider.AZURE:
                         models_data: List[Dict[str, Any]] = await client.list_deployments()
@@ -340,6 +346,7 @@ class ModelService:
                     provider=provider,
                     status=existing_model.status,
                     capabilities=capabilities,
+                    groups=existing_model.groups or [],
                     created=existing_model.created,
                     updated=datetime.now(timezone.utc)
                 )
@@ -372,8 +379,7 @@ class ModelService:
         """
         with self._uow as uow:
             repository: IModelRepository = self._repository_factory(uow.session)
-            models: List[LlmModel] = repository.get_by_technical_name(technical_name)
-            existing_model = models[0] if models else None
+            existing_model: Optional[LlmModel] = repository.get_by_model_provider(name=name, technical_name=technical_name)
 
             if existing_model:
                 updated_model = self._create_model_instance(
@@ -384,6 +390,7 @@ class ModelService:
                     provider=provider,
                     status=existing_model.status,
                     capabilities=capabilities,
+                    groups=existing_model.groups or [],
                     created=existing_model.created,
                     updated=datetime.now(timezone.utc)
                 )

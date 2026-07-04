@@ -207,11 +207,17 @@ def parse_args() -> argparse.Namespace:
     """Parse CLI arguments."""
     p = argparse.ArgumentParser(description="LangChain Responses API tester")
 
+    # Environment file
+    p.add_argument("--env-file", type=str, default=None,
+                   help="Path to .env file to load (e.g. ../.env or ../.env_azure)")
+
     # Basic parameters
     p.add_argument("--model", default="gpt-4o", help="Model name")
     p.add_argument("--question", default="What is 3^3?", help="Primary question/prompt")
-    p.add_argument("--proxy-url", default="http://localhost:8000", help="Proxy base (without /v1)")
-    p.add_argument("--api-key", default="sk-16AwYoZqNoVKjfMz-Mr8TeuaXk3O6JeLwPdQSAQiF0s", help="API key")
+    p.add_argument("--proxy-url", default=None,
+                   help="Proxy base (without /v1). Falls back to OPENAI_API_BASE env var")
+    p.add_argument("--api-key", default=None,
+                   help="API key. Falls back to OPENAI_API_KEY env var")
 
     # Generation parameters
     p.add_argument("--max-tokens", type=int, default=1000, help="Maximum output tokens")
@@ -497,6 +503,29 @@ def main() -> int:
 
     if args.verbose:
         logger.setLevel(logging.DEBUG)
+
+    # Load .env file if specified
+    if args.env_file:
+        from pathlib import Path
+        from dotenv import load_dotenv
+        env_path = Path(args.env_file) if Path(args.env_file).is_absolute() else Path(__file__).parent / args.env_file
+        if env_path.is_file():
+            load_dotenv(dotenv_path=str(env_path), override=True)
+        else:
+            logger.error(f"Environment file not found: {env_path}")
+            return 1
+
+    # Resolve API key and proxy URL
+    args.api_key = args.api_key or os.getenv("OPENAI_API_KEY")
+    args.proxy_url = args.proxy_url or os.getenv("OPENAI_API_BASE", "http://localhost:8000/v1")
+    # Normalize: remove /v1 suffix for _instantiate_llm
+    resolved = args.proxy_url.rstrip("/")
+    if resolved.endswith("/v1"):
+        args.proxy_url = resolved[:-3]
+
+    if not args.api_key:
+        logger.error("API key is required. Use --api-key or set OPENAI_API_KEY.")
+        return 1
 
     # Initialize LLM client pointing to proxy
     base_url = f"{args.proxy_url.rstrip('/')}/v1"

@@ -12,7 +12,7 @@ from ....application.services.config_service import config_service
 from ..decorators.decorators import endpoint_handler
 from ..security.auth import auth_jwt_or_api_key, clear_authenticated_user_cache_entry
 from ....domain.models.autenticated_user import AuthenticatedUser
-from ....domain.models.configuration import AppConfig
+from ....domain.models.configuration import AppConfiguration
 from ....infrastructure.db.unit_of_work import SQLUnitOfWork
 from ....application.services.user_service import UserService
 from ....infrastructure.db.repositories.model_repository import SQLModelRepository
@@ -230,7 +230,7 @@ def check_configuration() -> Dict[str, Any]:
     """
     try:
         # Check if configuration is loaded
-        config: AppConfig = config_service.get_config()
+        config: AppConfiguration = config_service.get_config()
         if config:
 
             # Verify database configuration

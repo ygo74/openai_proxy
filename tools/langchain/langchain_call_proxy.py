@@ -198,12 +198,38 @@ if __name__ == "__main__":
 
     # Parse CLI arguments
     parser = argparse.ArgumentParser(description="Langchain proxy test script")
+    parser.add_argument("--env-file", type=str, default=None,
+                        help="Path to .env file to load (e.g. ../.env or ../.env_azure)")
     parser.add_argument("--model", default="gpt-4.1", help="Model name to use via the proxy")
     parser.add_argument("--question", default="Who are you?", help="Question to send to the model")
-    parser.add_argument("--api-key", default="sk-16AwYoZqNoVKjfMz-Mr8TeuaXk3O6JeLwPdQSAQiF0s", help="Proxy API key")
-    parser.add_argument("--proxy-url", default="http://localhost:8000", help="Proxy base URL")
+    parser.add_argument("--api-key", default=None,
+                        help="Proxy API key. Falls back to OPENAI_API_KEY env var")
+    parser.add_argument("--proxy-url", default=None,
+                        help="Proxy base URL. Falls back to OPENAI_API_BASE env var")
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
     args = parser.parse_args()
+
+    # Load .env file if specified
+    if args.env_file:
+        from pathlib import Path
+        from dotenv import load_dotenv
+        env_path = Path(args.env_file) if Path(args.env_file).is_absolute() else Path(__file__).parent / args.env_file
+        if env_path.is_file():
+            load_dotenv(dotenv_path=str(env_path), override=True)
+        else:
+            print(f"Environment file not found: {env_path}")
+            exit(1)
+
+    api_key = args.api_key or os.getenv("OPENAI_API_KEY")
+    proxy_url = args.proxy_url or os.getenv("OPENAI_API_BASE", "http://localhost:8000/v1")
+    # Normalize
+    proxy_url = proxy_url.rstrip("/")
+    if proxy_url.endswith("/v1"):
+        proxy_url = proxy_url[:-3]
+
+    if not api_key:
+        print("API key is required. Use --api-key or set OPENAI_API_KEY.")
+        exit(1)
 
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
@@ -213,15 +239,15 @@ if __name__ == "__main__":
         print("🚀 Creating proxy instances...")
 
         chat_model = create_proxy_chat_model(
-            proxy_url=args.proxy_url,
-            api_key=args.api_key,
+            proxy_url=proxy_url,
+            api_key=api_key,
             model=args.model
         )
         print("✅ Chat model created successfully")
 
         llm = create_proxy_llm(
-            proxy_url=args.proxy_url,
-            api_key=args.api_key,
+            proxy_url=proxy_url,
+            api_key=api_key,
             model=args.model
         )
         print("✅ LLM created successfully")

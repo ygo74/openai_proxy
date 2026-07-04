@@ -5,8 +5,9 @@ import logging
 from datetime import datetime, timezone
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import StreamingResponse
 from starlette.types import ASGIApp, Message
-from typing import Any, Callable, Dict, List, Optional, Awaitable
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Awaitable
 
 from ygo74.fastapi_openai_rag.application.services.audit_service import AuditService
 from ..utils.json_encoder import DateTimeEncoder
@@ -88,6 +89,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
     Middleware for auditing API requests and responses.
     Can store minimal audit logs in the database and optionally
     forward full request/response data to external collectors.
+    Supports streaming responses without breaking SSE.
     """
 
     def __init__(
@@ -108,6 +110,76 @@ class AuditMiddleware(BaseHTTPMiddleware):
         self.audit_service = audit_service
         self.forwarders = forwarders or []
 
+    def _is_auditable_llm_path(self, path: str) -> bool:
+        """
+        Check if the request path is an LLM endpoint that requires full audit.
+
+        Args:
+            path: The URL path to check
+
+        Returns:
+            True if the path should be fully audited
+        """
+        return (
+            path.startswith("/v1/completions")
+            or path.startswith("/v1/chat/completions")
+            or path.startswith("/v1/responses")
+        )
+
+    def _is_streaming_response(self, response: Response) -> bool:
+        """
+        Determine if a response is a streaming (SSE) response.
+
+        Args:
+            response: The response object
+
+        Returns:
+            True if the response is streaming
+        """
+        content_type = response.headers.get("content-type", "")
+        return "text/event-stream" in content_type
+
+    async def _wrap_streaming_body(
+        self,
+        body_iterator: AsyncIterator[bytes],
+        audit_log: Dict[str, Any],
+        body_text: Optional[str],
+        needs_full_audit: bool,
+        start_time: float,
+    ) -> AsyncIterator[bytes]:
+        """
+        Async generator that yields chunks in real-time while
+        accumulating them for audit forwarding after the stream ends.
+
+        Args:
+            body_iterator: The original response body iterator
+            audit_log: The minimal audit log dict
+            body_text: The original request body text
+            needs_full_audit: Whether to forward the full event after streaming
+            start_time: The timestamp when the request started, used to compute total duration
+
+        Yields:
+            Response body chunks as they arrive
+        """
+        collected_chunks: List[bytes] = []
+        try:
+            async for chunk in body_iterator:
+                collected_chunks.append(chunk)
+                yield chunk
+        finally:
+            # Recompute total duration including streaming time
+            total_duration_ms: float = round((time.time() - start_time) * 1000, 2)
+            audit_log["duration_ms"] = total_duration_ms
+
+            if needs_full_audit:
+                resp_body: bytes = b"".join(collected_chunks)
+                full_event: Dict[str, Any] = {
+                    **audit_log,
+                    "request_body": body_text,
+                    "response_body": resp_body.decode("utf-8", errors="replace") if resp_body else "",
+                }
+                asyncio.create_task(self.forward_full_log(full_event))
+
     async def dispatch(
         self,
         request: Request,
@@ -115,6 +187,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
     ) -> Response:
         """
         Process the request, capture timing and data for auditing.
+        Preserves streaming for SSE responses.
 
         Args:
             request: The incoming request
@@ -138,16 +211,6 @@ class AuditMiddleware(BaseHTTPMiddleware):
         # Process the request
         response = await call_next(request_with_body)
 
-        # Capture response body
-        resp_body = b""
-        # We need to iterate through the response body stream
-        # The Response object in FastAPI is based on StreamingResponse
-        # which exposes an async iterator for the body
-        body_iterator = response.__dict__.get("body_iterator")
-        if body_iterator:
-            async for chunk in body_iterator:
-                resp_body += chunk
-
         # Calculate timing
         process_time = time.time() - start_time
 
@@ -162,31 +225,51 @@ class AuditMiddleware(BaseHTTPMiddleware):
             "user": getattr(user_info, "username", None),
             "auth_type": getattr(user_info, "type", None),
             "status_code": response.status_code,
-            "duration_ms": round(process_time * 1000, 2)
+            "duration_ms": round(process_time * 1000, 2),
         }
 
-        # Save to database
+        # Save minimal audit to database
         self.save_audit_to_db(audit_log)
 
-        # 2️⃣ Full log forwarding for LLM endpoints
-        if request.url.path.startswith("/v1/completions") \
-           or request.url.path.startswith("/v1/chat/completions") \
-           or request.url.path.startswith("/v1/responses"):
+        needs_full_audit = self._is_auditable_llm_path(request.url.path)
+
+        # 2️⃣ Streaming response — wrap the iterator, don't buffer
+        if self._is_streaming_response(response):
+            body_iterator = response.__dict__.get("body_iterator")
+            wrapped_iterator = self._wrap_streaming_body(
+                body_iterator,
+                audit_log,
+                body_text,
+                needs_full_audit,
+                start_time,
+            )
+            return StreamingResponse(
+                content=wrapped_iterator,
+                status_code=response.status_code,
+                headers=dict(response.headers),
+                media_type=response.media_type,
+            )
+
+        # 3️⃣ Non-streaming response — buffer entire body then return
+        resp_body = b""
+        body_iterator = response.__dict__.get("body_iterator")
+        if body_iterator:
+            async for chunk in body_iterator:
+                resp_body += chunk
+
+        if needs_full_audit:
             full_event: Dict[str, Any] = {
                 **audit_log,
                 "request_body": body_text,
-                "response_body": resp_body.decode("utf-8", errors="replace") if resp_body else ""
+                "response_body": resp_body.decode("utf-8", errors="replace") if resp_body else "",
             }
-
-            # Fire-and-forget via asyncio
             asyncio.create_task(self.forward_full_log(full_event))
 
-        # Return response with the captured body
         return Response(
             content=resp_body,
             status_code=response.status_code,
             headers=dict(response.headers),
-            media_type=response.media_type
+            media_type=response.media_type,
         )
 
     def save_audit_to_db(self, log_data: Dict[str, Any]) -> None:

@@ -309,6 +309,10 @@ def parse_args() -> argparse.Namespace:
     """
     parser = argparse.ArgumentParser(description="Document classification using LLM")
 
+    # Environment file
+    parser.add_argument("--env-file", type=str, default=None,
+                        help="Path to .env file to load (e.g. ../.env or ../.env_azure)")
+
     # Document source (file or folder)
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--file", help="Path to a PDF document to classify")
@@ -320,8 +324,10 @@ def parse_args() -> argparse.Namespace:
 
     # API and model configuration
     parser.add_argument("--model", default="gpt-4o", help="Model name for classification")
-    parser.add_argument("--proxy-url", default="http://localhost:8000", help="OpenAI API proxy URL")
-    parser.add_argument("--api-key", default="sk-16AwYoZqNoVKjfMz-Mr8TeuaXk3O6JeLwPdQSAQiF0s", help="API key")
+    parser.add_argument("--proxy-url", default=None,
+                        help="Proxy base URL (without /v1). Falls back to OPENAI_API_BASE env var")
+    parser.add_argument("--api-key", default=None,
+                        help="API key. Falls back to OPENAI_API_KEY env var")
     parser.add_argument("--max-tokens", type=int, default=1000, help="Maximum tokens for response")
     parser.add_argument("--temperature", type=float, default=0.0, help="Temperature for response generation")
 
@@ -343,11 +349,34 @@ def main() -> int:
     if args.verbose:
         logger.setLevel(logging.DEBUG)
 
+    # Load .env file if specified
+    if args.env_file:
+        env_path = Path(args.env_file) if Path(args.env_file).is_absolute() else Path(__file__).parent / args.env_file
+        if env_path.is_file():
+            logger.info(f"Loading environment from: {env_path}")
+            from dotenv import load_dotenv
+            load_dotenv(dotenv_path=str(env_path), override=True)
+        else:
+            logger.error(f"Environment file not found: {env_path}")
+            return 1
+
+    # Resolve API key and base URL: CLI args > env vars
+    api_key = args.api_key or os.getenv("OPENAI_API_KEY")
+    proxy_url = args.proxy_url or os.getenv("OPENAI_API_BASE", "http://localhost:8000/v1")
+
+    if not api_key:
+        logger.error("API key is required. Use --api-key or set OPENAI_API_KEY (via --env-file or shell).")
+        return 1
+
+    # Normalize base_url
+    base_url = proxy_url.rstrip("/")
+    if not base_url.endswith("/v1"):
+        base_url = f"{base_url}/v1"
+
     try:
         # Initialize OpenAI client
-        base_url = f"{args.proxy_url.rstrip('/')}/v1"
         client = OpenAI(
-            api_key=args.api_key,
+            api_key=api_key,
             base_url=base_url,
             max_retries=1
         )

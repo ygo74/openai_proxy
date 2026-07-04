@@ -1,7 +1,7 @@
 """SQLAlchemy repository implementation for Model entity."""
 from typing import Optional, List
 from sqlalchemy.orm import Session, selectinload
-from sqlalchemy import select
+from sqlalchemy import select, distinct
 from ....domain.models.llm_model import LlmModel, LlmModelStatus
 from ....domain.repositories.model_repository import IModelRepository
 from ..models.model_orm import ModelORM
@@ -105,12 +105,18 @@ class SQLModelRepository(SQLBaseRepository[LlmModel, ModelORM], IModelRepository
         Returns:
             List[LlmModel]: List of distinct models in the group
         """
+        # First get distinct model IDs for the group
+        subquery = (
+            select(distinct(ModelORM.id))
+            .join(ModelORM.groups)
+            .where(ModelORM.groups.any(id=group_id))
+        )
+
+        # Then fetch the full models with their groups
         stmt = (
             select(ModelORM)
             .options(selectinload(ModelORM.groups))
-            .join(ModelORM.groups)
-            .where(ModelORM.groups.any(id=group_id))
-            .distinct()  # Add distinct to avoid duplicate models
+            .where(ModelORM.id.in_(subquery))
         )
         result = self._session.execute(stmt)
         model_orms = result.scalars().all()
@@ -129,6 +135,47 @@ class SQLModelRepository(SQLBaseRepository[LlmModel, ModelORM], IModelRepository
             ModelORM.name == name,
             ModelORM.status == LlmModelStatus.APPROVED
         )
+        result = self._session.execute(stmt)
+        orm_models = result.scalars().all()
+        return [self._mapper.to_domain(orm_model) for orm_model in orm_models]
+
+    def get_approved_by_group_names(self, group_names: List[str]) -> List[LlmModel]:
+        """Get all approved models accessible by any of the specified groups.
+
+        This implementation avoids DISTINCT on full model rows (which can fail on
+        PostgreSQL when JSON columns are present) by deduplicating only model IDs
+        in a subquery.
+
+        Args:
+            group_names (List[str]): List of group names.
+
+        Returns:
+            List[LlmModel]: List of distinct approved models accessible by the groups.
+        """
+        if not group_names:
+            return []
+
+        # Import GroupORM here to avoid circular dependency
+        from ..models.group_orm import GroupORM
+
+        # Deduplicate only on IDs (safe with JSON columns on PostgreSQL)
+        model_ids_subquery = (
+            select(ModelORM.id)
+            .join(ModelORM.groups)
+            .where(
+                ModelORM.status == LlmModelStatus.APPROVED,
+                GroupORM.name.in_(group_names),
+            )
+            .distinct()
+        )
+
+        # Fetch full models + groups
+        stmt = (
+            select(ModelORM)
+            .options(selectinload(ModelORM.groups))
+            .where(ModelORM.id.in_(model_ids_subquery))
+        )
+
         result = self._session.execute(stmt)
         orm_models = result.scalars().all()
         return [self._mapper.to_domain(orm_model) for orm_model in orm_models]

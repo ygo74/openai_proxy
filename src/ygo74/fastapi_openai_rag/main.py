@@ -11,12 +11,14 @@ from .domain.exceptions.validation_error import ValidationError
 from .application.services.config_service import config_service
 from .config.logging_config import setup_logging
 from .interfaces.api.middlewares.audit_factory import AuditFactory
+from .interfaces.api.middlewares.performance_middleware import PerformanceMiddleware
 from .infrastructure.observability.telemetry_service import initialize_telemetry, get_telemetry_service
 from .infrastructure.observability.metrics_service import initialize_metrics_service
 from .interfaces.api.middlewares.metrics_middleware import MetricsMiddleware
 from .interfaces.api.middlewares.audit import AuditMiddleware
 from .config.settings import settings
 from datetime import datetime
+from .infrastructure.llm.http_client_factory import HttpClientFactory
 
 # Setup logging before anything else
 setup_logging()
@@ -29,7 +31,16 @@ async def lifespan(app: FastAPI):
     """Application lifespan events."""
     # Startup
     try:
-        # Initialize observability first
+        # Load configuration first (needed for enterprise settings)
+        config_service.reload_config()
+        logger.info("Application configuration loaded successfully")
+
+        # Initialize the singleton shared HTTP client using enterprise settings from config.json
+        app_config = config_service.get_config()
+        HttpClientFactory.initialize(app_config.enterprise_settings)
+        logger.info("Shared HTTP client initialized successfully")
+
+        # Initialize observability
         telemetry_service = initialize_telemetry(settings.observability)
         logger.info("Observability initialized successfully")
 
@@ -41,15 +52,9 @@ async def lifespan(app: FastAPI):
         if telemetry_service:
             telemetry_service.instrument_fastapi(app)
 
-        # Load configuration at startup
-        config_service.reload_config()
-        logger.info("Application configuration loaded successfully")
-
         # Initialize database
         config_service.init_database()
         logger.info("Database initialized successfully!")
-
-        # Other startup tasks...
 
     except Exception as e:
         logger.error(f"Failed to initialize application: {str(e)}")
@@ -57,7 +62,10 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Shutdown - clean up resources here if needed
+    # Shutdown
+    await HttpClientFactory.close_shared_client()
+    logger.info("Shared HTTP client closed")
+
     telemetry_service = get_telemetry_service()
     if telemetry_service:
         telemetry_service.shutdown()
@@ -72,21 +80,25 @@ app = FastAPI(
     redirect_slashes=True
 )
 
-# Add middlewares
+# Add middlewares (order matters: first added = last executed)
 app.add_middleware(MetricsMiddleware)
 
 # Add audit middleware using the factory
 config = config_service.get_config()
 AuditFactory.create_audit_middleware(app, config)
 
-# Configure CORS
+# Configure CORS from configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Modify this in production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=config.cors.allow_origins,
+    allow_credentials=config.cors.allow_credentials,
+    allow_methods=config.cors.allow_methods,
+    allow_headers=config.cors.allow_headers,
 )
+
+# PerformanceMiddleware measures total time including all other middlewares
+app.add_middleware(PerformanceMiddleware, enable_detailed_logs=True)
+
 
 # Include API router
 app.include_router(api_router)

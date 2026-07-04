@@ -260,11 +260,20 @@ async def _authenticate_with_jwt_payload(
         logger.debug(f"AuthenticatedUser cache hit for '{username}'")
         return cached_user
 
+    # Extract the client id from the payload if available
+    client_id = payload.get("azp") or payload.get("client_id")
+
     # Extract groups from different possible JWT claims
-    keycloak_groups: List[str] = (payload.get("groups") or
-                                 payload.get("realm_access", {}).get("roles", []) or
-                                 payload.get("resource_access", {}).get("fastapi-client", {}).get("roles", []) or
-                                 [])
+    # keycloak_groups: List[str] = (payload.get("groups") or
+    #                              payload.get("realm_access", {}).get("roles", []) or
+    #                              payload.get("resource_access", {}).get(client_id, {}).get("roles", []) or
+    #                              [])
+
+    keycloak_groups: List[str] = (payload.get("resource_access", {}).get(client_id, {}).get("roles", []) or
+                                  payload.get("groups") or
+                                  payload.get("realm_access", {}).get("roles", []) or
+                                  [])
+
 
     # Extract additional user info from JWT
     email = payload.get("email")

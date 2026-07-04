@@ -50,5 +50,13 @@
         "log_level": "INFO",
         "exclude_paths": ["/health", "/metrics"],
         "sensitive_headers": ["Authorization", "API-Key"]
+    },
+    "enterprise": {
+        "proxy_url": null,
+        "verify_ssl": true,
+        "ca_cert_file": null,
+        "client_cert_file": null,
+        "client_key_file": null,
+        "timeout": 120.0
     }
 }

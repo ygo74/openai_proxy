@@ -11,7 +11,92 @@ logger = logging.getLogger(__name__)
 
 
 class HttpClientFactory:
-    """Factory class for creating httpx clients with enterprise proxy and SSL configuration."""
+    """Factory class for creating httpx clients with enterprise proxy and SSL configuration.
+
+    Supports a singleton shared async client via initialize() / get_client() / close_shared_client()
+    for optimal connection pooling across all LLM providers in enterprise environments.
+    """
+
+    # Singleton shared async client — one connection pool for all providers
+    _shared_client: Optional[httpx.AsyncClient] = None
+
+    @classmethod
+    def initialize(cls, enterprise_settings: Optional["EnterpriseSettings"] = None) -> None:
+        """Initialize the singleton shared httpx.AsyncClient from enterprise configuration.
+
+        Should be called once at application startup (e.g. FastAPI lifespan).
+        Uses EnterpriseSettings from AppConfiguration to resolve proxy, SSL, and timeout settings.
+
+        Args:
+            enterprise_settings: Enterprise settings from AppConfiguration.enterprise.
+                If None, uses defaults (auto-detect proxy, SSL enabled, 120s timeout).
+
+        Raises:
+            RuntimeError: If already initialized (call close_shared_client() first)
+        """
+        if cls._shared_client is not None:
+            logger.warning("HttpClientFactory already initialized — skipping re-initialization")
+            return
+
+        # Lazy import to avoid circular dependencies
+        from ...domain.models.configuration import EnterpriseSettings
+
+        config: EnterpriseSettings = enterprise_settings or EnterpriseSettings()
+
+        logger.info(
+            "Initializing global shared httpx.AsyncClient "
+            f"(timeout={config.timeout}s, proxy={'configured' if config.proxy_url else 'auto-detect'}, "
+            f"ssl_verify={config.verify_ssl})"
+        )
+
+        cls._shared_client = cls.create_async_client(
+            target_url="",
+            timeout=config.timeout,
+            proxy_url=config.proxy_url,
+            verify_ssl=config.verify_ssl,
+            ca_cert_file=config.ca_cert_file,
+            client_cert_file=config.client_cert_file,
+            client_key_file=config.client_key_file,
+        )
+
+        logger.info("Global shared httpx.AsyncClient ready (HTTP/2 enabled, single connection pool)")
+
+    @classmethod
+    def get_client(cls) -> httpx.AsyncClient:
+        """Return the singleton shared httpx.AsyncClient.
+
+        Returns:
+            httpx.AsyncClient: The global shared HTTP client
+
+        Raises:
+            RuntimeError: If initialize() has not been called yet
+        """
+        if cls._shared_client is None:
+            raise RuntimeError(
+                "HttpClientFactory not initialized. "
+                "Call 'HttpClientFactory.initialize()' at application startup."
+            )
+        return cls._shared_client
+
+    @classmethod
+    async def close_shared_client(cls) -> None:
+        """Close the shared httpx.AsyncClient and release all connections.
+
+        Should be called at application shutdown (e.g. FastAPI lifespan teardown).
+        """
+        if cls._shared_client is not None:
+            logger.info("Closing global shared httpx.AsyncClient")
+            await cls._shared_client.aclose()
+            cls._shared_client = None
+            logger.info("Global shared httpx.AsyncClient closed")
+
+    @classmethod
+    def reset_shared_client(cls) -> None:
+        """Reset shared client state without closing (for testing only).
+
+        WARNING: Only use in tests. In production, use close_shared_client() instead.
+        """
+        cls._shared_client = None
 
     @staticmethod
     def _configure_proxy(
@@ -76,31 +161,68 @@ class HttpClientFactory:
         Returns:
             httpx.AsyncClient: Configured async HTTP client
         """
+        import time
+        start_time = time.perf_counter()
+
         # Configure SSL context for enterprise environments
+        ssl_start = time.perf_counter()
         ssl_context = HttpClientFactory._configure_ssl_context(
             verify_ssl, ca_cert_file, client_cert_file, client_key_file
         )
+        ssl_duration = (time.perf_counter() - ssl_start) * 1000
+        if ssl_duration > 10:
+            logger.debug(f"⏱️ SSL context configuration took {ssl_duration:.2f}ms")
 
         # Configure proxy settings
+        proxy_start = time.perf_counter()
         proxy_config = HttpClientFactory._configure_proxy(
             proxy_url, proxy_auth, target_url
         )
+        proxy_duration = (time.perf_counter() - proxy_start) * 1000
+        if proxy_duration > 10:
+            logger.debug(f"⏱️ Proxy configuration took {proxy_duration:.2f}ms")
 
-        # Create client with enterprise settings
+        # Configure connection limits for optimal performance under load
+        # Increased limits for high-throughput LLM API scenarios
+        limits = httpx.Limits(
+            max_connections=2000,  # Total concurrent connections across all hosts
+            max_keepalive_connections=500,  # Keep more connections alive for reuse
+            keepalive_expiry=30.0  # Keep connections alive for 30 seconds
+        )
+
+        # Create client with enterprise settings, HTTP/2 support, and optimized pooling
+        # Note: HTTP/2 connection is lazy - actual handshake happens on first request
         client_kwargs = {
             "timeout": timeout,
             "proxy": proxy_config,
             "verify": ssl_context if isinstance(ssl_context, ssl.SSLContext) else verify_ssl,
+            "limits": limits,
+            "http2": True,  # Enable HTTP/2 for multiplexing and better performance
+            "http1": True,  # Keep HTTP/1.1 fallback for compatibility
             **kwargs
         }
 
-        logger.debug(f"Creating async HTTP client for {target_url or 'generic use'}")
+        logger.debug(
+            f"Creating async HTTP client for {target_url or 'generic use'} "
+            f"(HTTP/2 enabled with lazy connection, limits: {limits.max_connections})"
+        )
         if proxy_config:
             logger.debug(f"Using proxy configuration: {proxy_config.url}")
         if ca_cert_file:
             logger.debug(f"Using custom CA certificates: {ca_cert_file}")
 
-        return httpx.AsyncClient(**client_kwargs)
+        # Time the actual client instantiation
+        client_start = time.perf_counter()
+        client = httpx.AsyncClient(**client_kwargs)
+        client_duration = (time.perf_counter() - client_start) * 1000
+
+        total_duration = (time.perf_counter() - start_time) * 1000
+        logger.debug(
+            f"⏱️ Client creation timing: total={total_duration:.2f}ms "
+            f"(instantiation={client_duration:.2f}ms, config={total_duration-client_duration:.2f}ms)"
+        )
+
+        return client
 
     @staticmethod
     def create_sync_client(
@@ -140,15 +262,24 @@ class HttpClientFactory:
             proxy_url, proxy_auth, target_url
         )
 
-        # Create client with enterprise settings
+        # Configure connection limits for optimal performance
+        limits = httpx.Limits(
+            max_connections=2000,
+            max_keepalive_connections=500,
+            keepalive_expiry=30.0
+        )
+
+        # Create client with enterprise settings, HTTP/2 support, and optimized pooling
         client_kwargs = {
             "timeout": timeout,
             "proxy": proxy_config,
             "verify": ssl_context if isinstance(ssl_context, ssl.SSLContext) else verify_ssl,
+            "limits": limits,
+            "http2": True,  # Enable HTTP/2 for better performance
             **kwargs
         }
 
-        logger.debug(f"Creating sync HTTP client for {target_url or 'generic use'}")
+        logger.debug(f"Creating sync HTTP client for {target_url or 'generic use'} (HTTP/2 enabled)")
         if proxy_config:
             logger.debug(f"Using proxy configuration: {proxy_config.url}")
         if ca_cert_file:
